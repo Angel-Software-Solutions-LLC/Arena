@@ -117,6 +117,7 @@ jobs:
           node scripts/test-renderer-suspension.mjs
           node scripts/test-engine-webgpu-fallback.mjs
           node scripts/test-rendering-safety-guardrails.mjs
+          node scripts/test-bloom-failure-latch.mjs
           node scripts/test-spectator-startup-budget.mjs
           node scripts/test-trail-budget.mjs
           node scripts/test-cosmetic-trails.mjs
