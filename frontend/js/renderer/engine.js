@@ -694,7 +694,16 @@ export class ArenaEngine {
    * can reset after a server restart, so strict numeric increase is unsafe. */
   _maybeEndRoundTransition(state) {
     if (!this._roundTransitionActive) return;
-    if (!roundStateReleasesTransition(state && state.round_number, this._roundTransitionRound)) return;
+    // Read the round the SAME way the enter path does (line above uses
+    // round_number ?? round). Reading only round_number here made entering and
+    // releasing asymmetric: a payload carrying `round` enters the transition
+    // fine, then never releases, because Number(undefined) is NaN and
+    // roundStateReleasesTransition requires both values finite. The map teardown
+    // that starts the transition is then permanent, which renders as a black
+    // arena with only the emissive glow left while the HUD and minimap keep
+    // updating normally.
+    const releaseRound = state && (state.round_number ?? state.round);
+    if (!roundStateReleasesTransition(releaseRound, this._roundTransitionRound)) return;
     this._roundTransitionActive = false;
     this._roundTransitionRound = null;
     if (this.gameplayRenderer) this.gameplayRenderer.endRoundTransition();

@@ -101,3 +101,14 @@ assert.match(
 );
 
 console.log('round transition freezes bots and clears stale bounty visuals');
+
+// Enter and release must read the round the SAME way. Reading only round_number on
+// the release path while the enter path accepts `round_number ?? round` makes a
+// payload that carries `round` enter the transition and never leave it, so the map
+// teardown becomes permanent and the arena renders black with only glow left.
+const engineSrc = readFileSync(new URL('../frontend/js/renderer/engine.js', import.meta.url), 'utf8');
+const enterReads = /const round = Number\(state && \(state\.round_number \?\? state\.round\)\)/.test(engineSrc);
+const releaseReads = /state\.round_number \?\? state\.round[\s\S]{0,200}roundStateReleasesTransition\(releaseRound/.test(engineSrc);
+assert.ok(enterReads, 'the transition enter path must accept round_number ?? round');
+assert.ok(releaseReads, 'the transition release path must read the round the same way the enter path does');
+console.log('round-transition enter and release read the round symmetrically');
