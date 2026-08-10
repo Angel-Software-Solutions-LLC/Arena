@@ -112,3 +112,13 @@ const releaseReads = /state\.round_number \?\? state\.round[\s\S]{0,200}roundSta
 assert.ok(enterReads, 'the transition enter path must accept round_number ?? round');
 assert.ok(releaseReads, 'the transition release path must read the round the same way the enter path does');
 console.log('round-transition enter and release read the round symmetrically');
+
+// The transition is entered from round_end but only arena_state ever reaches the
+// release path, and the server's SpectatorState carries no round number, so the
+// round-number rule alone can never lift it. Assert the round_tick reset fallback
+// exists, since that is the only signal the releasing payload actually carries.
+assert.match(engineSrc, /_roundTransitionEntryTick/,
+  'the transition must remember the ending round tick to detect the next round');
+assert.match(engineSrc, /tick < entry/,
+  'a round_tick below the entry tick must release the transition');
+console.log('round transition lifts on a round_tick reset, not only on a round number');
