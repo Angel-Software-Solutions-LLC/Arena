@@ -1460,11 +1460,30 @@ export class EnvironmentRenderer {
     const B = window.BABYLON;
     const ps = new B.ParticleSystem('ambientParticles', 25, this.scene);
 
-    // Use default particle texture (white circle)
-    ps.particleTexture = new B.Texture(
-      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAYhJREFUWEftlr1OwzAQx/+XtCJiYGBhYeUFeAd4Bx6BhYGBBYmJhRdgZYCJB+AdeAcWBgYGBqQKpXHk+3DO51zSVEhYSk7+3P3u/OfMGBk/8P7r4BRAP8rAs45cM6x3W5xeXmJ6XSKLMvw+vqK+/t7LBaLHxF1AZIkQZqmODk5wXQ6RZ7n+HcA5nn+XQDHx8e4uLjAbDbDZDJBkiSfBuA7MUkSnJ2d4fj4+NMAvBPL5RJHR0c4Pz9HmqZIU38xDj+8EwDOOS4uLrBarbBer3FzcyMAXq6usFgssFqtsFwuP13YNwqYc47tdovtdou7uzu8vLyIAO/v7/jMAnQB/kcR/IzjUQB8DPhnAbiUA8DhwQEm4zEODw9FmcP8fr+Pz+czTCYT7O3t4e3tTfws+z3BNADYH2Ecx9jZ2cHm5qY4S9NYBOj3+5hOp9jY2EB5fY3ZbIbFYiHugTAMxWeA0WiE4XCIwWCA4XCI8XiMbrcr7oHJZIJ+v4/RaITxeIx+vy/+DYeD/yvy7wC+ADaOYCHhWiMeAAAAAElFTkSuQmCC',
-      this.scene
+    // Soft white dot, canvas-drawn. The previously embedded PNG data URI was
+    // truncated (invalid base64 length, stream ends mid-chunk) and failed to
+    // decode in every browser — Firefox logged "Image corrupt or truncated"
+    // and the particles sampled an incomplete texture.
+    const dotSize = 32;
+    const dotCanvas = document.createElement('canvas');
+    dotCanvas.width = dotSize;
+    dotCanvas.height = dotSize;
+    const dotCtx = dotCanvas.getContext('2d');
+    const dotGrad = dotCtx.createRadialGradient(
+      dotSize / 2, dotSize / 2, 0, dotSize / 2, dotSize / 2, dotSize / 2,
     );
+    dotGrad.addColorStop(0, 'rgba(255,255,255,1)');
+    dotGrad.addColorStop(0.5, 'rgba(255,255,255,0.55)');
+    dotGrad.addColorStop(1, 'rgba(255,255,255,0)');
+    dotCtx.fillStyle = dotGrad;
+    dotCtx.fillRect(0, 0, dotSize, dotSize);
+    const dotTex = new B.DynamicTexture(
+      'ambientParticleTex', { width: dotSize, height: dotSize }, this.scene, false,
+    );
+    dotTex.hasAlpha = true;
+    dotTex.getContext().drawImage(dotCanvas, 0, 0);
+    dotTex.update();
+    ps.particleTexture = dotTex;
 
     // Box emitter covering the arena center area
     const emitW = Math.min(this.w, 1500) * 0.5;

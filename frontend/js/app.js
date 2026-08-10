@@ -1,13 +1,13 @@
 'use strict';
 
-import './babylon-runtime.js?v=20260718a';
+import './babylon-runtime.js?v=20260810d';
 
 /**
  * Main application - wires up all modules.
  * @module app
  */
 
-import { ArenaEngine } from './renderer/engine.js?v=20260810c';
+import { ArenaEngine } from './renderer/engine.js?v=20260810d';
 import { HudRenderer } from './renderer/hud.js?v=20260810c';
 import { Minimap } from './renderer/minimap.js?v=20260718c';
 import { SpectatorSocket } from './spectator-ws.js';

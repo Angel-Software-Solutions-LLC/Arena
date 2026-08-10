@@ -1,6 +1,6 @@
 'use strict';
 
-export const BABYLON_SCRIPT_URL = '../js/babylon-runtime.js?v=20260718a';
+export const BABYLON_SCRIPT_URL = '../js/babylon-runtime.js?v=20260810d';
 
 let babylonLoadPromise = null;
 

@@ -1,6 +1,6 @@
 'use strict';
 
-import './babylon-runtime.js?v=20260718a';
+import './babylon-runtime.js?v=20260810d';
 
 import { apiPath, appPath } from './paths.js?v=20260710a';
 import { CosmeticShopPreview } from './shop-preview.js?v=20260718o';

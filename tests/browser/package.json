@@ -7,5 +7,9 @@
   },
   "devDependencies": {
     "@playwright/test": "1.61.1"
+  },
+  "dependencies": {
+    "babylonjs": "^9.14.0",
+    "earcut": "^2.2.4"
   }
 }

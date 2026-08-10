@@ -1,6 +1,6 @@
 'use strict';
 
-import '../js/babylon-runtime.js?v=20260718a';
+import '../js/babylon-runtime.js?v=20260810d';
 
 import {
   MOBILE_SAFE_VIEWPORT_REGIONS,
@@ -16,7 +16,7 @@ import {
  * @module m/mobile
  */
 
-import { ArenaEngine } from '../js/renderer/engine.js?v=20260810c';
+import { ArenaEngine } from '../js/renderer/engine.js?v=20260810d';
 import { Minimap } from '../js/renderer/minimap.js?v=20260718c';
 import { SpectatorSocket } from '../js/spectator-ws.js';
 import { apiPath, appPath, wsURL } from '../js/paths.js?v=20260710a';
