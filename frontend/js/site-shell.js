@@ -410,7 +410,7 @@ function setupAccessibleOverlays() {
 }
 
 function initServiceBanner() {
-  import('./service-status.js')
+  import('./service-status.js?v=20260810c')
     .then(({ initServiceStatus }) => initServiceStatus())
     .catch((error) => console.warn('[SiteShell] Service status unavailable:', error));
 }

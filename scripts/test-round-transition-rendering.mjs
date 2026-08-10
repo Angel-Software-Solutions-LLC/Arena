@@ -122,3 +122,35 @@ assert.match(engineSrc, /_roundTransitionEntryTick/,
 assert.match(engineSrc, /tick < entry/,
   'a round_tick below the entry tick must release the transition');
 console.log('round transition lifts on a round_tick reset, not only on a round number');
+
+// Behavioral pins for the fallback, driven through the real methods: entry-tick
+// capture at the boundary, growing intermission ticks keeping the hold, the
+// reset releasing it, and the round-number rule still taking priority when a
+// numbered payload does arrive (the server now populates round_number).
+const tickEngine = Object.create(ArenaEngine.prototype);
+tickEngine.state = { round_tick: 2990 };
+tickEngine.gameplayRenderer = {
+  beginRoundTransition: () => {},
+  endRoundTransition: () => {},
+};
+tickEngine._beginRoundTransition({ type: 'round_end', round_number: 7 });
+assert.equal(tickEngine._roundTransitionActive, true);
+assert.equal(tickEngine._roundTransitionEntryTick, 2990,
+  'the boundary must record the last arena_state round_tick as its entry tick');
+
+tickEngine._maybeEndRoundTransition({ type: 'arena_state', round_tick: 3010 });
+assert.equal(tickEngine._roundTransitionActive, true,
+  'intermission frames whose round_tick keeps growing must keep the hold');
+
+tickEngine._maybeEndRoundTransition({ type: 'arena_state', round_tick: 4 });
+assert.equal(tickEngine._roundTransitionActive, false,
+  'an unnumbered arena_state whose round_tick reset below the boundary must release the hold');
+assert.equal(tickEngine._roundTransitionEntryTick, null,
+  'the release must clear the recorded entry tick');
+
+tickEngine.state = { round_tick: 500 };
+tickEngine._beginRoundTransition({ type: 'round_end', round_number: 8 });
+tickEngine._maybeEndRoundTransition({ type: 'arena_state', round_number: 9, round_tick: 900 });
+assert.equal(tickEngine._roundTransitionActive, false,
+  'a numbered next-round arena_state must release even while round_tick has not reset');
+console.log('round-transition release behaves for unnumbered and numbered payloads');
