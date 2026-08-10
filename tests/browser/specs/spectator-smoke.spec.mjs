@@ -130,6 +130,20 @@ test('spectator layout and round lifecycle stay bounded', async ({ page }, testI
   fixture.send(arenaState(7));
   await waitForRound(page, 7);
   await expect(page.locator('#ws-status')).toContainText('Live');
+
+  // The render loop must actually be advancing frames, not merely registered.
+  // Babylon re-queues the next frame only after the render callback returns and
+  // has no try/catch on that path, so one throwing frame leaves the engine with
+  // activeRenderLoops=1, _frameHandler=0 and frameId frozen: a black canvas while
+  // the socket, HUD and minimap all keep updating, which is indistinguishable
+  // from a healthy page in every assertion above. Poll frameId for movement.
+  const frameIdNow = () => page.evaluate(() => {
+    const engine = window.BABYLON?.EngineStore?.LastCreatedScene?.getEngine();
+    return engine ? engine.frameId : -1;
+  });
+  const firstFrameId = await frameIdNow();
+  expect(firstFrameId).toBeGreaterThanOrEqual(0);
+  await expect.poll(frameIdNow, { timeout: 5000 }).toBeGreaterThan(firstFrameId);
   await expect(page.locator('body')).not.toContainText(/\d+ bots connected\s*\|\s*Round \d+/i);
 
   const overflow = await page.evaluate(() => ({
