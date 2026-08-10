@@ -16,7 +16,6 @@ import { TrailRenderer } from './trails.js?v=20260714e';
 import { ProjectileRenderer } from './projectiles.js?v=20260711a';
 import { GameplayRenderer } from './gameplay.js?v=20260718i';
 import { getState, isEnabled, onSettingsChange } from '../settings.js';
-import { reportClientError } from '../client-errors.js?v=20260810e';
 
 // Bot positions are smoothed via exponential lerp each frame,
 // so no tick-interval-based alpha is needed.
@@ -596,12 +595,13 @@ export class ArenaEngine {
       console.error('[Arena] render loop threw; containing so the canvas keeps drawing', err);
       // A contained failure still means the frame is degraded. Report it: the
       // containment is what keeps the arena visible, not a reason to go quiet.
-      // Guarded so containment never depends on the reporter being reachable
-      // (scripts/test-bloom-failure-latch.mjs also evaluates this method in
-      // isolation, outside the module's imports).
-      if (typeof reportClientError === 'function') {
-        reportClientError('render-loop', err, { source: 'engine.runRenderLoop' });
-      }
+      // Reported through a global hook rather than an import: the reporter is
+      // only ever needed on this rare path, and putting it in the renderer's
+      // module graph measurably delayed first frame (~9% on a software
+      // renderer). Optional call also keeps containment working when the hook
+      // is absent, including where this method is evaluated in isolation
+      // (scripts/test-bloom-failure-latch.mjs).
+      globalThis.__arenaReportError?.('render-loop', err, { source: 'engine.runRenderLoop' });
     }
     // Latch, do not count. The failure this contains is a WebGPU bind-group
     // fault in the bloom merge pass, and after the pass is dropped the same

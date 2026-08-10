@@ -99,6 +99,9 @@ export function reportClientError(kind, error, extra = {}) {
 export function installClientErrorReporting() {
   if (installed || typeof window === 'undefined') return;
   installed = true;
+  // Published as a global so modules on the startup critical path (the
+  // renderer) can report without importing this module.
+  globalThis.__arenaReportError = reportClientError;
   window.addEventListener('error', (event) => {
     // Resource load failures (img/script/css) surface here with no `error`
     // object; they are still worth knowing about, hence the fallback.
