@@ -164,26 +164,20 @@ export class ArenaEngine {
   async init() {
     const B = window.BABYLON;
     let engine;
-    // Default to WebGL. Under Babylon's WebGPU backend, DefaultRenderingPipeline's bloom
-    // pass fails to bind its textures ("textureSampler"/"bloomBlur" missing in
-    // getBindGroups) and throws inside the render loop, so no frame ever completes and the
-    // canvas stays blank. (Bloom, not the GlowLayer: GlowLayer ships defaultOff in
-    // settings.js, so it is not even enabled on a default visit.) Because init() only
-    // caught WebGPU *creation* failures, not this render-time crash, every WebGPU-capable
-    // machine preferred WebGPU and rendered nothing. WebGL renders the identical scene.
-    //
-    // The opt-in is EXACTLY ?webgpu=1. Matching on presence alone would turn ?webgpu=0 and
-    // ?webgpu=false into an enable, so a conventional explicit disable would revive the
-    // known blank-canvas path.
-    const wantWebGPU = new URLSearchParams(location.search).get('webgpu') === '1';
+    // WebGPU stays the preferred backend where the browser supports it: it is a
+    // large CPU saving on this scene. `?webgpu=0` forces the WebGL path, which is
+    // useful when triaging a client whose WebGPU driver misbehaves. The blank-arena
+    // failure this file used to produce is handled where it actually happens, in the
+    // render-loop guard below, rather than by giving up the WebGPU path for everyone.
+    const forceWebGL = new URLSearchParams(location.search).get('webgpu') === '0';
     try {
-      const webGPUSupported = wantWebGPU && await webGPUAvailableWithin(B);
+      const webGPUSupported = !forceWebGL && await webGPUAvailableWithin(B);
       if (webGPUSupported) {
         engine = new B.WebGPUEngine(this.canvas, { antialias: false });
         await engine.initAsync();
         console.log('[Arena] WebGPU');
       } else {
-        throw new Error(wantWebGPU ? 'WebGPU not supported' : 'WebGL default');
+        throw new Error(forceWebGL ? 'WebGL forced by ?webgpu=0' : 'WebGPU not supported');
       }
     } catch {
       engine = new B.Engine(this.canvas, false, {
@@ -454,6 +448,12 @@ export class ArenaEngine {
     this._visibilityHandler = resetFrameClock;
     document.addEventListener('visibilitychange', resetFrameClock);
     engine.runRenderLoop(() => {
+      // Contain a throwing frame. Babylon zeroes _frameHandler before running this
+      // callback and only re-queues the next frame AFTER it returns, with no
+      // try/catch on that path, so ONE throw ends rendering permanently: the canvas
+      // sits black at frameId 0 while spectator state keeps streaming in. Measured
+      // live on a WebGPU client whose bloom pass failed to bind its textures.
+      try {
       const now = performance.now();
       // Suspend the entire frame pipeline when no pixels can reach the
       // spectator. Reset the clock on every skipped callback so resuming
@@ -496,6 +496,9 @@ export class ArenaEngine {
       // Pipeline toggles are event-driven (applyPipelineFlags via
       // onSettingsChange) — the per-frame loop stays free of settings reads.
       scene.render();
+      } catch (err) {
+        if (typeof self._onRenderLoopError === 'function') self._onRenderLoopError(err);
+      }
     });
     // IntersectionObserver drives the off-screen frame suspension. threshold
     // 0 means any visible pixel keeps rendering.
@@ -522,6 +525,40 @@ export class ArenaEngine {
     this._resizeHandler = () => engine.resize();
     window.addEventListener('resize', this._resizeHandler);
     this.ready = true;
+  }
+
+  /**
+   * Render-loop crash containment (blank-arena guard).
+   *
+   * Babylon does not guard the render callback: _processFrame zeroes
+   * _frameHandler before running it and only re-queues the next frame after it
+   * returns, so a single throw ends rendering permanently. The canvas then sits
+   * black at frameId 0 while the spectator socket keeps streaming state, which
+   * reads to a viewer as "the arena is down" with nothing in the log after the
+   * first error.
+   *
+   * First failure: drop the effect most likely to be at fault (the bloom pass,
+   * whose bind-group failure is what was observed on a WebGPU client) and keep
+   * rendering. Repeated failures: turn the whole post-process pipeline off
+   * rather than spin on a broken frame. The scene itself keeps drawing either
+   * way, which is what the spectator actually came for.
+   * @private
+   */
+  _onRenderLoopError(err) {
+    this._renderFailures = (this._renderFailures || 0) + 1;
+    if (this._renderFailures === 1) {
+      console.error('[Arena] render loop threw; containing so the canvas keeps drawing', err);
+      if (this.pipeline && this.pipeline.bloomEnabled) {
+        this.pipeline.bloomEnabled = false;
+        console.warn('[Arena] disabled bloom after a render-loop failure');
+      }
+      return;
+    }
+    if (this._renderFailures === 6 && this.pipeline) {
+      console.warn('[Arena] repeated render-loop failures; disabling the post-process pipeline');
+      try { this.pipeline.dispose(); } catch (e) { /* already gone */ }
+      this.pipeline = null;
+    }
   }
 
   /** @private */

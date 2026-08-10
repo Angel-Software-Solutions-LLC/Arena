@@ -30,37 +30,36 @@ assert.equal(await webGPUAvailableWithin({
 
 console.log('WebGPU capability probing is bounded and falls back to WebGL when the browser stalls');
 
-// Regression gate for the blank-arena fix (#228): on a GPU-capable browser the default
-// route must NEVER construct a WebGPUEngine, and ?webgpu=1 must be the sole opt-in.
-// The Playwright specs delete navigator.gpu, so they pass with or without this selector
-// and cannot cover it; this asserts the real predicate from the shipped source instead.
-const gateLine = source.match(/const wantWebGPU = .*;/);
-assert.ok(gateLine, 'engine.js must gate WebGPU behind an explicit wantWebGPU predicate');
-assert.doesNotMatch(
-  gateLine[0],
-  /\.has\(/,
-  'the WebGPU opt-in must not match on presence alone: ?webgpu=0 and ?webgpu=false would enable it',
-);
+// Regression gate for the blank-arena fix (#228).
+//
+// Babylon zeroes _frameHandler before running the render callback and only
+// re-queues the next frame AFTER it returns, with no try/catch on that path, so a
+// single throw ends rendering forever: activeRenderLoops stays 1, _frameHandler
+// stays 0, frameId never leaves 0, and the canvas is black while state streams in.
+// That exact state was measured on a live WebGPU client. The fix is containment in
+// the loop, so assert it is there and cannot be quietly removed.
+const loopStart = source.indexOf('engine.runRenderLoop(() => {');
+const loopEnd = source.indexOf("if (typeof IntersectionObserver === 'function'", loopStart);
+assert.ok(loopStart >= 0 && loopEnd > loopStart, 'the render loop must stay discoverable');
+const loopSrc = source.slice(loopStart, loopEnd);
+assert.match(loopSrc, /try \{/, 'the render callback must open a try block');
+assert.match(loopSrc, /scene\.render\(\);/, 'the guarded body must still render the scene');
+assert.match(loopSrc, /catch \(err\)[\s\S]{0,160}_onRenderLoopError/,
+  'a throwing frame must be routed to the handler, or one bad frame kills rendering permanently');
+assert.match(source, /_onRenderLoopError\(err\) \{/,
+  'engine.js must define the render-loop error handler');
+assert.match(source, /bloomEnabled = false/,
+  'the first contained failure must drop the bloom pass rather than the whole renderer');
 
-// Evaluate the SHIPPED predicate against real query strings with a stubbed location.
-const evalGate = (search) => {
-  const fn = new Function('location', `${gateLine[0]} return wantWebGPU;`);
-  return fn({ search });
-};
-assert.equal(evalGate('?webgpu=1'), true, '?webgpu=1 must opt in to WebGPU');
-for (const search of ['', '?', '?webgpu', '?webgpu=0', '?webgpu=false', '?webgpu=true', '?webgpu=yes', '?other=1']) {
-  assert.equal(evalGate(search), false, `WebGPU must stay off for ${search || '(no query)'}`);
+// WebGPU stays the default where supported (it is a large CPU saving); ?webgpu=0 is
+// the triage escape hatch. Assert the predicate really is an exact "0" match, so a
+// stray ?webgpu or ?webgpu=false cannot silently force everyone onto WebGL.
+const gateLine = source.match(/const forceWebGL = .*;/);
+assert.ok(gateLine, 'engine.js must expose an explicit forceWebGL predicate');
+const evalGate = (search) => new Function('location', `${gateLine[0]} return forceWebGL;`)({ search });
+assert.equal(evalGate('?webgpu=0'), true, '?webgpu=0 must force WebGL');
+for (const search of ['', '?webgpu', '?webgpu=1', '?webgpu=false', '?other=0']) {
+  assert.equal(evalGate(search), false, `WebGPU must remain preferred for ${search || '(no query)'}`);
 }
 
-// The only WebGPUEngine construction must sit behind that gate.
-assert.match(
-  source,
-  /const webGPUSupported = wantWebGPU && await webGPUAvailableWithin\(B\)[\s\S]{0,200}new B\.WebGPUEngine\(/,
-  'WebGPUEngine may only be constructed after the wantWebGPU gate passes',
-);
-assert.equal(
-  (source.match(/new B\.WebGPUEngine\(/g) || []).length, 1,
-  'there must be exactly one WebGPUEngine construction site, so the gate cannot be bypassed',
-);
-
-console.log('WebGPU is off by default and opt-in only via an exact ?webgpu=1');
+console.log('render-loop failures are contained, and WebGPU stays default with a ?webgpu=0 escape hatch');
