@@ -29,6 +29,7 @@ const method = (name) => {
 };
 
 const onError = method('_onRenderLoopError');
+const contain = method('_containBloomFailure');
 const quiet = { error() {}, warn() {}, log() {} };
 const realConsole = globalThis.console;
 
@@ -42,7 +43,7 @@ const applySettings = (engine, bloomSetting = true) => {
 
 globalThis.console = quiet;
 try {
-  const engine = { _onRenderLoopError: onError };
+  const engine = { _onRenderLoopError: onError, _containBloomFailure: contain };
 
   // --- first init ---
   engine.pipeline = buildPipeline(engine);
@@ -72,7 +73,7 @@ try {
   assert.equal(engine.pipeline.bloomEnabled, false, 'containment holds for the whole session');
 
   // A device where bloom works is untouched.
-  const healthy = { _onRenderLoopError: onError };
+  const healthy = { _onRenderLoopError: onError, _containBloomFailure: contain };
   healthy.pipeline = buildPipeline(healthy);
   applySettings(healthy);
   assert.equal(healthy.pipeline.bloomEnabled, true, 'a healthy device keeps its bloom');
@@ -80,7 +81,27 @@ try {
   globalThis.console = realConsole;
 }
 
+// The steady-state fault is an async uncaptured GPU error that never reaches
+// the synchronous catch, so containment must also arm from that channel.
+globalThis.console = quiet;
+try {
+  const asyncOnly = { _containBloomFailure: contain };
+  asyncOnly.pipeline = buildPipeline(asyncOnly);
+  applySettings(asyncOnly);
+  assert.equal(asyncOnly.pipeline.bloomEnabled, true, 'starts on');
+  // No throw ever happens; only the device error listener fires.
+  asyncOnly._containBloomFailure(new Error('No bind group set at group index 1'));
+  assert.equal(asyncOnly._bloomBroken, true, 'the async channel must arm the latch too');
+  assert.equal(asyncOnly.pipeline.bloomEnabled, false, 'and drop the pass');
+  asyncOnly.pipeline = buildPipeline(asyncOnly);   // rebuild
+  applySettings(asyncOnly);
+  assert.equal(asyncOnly.pipeline.bloomEnabled, false, 'and hold across the rebuild');
+} finally {
+  globalThis.console = realConsole;
+}
+
 console.log('bloom containment survives the between-round scene rebuild and a settings re-apply');
+console.log('containment arms from the async GPU error channel, not only from a throw');
 
 // The two one-line policy sites that the simulation above stands in for.
 // Both run again on every _rebuildForArenaSize, so a regression on either

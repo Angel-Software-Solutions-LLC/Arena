@@ -269,6 +269,26 @@ export class ArenaEngine {
       applyWorldTheme();
     });
     this.engine = engine;
+    // The steady-state form of the bloom bind fault does NOT throw. It arrives
+    // as an uncaptured WebGPU validation error ("No bind group set at group
+    // index 1" on the imageProcessing pass), which the render callback's catch
+    // never sees, so containment cannot depend on the synchronous path alone.
+    // GPUDevice is the only channel Babylon exposes for it; there is no public
+    // observable. Guarded because the field is internal and absent on WebGL.
+    try {
+      const device = engine._device;
+      if (device && typeof device.addEventListener === 'function') {
+        device.addEventListener('uncapturederror', (ev) => {
+          // Only act while the pass that is known to fail here is actually on.
+          // A healthy device produces none of these, so a small run of them
+          // with bloom enabled is the signal, not one-off noise.
+          if (!this.pipeline || !this.pipeline.bloomEnabled) return;
+          this._gpuErrors = (this._gpuErrors || 0) + 1;
+          if (this._gpuErrors < 3) return;
+          this._containBloomFailure(ev && ev.error ? ev.error : new Error('uncaptured WebGPU error'));
+        });
+      }
+    } catch (e) { /* no device to watch; the synchronous path still applies */ }
     this._grading = new GradingController();
     const scene = new B.Scene(engine);
     this.scene = scene;
@@ -535,6 +555,24 @@ export class ArenaEngine {
   }
 
   /**
+   * Single containment entry point, reached from BOTH the synchronous render
+   * callback catch and the asynchronous GPUDevice uncapturederror listener.
+   * Latches rather than counts: the flag lives on the engine instance, which
+   * outlives the scene, so the dispose and re-init that an arena resize
+   * performs cannot undo it.
+   * @private
+   */
+  _containBloomFailure(err) {
+    if (this._bloomBroken) {
+      if (this.pipeline && this.pipeline.bloomEnabled) this.pipeline.bloomEnabled = false;
+      return;
+    }
+    this._bloomBroken = true;
+    console.warn('[Arena] bloom failed on this device; keeping it off for the session', err);
+    if (this.pipeline && this.pipeline.bloomEnabled) this.pipeline.bloomEnabled = false;
+  }
+
+  /**
    * Render-loop crash containment (blank-arena guard).
    *
    * Babylon does not guard the render callback: _processFrame zeroes
@@ -563,13 +601,7 @@ export class ArenaEngine {
     // later failure count therefore never runs. The flag lives on the engine
     // instance, which outlives the scene, so it also survives the dispose and
     // re-init that a between-round arena resize performs.
-    if (!this._bloomBroken) {
-      this._bloomBroken = true;
-      console.warn('[Arena] bloom failed on this device; keeping it off for the session');
-    }
-    if (this.pipeline && this.pipeline.bloomEnabled) {
-      this.pipeline.bloomEnabled = false;
-    }
+    this._containBloomFailure(err);
     if (this._renderFailures >= 6 && this.pipeline) {
       console.warn('[Arena] repeated render-loop failures; disabling the post-process pipeline');
       try { this.pipeline.dispose(); } catch (e) { /* already gone */ }
