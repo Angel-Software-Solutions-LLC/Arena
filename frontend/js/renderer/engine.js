@@ -219,7 +219,10 @@ export class ArenaEngine {
         this._grading.enabled = isEnabled('rendering', 'dynamicGrading');
       }
       if (!this.pipeline || !this.pipeline.isSupported) return;
-      this.pipeline.bloomEnabled = isEnabled('rendering', 'bloom');
+      // Never re-enable a bloom pass that has already failed on this device.
+      // This runs on every settings change AND once per init(), so without the
+      // guard a scene rebuild silently undoes the containment below.
+      this.pipeline.bloomEnabled = isEnabled('rendering', 'bloom') && !this._bloomBroken;
       this.pipeline.imageProcessing.vignetteEnabled = isEnabled('rendering', 'vignette');
       this.pipeline.fxaaEnabled = isEnabled('rendering', 'fxaa');
       this.pipeline.sharpenEnabled = isEnabled('rendering', 'sharpen');
@@ -397,7 +400,10 @@ export class ArenaEngine {
       // additive particles (trims, rings, trails, explosions) but nothing glowed.
       // High threshold so only genuine highlights bloom; ACES keeps them controlled.
       // bloomScale 0.5 halves the post-pass cost for projector laptops.
-      pipeline.bloomEnabled = true;
+      // _rebuildForArenaSize disposes the scene and calls init() again, so this
+      // line runs once per arena resize. Starting it back at true is what made a
+      // contained failure come straight back at the next round boundary.
+      pipeline.bloomEnabled = !this._bloomBroken;
       pipeline.bloomThreshold = 0.75;
       pipeline.bloomWeight = 0.3;
       pipeline.bloomKernel = 48;
@@ -549,13 +555,22 @@ export class ArenaEngine {
     this._renderFailures = (this._renderFailures || 0) + 1;
     if (this._renderFailures === 1) {
       console.error('[Arena] render loop threw; containing so the canvas keeps drawing', err);
-      if (this.pipeline && this.pipeline.bloomEnabled) {
-        this.pipeline.bloomEnabled = false;
-        console.warn('[Arena] disabled bloom after a render-loop failure');
-      }
-      return;
     }
-    if (this._renderFailures === 6 && this.pipeline) {
+    // Latch, do not count. The failure this contains is a WebGPU bind-group
+    // fault in the bloom merge pass, and after the pass is dropped the same
+    // fault resurfaces as an ASYNC GPUValidationError that never throws into
+    // JS, so this handler is not called a second time. Anything gated on a
+    // later failure count therefore never runs. The flag lives on the engine
+    // instance, which outlives the scene, so it also survives the dispose and
+    // re-init that a between-round arena resize performs.
+    if (!this._bloomBroken) {
+      this._bloomBroken = true;
+      console.warn('[Arena] bloom failed on this device; keeping it off for the session');
+    }
+    if (this.pipeline && this.pipeline.bloomEnabled) {
+      this.pipeline.bloomEnabled = false;
+    }
+    if (this._renderFailures >= 6 && this.pipeline) {
       console.warn('[Arena] repeated render-loop failures; disabling the post-process pipeline');
       try { this.pipeline.dispose(); } catch (e) { /* already gone */ }
       this.pipeline = null;
