@@ -20,7 +20,7 @@ import { ArenaEngine } from '../js/renderer/engine.js?v=20260718m';
 import { Minimap } from '../js/renderer/minimap.js?v=20260718c';
 import { SpectatorSocket } from '../js/spectator-ws.js';
 import { apiPath, appPath, wsURL } from '../js/paths.js?v=20260710a';
-import { handleServiceStatus, initServiceStatus } from '../js/service-status.js?v=20260810b';
+import { handleServiceStatus, initServiceStatus } from '../js/service-status.js';
 
 const ARENA_WIDTH = 2000;
 const ARENA_HEIGHT = 2000;

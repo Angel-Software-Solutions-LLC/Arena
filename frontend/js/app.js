@@ -8,7 +8,7 @@ import './babylon-runtime.js?v=20260718a';
  */
 
 import { ArenaEngine } from './renderer/engine.js?v=20260718m';
-import { HudRenderer } from './renderer/hud.js?v=20260810b';
+import { HudRenderer } from './renderer/hud.js?v=20260711b';
 import { Minimap } from './renderer/minimap.js?v=20260718c';
 import { SpectatorSocket } from './spectator-ws.js';
 import { initLeaderboardWidget } from './leaderboard.js?v=20260710f';
@@ -16,7 +16,7 @@ import { initKeyGenerator } from './key-generator.js?v=20260714i';
 import { isEnabled, onSettingsChange } from './settings.js';
 import { initSettingsPanel } from './settings-panel.js';
 import { apiPath, appPath, wsURL } from './paths.js?v=20260710a';
-import { handleServiceStatus } from './service-status.js?v=20260810b';
+import { handleServiceStatus } from './service-status.js';
 import { observeArenaSafeViewport } from './safe-viewport.js?v=20260718b';
 
 const ARENA_WIDTH = 2000;
