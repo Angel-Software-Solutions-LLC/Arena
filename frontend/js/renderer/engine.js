@@ -164,14 +164,18 @@ export class ArenaEngine {
   async init() {
     const B = window.BABYLON;
     let engine;
-    // Default to WebGL. Babylon's WebGPU backend crashes the GlowLayer post-process:
-    // "textureSampler"/"bloomBlur" fail to bind in getBindGroups every render frame,
-    // which throws in the render loop and leaves the canvas blank. Because init() only
+    // Default to WebGL. Under Babylon's WebGPU backend, DefaultRenderingPipeline's bloom
+    // pass fails to bind its textures ("textureSampler"/"bloomBlur" missing in
+    // getBindGroups) and throws inside the render loop, so no frame ever completes and the
+    // canvas stays blank. (Bloom, not the GlowLayer: GlowLayer ships defaultOff in
+    // settings.js, so it is not even enabled on a default visit.) Because init() only
     // caught WebGPU *creation* failures, not this render-time crash, every WebGPU-capable
-    // machine (e.g. any discrete GPU) preferred WebGPU and rendered a blank arena. WebGL
-    // renders the identical scene, glow included. Opt back into WebGPU with ?webgpu=1
-    // once the GlowLayer binding is fixed upstream (Babylon issue with GlowLayer on WebGPU).
-    const wantWebGPU = new URLSearchParams(location.search).has('webgpu');
+    // machine preferred WebGPU and rendered nothing. WebGL renders the identical scene.
+    //
+    // The opt-in is EXACTLY ?webgpu=1. Matching on presence alone would turn ?webgpu=0 and
+    // ?webgpu=false into an enable, so a conventional explicit disable would revive the
+    // known blank-canvas path.
+    const wantWebGPU = new URLSearchParams(location.search).get('webgpu') === '1';
     try {
       const webGPUSupported = wantWebGPU && await webGPUAvailableWithin(B);
       if (webGPUSupported) {
