@@ -129,7 +129,13 @@ case "${1:-help}" in
     if pgrep -f "$SCRIPT" &>/dev/null; then
       yellow "⚠️  $BOT is already running."
     else
-      nohup python3 -u "$SCRIPT" >> "$ARENA_DIR/bots/${BOT}/${BOT}.log" 2>&1 &
+      LOG="$ARENA_DIR/bots/${BOT}/${BOT}.log"
+      # Log retention: start fresh instead of appending forever when the
+      # previous log went stale (bot last ran over 2 days ago) or oversized.
+      if [ -f "$LOG" ] && { [ -n "$(find "$LOG" -mtime +2 2>/dev/null)" ] || [ "$(wc -c < "$LOG")" -gt 10485760 ]; }; then
+        : > "$LOG"
+      fi
+      nohup python3 -u "$SCRIPT" >> "$LOG" 2>&1 &
       green "▶️  Started $BOT (PID $!)"
     fi
     ;;

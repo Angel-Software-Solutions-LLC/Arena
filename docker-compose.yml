@@ -6,10 +6,24 @@
 # network, unable to reach arena-db/arena-redis). See docs/build-and-deploy.md.
 name: arena
 
+# Bound container stdout/stderr growth: Docker's default json-file driver
+# otherwise keeps logs forever. Size caps are the only rotation Docker offers
+# (there is no age-based option); DB-side log data has its own time-based
+# retention (ARENA_LOG_RETENTION_HOURS). Rotation settings apply when a
+# container is (re)created, not to already-running containers — arena-db and
+# arena-redis need a one-time `docker compose up -d --force-recreate` since
+# the updater sidecar only ever recreates arena-server.
+x-log-rotation: &log-rotation
+  driver: json-file
+  options:
+    max-size: "25m"
+    max-file: "4"
+
 services:
   arena-db:
     image: postgres:16-alpine
     container_name: arena-db
+    logging: *log-rotation
     environment:
       POSTGRES_DB: ${ARENA_DB_NAME:-arena}
       # In managed deployments the runtime app role is deliberately not the
@@ -33,6 +47,7 @@ services:
   arena-redis:
     image: redis:7-alpine
     container_name: arena-redis
+    logging: *log-rotation
     ports:
       - "127.0.0.1:${ARENA_REDIS_HOST_PORT:-6380}:6379"
     volumes:
@@ -56,6 +71,7 @@ services:
     container_name: arena-server
     restart: unless-stopped
     stop_grace_period: 15s
+    logging: *log-rotation
     ports:
       - "127.0.0.1:8700:8000"
     depends_on:
@@ -86,6 +102,7 @@ services:
     image: arena-updater:local
     container_name: arena-updater
     restart: unless-stopped
+    logging: *log-rotation
     profiles:
       - updater
     environment:
