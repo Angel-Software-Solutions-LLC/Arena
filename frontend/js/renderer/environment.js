@@ -117,6 +117,32 @@ const MAP_PALETTES = Object.freeze({
   }),
 });
 
+
+/**
+ * Mark a mesh as permanently static.
+ *
+ * freezeWorldMatrix alone still leaves Babylon syncing bounding info and
+ * running the full bounding-box culling test for the mesh every frame. These
+ * meshes never move, never deform, and are never picked (nothing in the
+ * frontend calls scene.pick), so both are wasted per-frame CPU.
+ *
+ * Geometry is not this scene's bottleneck -- a measured idle scene is ~28
+ * active meshes against ~253 draw calls, which are dominated by the
+ * post-process chain and particle systems -- so this is a modest, safe
+ * saving rather than a structural one.
+ *
+ * @param {object} mesh Babylon mesh that will never move again
+ */
+function markStaticMesh(mesh) {
+  if (!mesh) return;
+  mesh.freezeWorldMatrix();
+  mesh.doNotSyncBoundingInfo = true;
+  const B = window.BABYLON;
+  if (B && B.AbstractMesh && B.AbstractMesh.CULLINGSTRATEGY_BOUNDINGSPHERE_ONLY !== undefined) {
+    mesh.cullingStrategy = B.AbstractMesh.CULLINGSTRATEGY_BOUNDINGSPHERE_ONLY;
+  }
+}
+
 export class EnvironmentRenderer {
   /** @param {BABYLON.Scene} scene @param {number} w @param {number} h */
   constructor(scene, w, h) {
@@ -852,7 +878,7 @@ export class EnvironmentRenderer {
     ground.material = mat;
     ground.isPickable = false;
     ground.receiveShadows = true;
-    ground.freezeWorldMatrix();
+    markStaticMesh(ground);
 
     // Add a second layer — very soft ambient energy motion with no grid structure.
     const glow = B.MeshBuilder.CreateGround('floorGlow', {
@@ -1046,7 +1072,7 @@ export class EnvironmentRenderer {
       wall.position.set(cx, wallH / 2, cz);
       wall.material = wallMat;
       wall.isPickable = false;
-      wall.freezeWorldMatrix();
+      markStaticMesh(wall);
       this._walls.push(wall);
 
       // Glowing trim strip on top
@@ -1056,7 +1082,7 @@ export class EnvironmentRenderer {
       trim.position.set(cx, wallH + 1.5, cz);
       trim.material = trimMat;
       trim.isPickable = false;
-      trim.freezeWorldMatrix();
+      markStaticMesh(trim);
     }
   }
 
@@ -1109,7 +1135,7 @@ export class EnvironmentRenderer {
       pylon.position.set(cx, pylonH / 2, cz);
       pylon.material = pylonMat;
       pylon.isPickable = false;
-      pylon.freezeWorldMatrix();
+      markStaticMesh(pylon);
 
       // Beacon sphere at top
       const beacon = B.MeshBuilder.CreateSphere(`beacon-${i}`, {
@@ -1149,7 +1175,7 @@ export class EnvironmentRenderer {
       ring.position.set(cx, 1, cz);
       ring.material = beaconMat;
       ring.isPickable = false;
-      ring.freezeWorldMatrix();
+      markStaticMesh(ring);
 
       this._pylons.push({ pylon, beacon, beam, ring, baseBeamEmitRate: PYLON_BEAM_EMIT_RATE });
     }
@@ -1215,7 +1241,7 @@ export class EnvironmentRenderer {
       hMat.freeze();
       nozzle.material = hMat;
       nozzle.isPickable = false;
-      nozzle.freezeWorldMatrix();
+      markStaticMesh(nozzle);
 
       // Inner glow ring at nozzle opening
       const glow = B.MeshBuilder.CreateTorus(`thrusterGlow-${i}`, {
@@ -1229,7 +1255,7 @@ export class EnvironmentRenderer {
       glowMat.freeze();
       glow.material = glowMat;
       glow.isPickable = false;
-      glow.freezeWorldMatrix();
+      markStaticMesh(glow);
 
       // Downward particle jet — emits from BELOW the nozzle
       const jet = new B.ParticleSystem(`thrusterJet-${i}`, 80, this.scene);

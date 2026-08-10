@@ -206,6 +206,11 @@ type Config struct {
 	SpectatorBroadcastInterval   int     `envconfig:"ARENA_SPECTATOR_BROADCAST_INTERVAL" default:"1"`
 	AFKTimeoutTicks              int     `envconfig:"ARENA_AFK_TIMEOUT_TICKS" default:"300"`
 
+	// Browser error reporting. Public, unauthenticated intake for client-side
+	// exceptions (bounded in-memory only, surfaced in the admin Errors tab).
+	// Per-IP request budget; 0 or less disables the endpoint's limiter.
+	ClientErrorReportRPM int `envconfig:"ARENA_CLIENT_ERROR_REPORT_RPM" default:"30"`
+
 	// Log retention. Applies to log-style data only (kill_log, finished
 	// rounds, audit/event tables, stale rate-limit rows) — never to
 	// leaderboard, account, or payment tables.

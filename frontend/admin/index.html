@@ -2368,6 +2368,15 @@ let token = localStorage.getItem('arena_admin_token') || '';
 let sseSource = null; // AbortController for the active fetch stream
 let sseReconnectTimer = null;
 let sseLastEventId = 0;
+// Reconnect backoff. A fixed short retry turns any sustained stream failure
+// (a proxy 502, a rate-limit rejection) into a permanent request storm: at
+// 3s that is 20 req/min on top of the panel's own polling, which together
+// can exhaust ARENA_ADMIN_RATE_LIMIT_RPM and make every other admin call
+// start returning 429 -- the whole panel then looks broken.
+const SSE_BACKOFF_MIN_MS = 3000;
+const SSE_BACKOFF_MAX_MS = 60000;
+let sseBackoffMs = SSE_BACKOFF_MIN_MS;
+let sseConsecutiveFailures = 0;
 const paused = {conn:false,http:false,ws:false,ge:false,kf:false};
 const logs = {conn:[],http:[],ws:[],ge:[],kf:[]};
 const MAX_LOG = 500;
@@ -2493,6 +2502,13 @@ async function api(path, opts={}) {
     headers: {'X-Admin-Token': token, 'Content-Type':'application/json', ...(opts.headers||{})}
   });
   if (res.status === 401 || res.status === 403) { logout(); throw new Error('unauthorized'); }
+  if (res.status === 429) {
+    // The admin API is rate limited (ARENA_ADMIN_RATE_LIMIT_RPM). Callers
+    // mostly swallow errors into a result line, so without this a limiter
+    // rejection is indistinguishable from "the button does nothing".
+    setLiveFeedStatus('ratelimited', 'Admin rate limit reached - retry shortly');
+    throw new Error('rate limited (429) - too many admin requests; retry shortly');
+  }
   if (!res.ok) {
     let message = 'request failed (' + res.status + ')';
     try {
@@ -2591,10 +2607,50 @@ window.addEventListener('pageshow', (event) => {
 function scheduleSSEReconnect(controller) {
   if (controller.signal.aborted || sseSource !== controller || !hasActiveAdminAuth(token, ssoSession)) return;
   sseSource = null;
+  sseConsecutiveFailures += 1;
+  const delay = sseBackoffMs;
+  // Exponential backoff with jitter, capped. Jitter keeps several open admin
+  // tabs from retrying in lockstep.
+  sseBackoffMs = Math.min(SSE_BACKOFF_MAX_MS, Math.round(sseBackoffMs * 2));
+  setLiveFeedStatus('reconnecting', `Live feed lost - retrying in ${Math.round(delay / 1000)}s`);
+  const jittered = delay + Math.floor(Math.random() * 1000);
   sseReconnectTimer = setTimeout(() => {
     sseReconnectTimer = null;
     connectFetchSSE();
-  }, 3000);
+  }, jittered);
+}
+
+// Reset the backoff once a stream actually delivers, so a brief blip does not
+// leave the panel on a minute-long retry interval.
+function noteSSEConnected() {
+  sseBackoffMs = SSE_BACKOFF_MIN_MS;
+  sseConsecutiveFailures = 0;
+  setLiveFeedStatus('live', 'Live feed connected');
+}
+
+// Single visible indicator for stream health. Without it a dead feed is
+// invisible: the panel keeps showing the last snapshot it received and every
+// button silently acts on stale state.
+function setLiveFeedStatus(state, message) {
+  if (!document.body) return; // called before the document is ready
+  let el = document.getElementById('sseStatusBanner');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'sseStatusBanner';
+    el.style.cssText = 'position:fixed;bottom:12px;right:12px;z-index:9999;padding:7px 12px;' +
+      'border-radius:6px;font-size:12px;font-family:inherit;pointer-events:none;' +
+      'border:1px solid var(--border);background:var(--bg2,#12202f);color:var(--text,#e8f1fa);' +
+      'box-shadow:0 4px 18px rgba(0,0,0,.45);transition:opacity .3s';
+    document.body.appendChild(el);
+  }
+  el.textContent = message;
+  if (state === 'live') {
+    el.style.borderColor = 'var(--green,#3fbf7f)';
+    el.style.opacity = '0';
+  } else {
+    el.style.borderColor = state === 'ratelimited' ? 'var(--yellow,#ffce54)' : 'var(--red,#ff5f57)';
+    el.style.opacity = '1';
+  }
 }
 
 async function startFetchSSE(url, controller) {
@@ -2609,7 +2665,14 @@ async function startFetchSSE(url, controller) {
       logout();
       return;
     }
+    if (res.status === 429) {
+      // Rate limited: back off hard rather than hammering the limiter, and
+      // say so, because every other admin call is being rejected too.
+      setLiveFeedStatus('ratelimited', 'Admin rate limit reached - backing off');
+      throw new Error('SSE rate limited (429)');
+    }
     if (!res.ok || !res.body) throw new Error('SSE request failed (' + res.status + ')');
+    noteSSEConnected();
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     const parser = new ArenaSSEFrameParser(({type, data, id}) => {

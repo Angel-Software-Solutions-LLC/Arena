@@ -78,7 +78,14 @@ const liveState = (tick, keyframe) => ({
   sudden_death: false,
 });
 
-test('the world still paints after a non-integer hourglass rebuild', async ({ page }, testInfo) => {
+// The mobile spectator is a separate document (frontend/m/) sharing the same
+// renderer. It has its own entry point and cache tags, so a bundle or import
+// regression can land on one and not the other.
+for (const variant of [
+  { name: 'desktop', path: '/?arena-test=1' },
+  { name: 'mobile', path: '/m/?arena-test=1' },
+]) {
+test(`the world still paints after a non-integer hourglass rebuild (${variant.name})`, async ({ page }, testInfo) => {
   test.setTimeout(180_000);
   let spectatorSocket = null;
 
@@ -113,9 +120,16 @@ test('the world still paints after a non-integer hourglass rebuild', async ({ pa
     } catch { /* same WebGL path */ }
   });
 
-  await page.goto('/?arena-test=1', { waitUntil: 'networkidle' });
+  await page.goto(variant.path, { waitUntil: 'networkidle' });
   await expect.poll(() => spectatorSocket !== null).toBe(true);
-  await expect.poll(() => page.evaluate(() => window.__ARENA_TEST__?.diagnostics()?.ready || false)).toBe(true);
+  // The mobile document does not expose the desktop __ARENA_TEST__ hook, so
+  // fall back to the engine itself: a live scene with a camera is the same
+  // readiness signal the hook reports.
+  await expect.poll(() => page.evaluate(() => {
+    if (window.__ARENA_TEST__) return !!window.__ARENA_TEST__.diagnostics()?.ready;
+    const scene = window.BABYLON?.EngineStore?.LastCreatedScene;
+    return !!scene && !!scene.activeCamera;
+  }), { timeout: 60_000 }).toBe(true);
 
   const send = (msg) => spectatorSocket.send(JSON.stringify(msg));
 
@@ -153,6 +167,7 @@ test('the world still paints after a non-integer hourglass rebuild', async ({ pa
     setTimeout(() => done({ litFraction: -1, timedOut: true }), 30_000);
   }));
 
-  await page.screenshot({ path: testInfo.outputPath('live-conditions.png') });
+  await page.screenshot({ path: testInfo.outputPath(`live-conditions-${variant.name}.png`) });
   expect(pixels.litFraction, `framebuffer readback ${JSON.stringify(pixels)}`).toBeGreaterThan(0.05);
 });
+}

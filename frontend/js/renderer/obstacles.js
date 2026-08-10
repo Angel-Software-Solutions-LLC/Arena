@@ -26,6 +26,32 @@ import { isEnabled } from '../settings.js';
 import { MapWallsRenderer, buildWallGeometry, resolveEarcut } from './map-walls.js?v=20260718g';
 import { clusterObstacles, computeClusterOutline, buildClusterTrimGeometry } from './obstacle-clusters.js?v=20260718g';
 
+
+/**
+ * Mark a mesh as permanently static.
+ *
+ * freezeWorldMatrix alone still leaves Babylon syncing bounding info and
+ * running the full bounding-box culling test for the mesh every frame. These
+ * meshes never move, never deform, and are never picked (nothing in the
+ * frontend calls scene.pick), so both are wasted per-frame CPU.
+ *
+ * Geometry is not this scene's bottleneck -- a measured idle scene is ~28
+ * active meshes against ~253 draw calls, which are dominated by the
+ * post-process chain and particle systems -- so this is a modest, safe
+ * saving rather than a structural one.
+ *
+ * @param {object} mesh Babylon mesh that will never move again
+ */
+function markStaticMesh(mesh) {
+  if (!mesh) return;
+  mesh.freezeWorldMatrix();
+  mesh.doNotSyncBoundingInfo = true;
+  const B = window.BABYLON;
+  if (B && B.AbstractMesh && B.AbstractMesh.CULLINGSTRATEGY_BOUNDINGSPHERE_ONLY !== undefined) {
+    mesh.cullingStrategy = B.AbstractMesh.CULLINGSTRATEGY_BOUNDINGSPHERE_ONLY;
+  }
+}
+
 export const PILLAR_HEIGHT = 30;
 
 /**
@@ -311,7 +337,7 @@ export class ObstacleRenderer {
       this._bodyMesh.name = 'obstacleBodies';
       this._bodyMesh.material = this._mat;
       this._bodyMesh.isPickable = false;
-      this._bodyMesh.freezeWorldMatrix();
+      markStaticMesh(this._bodyMesh);
       // Only the opaque bodies cast — the trims are emissive decoration.
       if (this._env) this._env.addShadowCaster(this._bodyMesh);
     }
@@ -322,7 +348,7 @@ export class ObstacleRenderer {
       this._trimMesh.name = 'obstacleTrims';
       this._trimMesh.material = this._edgeMat;
       this._trimMesh.isPickable = false;
-      this._trimMesh.freezeWorldMatrix();
+      markStaticMesh(this._trimMesh);
     }
 
     // The environment's shadow map is frozen (RENDER_ONCE) — re-bake it now
@@ -360,7 +386,7 @@ export class ObstacleRenderer {
     bodyData.applyToMesh(bodyMesh);
     bodyMesh.material = this._mat;
     bodyMesh.isPickable = false;
-    bodyMesh.freezeWorldMatrix();
+    markStaticMesh(bodyMesh);
     if (this._env && this._env.addShadowCaster) this._env.addShadowCaster(bodyMesh);
     this._clusterBodyMesh = bodyMesh;
 
@@ -372,7 +398,7 @@ export class ObstacleRenderer {
     trimData.applyToMesh(trimMesh);
     trimMesh.material = this._syncClusterTrimMat();
     trimMesh.isPickable = false;
-    trimMesh.freezeWorldMatrix();
+    markStaticMesh(trimMesh);
     this._clusterTrimMesh = trimMesh;
   }
 

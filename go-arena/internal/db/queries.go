@@ -102,6 +102,10 @@ func EnsureCoreSchema(ctx context.Context) error {
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_rounds_persisted_order
 			ON rounds (persisted_order)`,
 		`CREATE INDEX IF NOT EXISTS idx_rounds_round_number ON rounds (round_number DESC)`,
+		// Retention sweeps delete finished rounds by age (see
+		// db.PruneLogTables). Without this the predicate falls back to a
+		// sequential scan of the whole table on every hourly sweep.
+		`CREATE INDEX IF NOT EXISTS idx_rounds_started_at ON rounds (started_at)`,
 		`CREATE TABLE IF NOT EXISTS kill_log (
 			id TEXT PRIMARY KEY,
 			round_id TEXT REFERENCES rounds(id) ON DELETE SET NULL,

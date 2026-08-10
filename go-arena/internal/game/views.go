@@ -407,6 +407,13 @@ func BuildYourState(bot *BotState, arena *ArenaMap, killFeed *KillFeed, tickCoun
 //   - TargetPosition is null when the pending action has no target position.
 //   - Cosmetics has no omitempty: a bot without cosmetics serializes
 //     "cosmetics":null exactly like the old map payload did.
+// Fields that are zero for most bots on most ticks carry omitempty: a
+// steady-state 14-bot snapshot was ~11 KB of which ~97% was the bots array,
+// most of it these always-zero keys. This is the SPECTATOR lane only --
+// BotNearbyView (the bot protocol) is a separate struct and is untouched, so
+// no SDK or third-party bot sees a change. Verified there are no presence or
+// strict-equality checks on these keys in frontend/js or frontend/m; absent
+// and zero are equivalent to every consumer.
 type BotSpectatorView struct {
 	Type                   string            `json:"type"`
 	ID                     string            `json:"id"`
@@ -420,33 +427,33 @@ type BotSpectatorView struct {
 	AvatarColor            string            `json:"avatar_color"`
 	Cosmetics              map[string]string `json:"cosmetics"`
 	LastAction             *string           `json:"last_action"`
-	LastActionTick         int               `json:"last_action_tick"`
+	LastActionTick         int               `json:"last_action_tick,omitempty"`
 	Action                 *string           `json:"action"`
-	TargetID               string            `json:"target_id"`
+	TargetID               string            `json:"target_id,omitempty"`
 	TargetPosition         *Vec2             `json:"target_position"`
-	IsDodging              bool              `json:"is_dodging"`
-	IsStunned              bool              `json:"is_stunned"`
-	CooldownRemaining      float64           `json:"cooldown_remaining"`
+	IsDodging              bool              `json:"is_dodging,omitempty"`
+	IsStunned              bool              `json:"is_stunned,omitempty"`
+	CooldownRemaining      float64           `json:"cooldown_remaining,omitempty"`
 	Facing                 Vec2              `json:"facing"`
-	RecentlyDisruptedTicks int               `json:"recently_disrupted_ticks"`
-	BraceReady             bool              `json:"brace_ready"`
-	BowChargeTicks         int               `json:"bow_charge_ticks"`
-	BowChargeLevel         float64           `json:"bow_charge_level"`
-	ChargedShotReady       bool              `json:"charged_shot_ready"`
-	KillStreak             int               `json:"kill_streak"`
-	RoundKills             int               `json:"round_kills"`
-	ShieldAbsorb           float64           `json:"shield_absorb"`
-	HazardKeyActive        bool              `json:"hazard_key_active"`
-	HazardKeyTicks         int               `json:"hazard_key_ticks"`
-	RelayBatteryActive     bool              `json:"relay_battery_active"`
-	RelayBatteryTicks      int               `json:"relay_battery_ticks"`
-	MineCount              int               `json:"mine_count"`
-	GrappleCharges         int               `json:"grapple_charges"`
-	GrappleCooldown        float64           `json:"grapple_cooldown"`
-	GravityWellCharge      int               `json:"gravity_well_charge"`
-	IsBountyTarget         bool              `json:"is_bounty_target"`
-	BountyTokenBonus       int               `json:"bounty_token_bonus"`
-	Team                   int               `json:"team"`
+	RecentlyDisruptedTicks int               `json:"recently_disrupted_ticks,omitempty"`
+	BraceReady             bool              `json:"brace_ready,omitempty"`
+	BowChargeTicks         int               `json:"bow_charge_ticks,omitempty"`
+	BowChargeLevel         float64           `json:"bow_charge_level,omitempty"`
+	ChargedShotReady       bool              `json:"charged_shot_ready,omitempty"`
+	KillStreak             int               `json:"kill_streak,omitempty"`
+	RoundKills             int               `json:"round_kills,omitempty"`
+	ShieldAbsorb           float64           `json:"shield_absorb,omitempty"`
+	HazardKeyActive        bool              `json:"hazard_key_active,omitempty"`
+	HazardKeyTicks         int               `json:"hazard_key_ticks,omitempty"`
+	RelayBatteryActive     bool              `json:"relay_battery_active,omitempty"`
+	RelayBatteryTicks      int               `json:"relay_battery_ticks,omitempty"`
+	MineCount              int               `json:"mine_count,omitempty"`
+	GrappleCharges         int               `json:"grapple_charges,omitempty"`
+	GrappleCooldown        float64           `json:"grapple_cooldown,omitempty"`
+	GravityWellCharge      int               `json:"gravity_well_charge,omitempty"`
+	IsBountyTarget         bool              `json:"is_bounty_target,omitempty"`
+	BountyTokenBonus       int               `json:"bounty_token_bonus,omitempty"`
+	Team                   int               `json:"team,omitempty"`
 }
 
 // BuildBotSpectatorView builds the spectator view of one bot.

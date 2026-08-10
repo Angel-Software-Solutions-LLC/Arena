@@ -7,8 +7,8 @@
 
 import { CameraController } from './camera.js?v=20260718b';
 import { BotRenderer } from './bots.js?v=20260718o';
-import { EnvironmentRenderer } from './environment.js?v=20260810d';
-import { ObstacleRenderer } from './obstacles.js?v=20260718h';
+import { EnvironmentRenderer } from './environment.js?v=20260810e';
+import { ObstacleRenderer } from './obstacles.js?v=20260810e';
 import { IntermissionDirector } from './intermission-director.js?v=20260718h';
 import { PickupRenderer } from './pickups.js?v=20260714f';
 import { EffectRenderer } from './effects.js?v=20260718c';
@@ -16,6 +16,7 @@ import { TrailRenderer } from './trails.js?v=20260714e';
 import { ProjectileRenderer } from './projectiles.js?v=20260711a';
 import { GameplayRenderer } from './gameplay.js?v=20260718i';
 import { getState, isEnabled, onSettingsChange } from '../settings.js';
+import { reportClientError } from '../client-errors.js?v=20260810e';
 
 // Bot positions are smoothed via exponential lerp each frame,
 // so no tick-interval-based alpha is needed.
@@ -593,6 +594,14 @@ export class ArenaEngine {
     this._renderFailures = (this._renderFailures || 0) + 1;
     if (this._renderFailures === 1) {
       console.error('[Arena] render loop threw; containing so the canvas keeps drawing', err);
+      // A contained failure still means the frame is degraded. Report it: the
+      // containment is what keeps the arena visible, not a reason to go quiet.
+      // Guarded so containment never depends on the reporter being reachable
+      // (scripts/test-bloom-failure-latch.mjs also evaluates this method in
+      // isolation, outside the module's imports).
+      if (typeof reportClientError === 'function') {
+        reportClientError('render-loop', err, { source: 'engine.runRenderLoop' });
+      }
     }
     // Latch, do not count. The failure this contains is a WebGPU bind-group
     // fault in the bloom merge pass, and after the pass is dropped the same
