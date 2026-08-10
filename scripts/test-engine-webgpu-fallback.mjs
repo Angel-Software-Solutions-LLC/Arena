@@ -29,3 +29,38 @@ assert.equal(await webGPUAvailableWithin({
 }, 100), true);
 
 console.log('WebGPU capability probing is bounded and falls back to WebGL when the browser stalls');
+
+// Regression gate for the blank-arena fix (#228): on a GPU-capable browser the default
+// route must NEVER construct a WebGPUEngine, and ?webgpu=1 must be the sole opt-in.
+// The Playwright specs delete navigator.gpu, so they pass with or without this selector
+// and cannot cover it; this asserts the real predicate from the shipped source instead.
+const gateLine = source.match(/const wantWebGPU = .*;/);
+assert.ok(gateLine, 'engine.js must gate WebGPU behind an explicit wantWebGPU predicate');
+assert.doesNotMatch(
+  gateLine[0],
+  /\.has\(/,
+  'the WebGPU opt-in must not match on presence alone: ?webgpu=0 and ?webgpu=false would enable it',
+);
+
+// Evaluate the SHIPPED predicate against real query strings with a stubbed location.
+const evalGate = (search) => {
+  const fn = new Function('location', `${gateLine[0]} return wantWebGPU;`);
+  return fn({ search });
+};
+assert.equal(evalGate('?webgpu=1'), true, '?webgpu=1 must opt in to WebGPU');
+for (const search of ['', '?', '?webgpu', '?webgpu=0', '?webgpu=false', '?webgpu=true', '?webgpu=yes', '?other=1']) {
+  assert.equal(evalGate(search), false, `WebGPU must stay off for ${search || '(no query)'}`);
+}
+
+// The only WebGPUEngine construction must sit behind that gate.
+assert.match(
+  source,
+  /const webGPUSupported = wantWebGPU && await webGPUAvailableWithin\(B\)[\s\S]{0,200}new B\.WebGPUEngine\(/,
+  'WebGPUEngine may only be constructed after the wantWebGPU gate passes',
+);
+assert.equal(
+  (source.match(/new B\.WebGPUEngine\(/g) || []).length, 1,
+  'there must be exactly one WebGPUEngine construction site, so the gate cannot be bypassed',
+);
+
+console.log('WebGPU is off by default and opt-in only via an exact ?webgpu=1');
