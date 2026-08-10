@@ -1484,7 +1484,7 @@ func (e *GameEngine) GetState() SpectatorState {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
-	return BuildSpectatorState(e.Bots, e.Arena, e.Pickups, e.KillFeed, e.TickCount, e.Round.StartTick, e.WaitingBots, e.Round.Modifier)
+	return BuildSpectatorState(e.Bots, e.Arena, e.Pickups, e.KillFeed, e.TickCount, e.Round.StartTick, e.Round.RoundNumber, e.WaitingBots, e.Round.Modifier)
 }
 
 // ArenaSnapshot holds read-only arena state for the REST API.
@@ -2629,7 +2629,7 @@ func (e *GameEngine) sendSpectatorUpdate() {
 		return
 	}
 
-	state := BuildSpectatorState(e.Bots, e.Arena, e.Pickups, e.KillFeed, e.TickCount, e.Round.StartTick, e.WaitingBots, e.Round.Modifier)
+	state := BuildSpectatorState(e.Bots, e.Arena, e.Pickups, e.KillFeed, e.TickCount, e.Round.StartTick, e.Round.RoundNumber, e.WaitingBots, e.Round.Modifier)
 
 	keyframeInterval := config.C.SpectatorKeyframeInterval
 	e.spectatorsMu.Lock()
