@@ -7,7 +7,7 @@ import './babylon-runtime.js?v=20260718a';
  * @module app
  */
 
-import { ArenaEngine } from './renderer/engine.js?v=20260718m';
+import { ArenaEngine } from './renderer/engine.js?v=20260810a';
 import { HudRenderer } from './renderer/hud.js?v=20260711b';
 import { Minimap } from './renderer/minimap.js?v=20260718c';
 import { SpectatorSocket } from './spectator-ws.js';
