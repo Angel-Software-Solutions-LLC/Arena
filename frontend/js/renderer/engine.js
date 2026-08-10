@@ -164,14 +164,22 @@ export class ArenaEngine {
   async init() {
     const B = window.BABYLON;
     let engine;
+    // Default to WebGL. Babylon's WebGPU backend crashes the GlowLayer post-process:
+    // "textureSampler"/"bloomBlur" fail to bind in getBindGroups every render frame,
+    // which throws in the render loop and leaves the canvas blank. Because init() only
+    // caught WebGPU *creation* failures, not this render-time crash, every WebGPU-capable
+    // machine (e.g. any discrete GPU) preferred WebGPU and rendered a blank arena. WebGL
+    // renders the identical scene, glow included. Opt back into WebGPU with ?webgpu=1
+    // once the GlowLayer binding is fixed upstream (Babylon issue with GlowLayer on WebGPU).
+    const wantWebGPU = new URLSearchParams(location.search).has('webgpu');
     try {
-      const webGPUSupported = await webGPUAvailableWithin(B);
+      const webGPUSupported = wantWebGPU && await webGPUAvailableWithin(B);
       if (webGPUSupported) {
         engine = new B.WebGPUEngine(this.canvas, { antialias: false });
         await engine.initAsync();
         console.log('[Arena] WebGPU');
       } else {
-        throw new Error('WebGPU not supported');
+        throw new Error(wantWebGPU ? 'WebGPU not supported' : 'WebGL default');
       }
     } catch {
       engine = new B.Engine(this.canvas, false, {
