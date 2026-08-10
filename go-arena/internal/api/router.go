@@ -103,6 +103,9 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 	if err := serviceStatus.Load(context.Background()); err != nil {
 		slog.Warn("failed to restore service status", "error", err)
 	}
+	if ro.nightlyRestartCtx != nil && config.C.NightlyRestartEnabled {
+		go RunNightlyRestartLoop(ro.nightlyRestartCtx, engine, serviceStatus, ro.shutdown)
+	}
 
 	// Create dashboard handler.
 	dashboardHandler := NewDashboardHandler(bus, adminHandler)
@@ -538,7 +541,8 @@ func noCacheStaticHandler(next http.Handler) http.Handler {
 
 // routerOptions holds optional configuration for the router.
 type routerOptions struct {
-	shutdown func()
+	shutdown          func()
+	nightlyRestartCtx context.Context
 }
 
 // RouterOption is a functional option for NewRouter.
@@ -549,6 +553,15 @@ type RouterOption func(*routerOptions)
 func WithShutdown(shutdown func()) RouterOption {
 	return func(o *routerOptions) {
 		o.shutdown = shutdown
+	}
+}
+
+// WithNightlyRestart starts the nightly restart scheduler (when enabled by
+// config) bound to the process lifetime ctx. Only the real server entrypoint
+// passes this, so tests constructing routers never spawn the scheduler.
+func WithNightlyRestart(ctx context.Context) RouterOption {
+	return func(o *routerOptions) {
+		o.nightlyRestartCtx = ctx
 	}
 }
 

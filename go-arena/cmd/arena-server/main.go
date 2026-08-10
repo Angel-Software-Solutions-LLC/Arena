@@ -288,7 +288,7 @@ func main() {
 	// Build the HTTP router. Demo bots run as an external process (private
 	// repo) speaking the public bot protocol; the server has no embedded fleet.
 	var routerOpts []api.RouterOption
-	routerOpts = append(routerOpts, api.WithShutdown(cancel))
+	routerOpts = append(routerOpts, api.WithShutdown(cancel), api.WithNightlyRestart(ctx))
 	router := api.NewRouter(engine, routerOpts...)
 
 	// Wire up event hooks for dashboard logging.

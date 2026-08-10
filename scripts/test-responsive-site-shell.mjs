@@ -34,7 +34,9 @@ for (const id of [
 assert.equal(matches(html, /id="arena-canvas"/g).length, 1, 'the shell must own exactly one persistent arena canvas');
 
 assert.match(html, /css\/site-shell\.css\?v=/, 'responsive shell stylesheet must be loaded');
-assert.match(`${app}\n${js}`, /['"]\.\/service-status\.js['"]/, 'public service-status client must be imported exactly once per module URL');
+const serviceStatusImports = matches(`${app}\n${js}`, /['"]\.\/service-status\.js[^'"]*['"]/g).map((match) => match[0]);
+assert(serviceStatusImports.length >= 2, 'app.js and site-shell.js must both import the public service-status client');
+assert.equal(new Set(serviceStatusImports).size, 1, 'every importer must use the same module URL (cache tag included) so the singleton bridge is shared');
 assert.match(html, /js\/site-shell\.js\?v=/, 'responsive shell controller must be loaded');
 assert.doesNotMatch(html, /id="footer-stats"|site-round-summary/, 'the header must not repeat bot and round counts already shown in the spectator HUD');
 assert.doesNotMatch(app, /fetchArenaStatus|\/arena\/status|footer-stats/, 'the removed header summary must not leave an orphaned arena-status request');

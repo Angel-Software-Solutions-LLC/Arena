@@ -149,7 +149,7 @@ export class HudRenderer {
     this._roundRefs.phase.textContent = phase;
     this._roundRefs.phase.classList.toggle('is-sudden-death', suddenDeath);
     this._roundRefs.phase.classList.toggle('is-stall', suddenStall);
-    this._roundRefs.metric1.textContent = String(state.tick || 0);
+    this._roundRefs.metric1.textContent = String(state.round_tick || 0);
     this._roundRefs.metric2.textContent = `${botsAlive} / ${totalBots}`;
     this._roundRefs.metric3.textContent = String(zoneRadius);
     this._roundRefs.metric4.textContent = String((state.pickups || []).length);

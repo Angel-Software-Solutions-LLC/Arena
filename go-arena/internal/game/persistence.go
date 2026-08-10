@@ -183,27 +183,40 @@ func PersistRoundBotStats(ctx context.Context, epoch uint64, roundID string, rou
 	}
 }
 
-// killLogRetention bounds kill_log growth. The weapon-stats windows need only
-// 24h of rows and all-time totals live in weapon_kill_totals, but keep a
-// month so per-round kill history stays inspectable for a while.
-const killLogRetention = 30 * 24 * time.Hour
+// logRetention is the operator-configured window for purging log-style data
+// (kill_log plus the tables listed in db.PruneLogTables). Weapon stats only
+// need 24h of kill_log rows (all-time totals live in weapon_kill_totals),
+// and the widest time-window leaderboard reads round_bot_stats, which the
+// sweep never touches.
+func logRetention() time.Duration {
+	hours := config.C.LogRetentionHours
+	if hours <= 0 {
+		hours = 48
+	}
+	return time.Duration(hours) * time.Hour
+}
 
-// PruneKillLogOnce deletes kill_log rows older than the retention window.
-// Called from a background goroutine at startup and daily; never on the tick
-// goroutine.
-func PruneKillLogOnce() {
+// PruneLogDataOnce deletes log-style rows older than the retention window.
+// Called from a background goroutine at startup and hourly; never on the
+// tick goroutine.
+func PruneLogDataOnce() {
 	if db.Pool == nil {
 		return
 	}
+	cutoff := time.Now().Add(-logRetention())
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	deleted, err := db.PruneKillLog(ctx, time.Now().Add(-killLogRetention), 5000)
+	deleted, err := db.PruneKillLog(ctx, cutoff, 5000)
 	if err != nil {
 		slog.Warn("persist: kill_log prune failed", "deleted_before_error", deleted, "error", err)
-		return
-	}
-	if deleted > 0 {
+	} else if deleted > 0 {
 		slog.Info("persist: kill_log pruned", "deleted", deleted)
+	}
+	tables, err := db.PruneLogTables(ctx, cutoff, 5000)
+	if err != nil {
+		slog.Warn("persist: log table prune failed", "deleted_before_error", tables, "error", err)
+	} else if len(tables) > 0 {
+		slog.Info("persist: log tables pruned", "deleted", tables)
 	}
 }
 

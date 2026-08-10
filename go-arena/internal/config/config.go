@@ -206,6 +206,20 @@ type Config struct {
 	SpectatorBroadcastInterval   int     `envconfig:"ARENA_SPECTATOR_BROADCAST_INTERVAL" default:"1"`
 	AFKTimeoutTicks              int     `envconfig:"ARENA_AFK_TIMEOUT_TICKS" default:"300"`
 
+	// Log retention. Applies to log-style data only (kill_log, finished
+	// rounds, audit/event tables, stale rate-limit rows) — never to
+	// leaderboard, account, or payment tables.
+	LogRetentionHours int `envconfig:"ARENA_LOG_RETENTION_HOURS" default:"48"`
+
+	// Nightly restart. The server exits cleanly at the scheduled wall-clock
+	// time (after warning connected clients); Docker's restart policy brings
+	// it back up. Disable for standalone dev runs without a supervisor.
+	NightlyRestartEnabled        bool   `envconfig:"ARENA_NIGHTLY_RESTART_ENABLED" default:"true"`
+	NightlyRestartTime           string `envconfig:"ARENA_NIGHTLY_RESTART_TIME" default:"00:00"`
+	NightlyRestartTZ             string `envconfig:"ARENA_NIGHTLY_RESTART_TZ" default:"Local"`
+	NightlyRestartWarnMinutes    int    `envconfig:"ARENA_NIGHTLY_RESTART_WARN_MINUTES" default:"15"`
+	NightlyRestartRoundGraceSecs int    `envconfig:"ARENA_NIGHTLY_RESTART_ROUND_GRACE_SECS" default:"420"`
+
 	// Admin
 	AdminKey             string `envconfig:"ARENA_ADMIN_KEY" default:"changeme_admin_key"`
 	AdminToken           string `envconfig:"ARENA_ADMIN_TOKEN" default:""`
