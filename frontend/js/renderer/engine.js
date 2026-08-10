@@ -157,7 +157,7 @@ export class ArenaEngine {
     this._seenArenaEvents = new Set();
     this._roundTransitionActive = false;
     this._roundTransitionRound = null;
-    this._roundTransitionEnteredTick = null;
+    this._roundTransitionEntryTick = null;
     this._safeViewport = null;
   }
 
@@ -687,31 +687,14 @@ export class ArenaEngine {
     this._roundTransitionRound = Number.isFinite(round)
       ? round
       : (Number.isFinite(currentRound) ? currentRound : 0);
-    // Record the boundary's round_tick as well: round_end itself does not
-    // carry one, so fall back to the last arena_state before the boundary.
-    // A later round_tick BELOW this value can only mean the next round's
-    // clock has started (see _roundTickResetReleases).
-    const endTick = Number(state && state.round_tick);
-    const lastTick = Number(this.state && this.state.round_tick);
-    this._roundTransitionEnteredTick = Number.isFinite(endTick)
-      ? endTick
-      : (Number.isFinite(lastTick) ? lastTick : null);
+    // Remember where the ENDING round's clock was. arena_state carries round_tick
+    // (ticks since the round began) and it restarts at the next round, so a later
+    // round_tick BELOW this one is an unambiguous "the next round is running"
+    // signal that does not depend on a round number the payload never carries.
+    const entryTick = Number(this.state && this.state.round_tick);
+    this._roundTransitionEntryTick = Number.isFinite(entryTick) ? entryTick : null;
     this._roundTransitionActive = true;
     if (this.gameplayRenderer) this.gameplayRenderer.beginRoundTransition();
-  }
-
-  /** @private A round_tick below the boundary's entry tick means the next
-   * round's clock has started. This is the release signal for snapshots that
-   * carry no round number at all: older servers' arena_state sends only
-   * round_tick (SpectatorState in go-arena/internal/game/state.go), and
-   * without this fallback the round rule can never fire against them, so the
-   * map teardown the transition starts would be permanent — a black arena
-   * with only emissive glow while the HUD keeps updating. */
-  _roundTickResetReleases(state) {
-    const tick = Number(state && state.round_tick);
-    return Number.isFinite(tick) &&
-      Number.isFinite(this._roundTransitionEnteredTick) &&
-      tick < this._roundTransitionEnteredTick;
   }
 
   /** @private Resume only for a different authoritative round. The counter
@@ -727,11 +710,23 @@ export class ArenaEngine {
     // arena with only the emissive glow left while the HUD and minimap keep
     // updating normally.
     const releaseRound = state && (state.round_number ?? state.round);
-    if (!roundStateReleasesTransition(releaseRound, this._roundTransitionRound) &&
-        !this._roundTickResetReleases(state)) return;
+    let release = roundStateReleasesTransition(releaseRound, this._roundTransitionRound);
+    if (!release) {
+      // The round-number rule alone is unreachable here: the transition is entered
+      // from round_end, but the only payload that reaches this method is
+      // arena_state, whose server-side view (SpectatorState) carries no round
+      // number at all. Both reads are therefore undefined, the predicate needs two
+      // finite values, and the transition never lifts, leaving the map teardown
+      // permanent: a black arena showing only emissive meshes while the HUD, kill
+      // feed and minimap keep updating from the very same payloads.
+      const tick = Number(state && state.round_tick);
+      const entry = this._roundTransitionEntryTick;
+      release = Number.isFinite(tick) && Number.isFinite(entry) && tick < entry;
+    }
+    if (!release) return;
     this._roundTransitionActive = false;
     this._roundTransitionRound = null;
-    this._roundTransitionEnteredTick = null;
+    this._roundTransitionEntryTick = null;
     if (this.gameplayRenderer) this.gameplayRenderer.endRoundTransition();
   }
 

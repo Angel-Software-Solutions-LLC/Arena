@@ -113,11 +113,20 @@ assert.ok(enterReads, 'the transition enter path must accept round_number ?? rou
 assert.ok(releaseReads, 'the transition release path must read the round the same way the enter path does');
 console.log('round-transition enter and release read the round symmetrically');
 
-// The round rule alone is not enough: servers that omit round_number/round from
-// arena_state entirely (only round_tick is guaranteed — SpectatorState in
-// go-arena/internal/game/state.go) would hold the transition forever. The
-// boundary records the last round_tick it saw; a later round_tick BELOW that
-// value is the "next round is running" release signal.
+// The transition is entered from round_end but only arena_state ever reaches the
+// release path, and the server's SpectatorState carries no round number, so the
+// round-number rule alone can never lift it. Assert the round_tick reset fallback
+// exists, since that is the only signal the releasing payload actually carries.
+assert.match(engineSrc, /_roundTransitionEntryTick/,
+  'the transition must remember the ending round tick to detect the next round');
+assert.match(engineSrc, /tick < entry/,
+  'a round_tick below the entry tick must release the transition');
+console.log('round transition lifts on a round_tick reset, not only on a round number');
+
+// Behavioral pins for the fallback, driven through the real methods: entry-tick
+// capture at the boundary, growing intermission ticks keeping the hold, the
+// reset releasing it, and the round-number rule still taking priority when a
+// numbered payload does arrive (the server now populates round_number).
 const tickEngine = Object.create(ArenaEngine.prototype);
 tickEngine.state = { round_tick: 2990 };
 tickEngine.gameplayRenderer = {
@@ -126,7 +135,7 @@ tickEngine.gameplayRenderer = {
 };
 tickEngine._beginRoundTransition({ type: 'round_end', round_number: 7 });
 assert.equal(tickEngine._roundTransitionActive, true);
-assert.equal(tickEngine._roundTransitionEnteredTick, 2990,
+assert.equal(tickEngine._roundTransitionEntryTick, 2990,
   'the boundary must record the last arena_state round_tick as its entry tick');
 
 tickEngine._maybeEndRoundTransition({ type: 'arena_state', round_tick: 3010 });
@@ -136,13 +145,12 @@ assert.equal(tickEngine._roundTransitionActive, true,
 tickEngine._maybeEndRoundTransition({ type: 'arena_state', round_tick: 4 });
 assert.equal(tickEngine._roundTransitionActive, false,
   'an unnumbered arena_state whose round_tick reset below the boundary must release the hold');
-assert.equal(tickEngine._roundTransitionEnteredTick, null,
+assert.equal(tickEngine._roundTransitionEntryTick, null,
   'the release must clear the recorded entry tick');
 
-// Releasing by round number still works and takes priority when present.
 tickEngine.state = { round_tick: 500 };
 tickEngine._beginRoundTransition({ type: 'round_end', round_number: 8 });
 tickEngine._maybeEndRoundTransition({ type: 'arena_state', round_number: 9, round_tick: 900 });
 assert.equal(tickEngine._roundTransitionActive, false,
   'a numbered next-round arena_state must release even while round_tick has not reset');
-console.log('round-transition releases on round_tick reset when snapshots carry no round number');
+console.log('round-transition release behaves for unnumbered and numbered payloads');
