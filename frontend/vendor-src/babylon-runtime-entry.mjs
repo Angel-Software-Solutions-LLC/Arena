@@ -20,6 +20,35 @@ import { Material } from '@babylonjs/core/Materials/material.js';
 import { Mesh } from '@babylonjs/core/Meshes/mesh.js';
 // Mesh.createInstance delegates to this prototype registration.
 import '@babylonjs/core/Meshes/instancedMesh.js';
+// Side-effect registrations. Babylon's ES modules wire per-scene render
+// stages and Engine prototype extensions ONLY when these modules are
+// imported — the class imports above resolve their internals through the
+// side-effect-free `.pure` variants and register nothing. Omitting them made
+// this bundle render a completely black arena while every material and
+// effect still reported isReady(): the scene drew into the post-process
+// chain but nothing ever presented to the canvas. CI stayed green because
+// no browser spec asserted actual pixels (see
+// tests/browser/specs/live-conditions-render.spec.mjs, which now does).
+//
+// postProcess.js (the full module, not .pure) is the one that restores
+// presentation — verified by bisecting @babylonjs/core/index.js down to the
+// single import against a pixel-readback oracle. The rest register features
+// the renderer actively uses and that fail silently without them:
+import '@babylonjs/core/PostProcesses/postProcess.js';
+// DefaultRenderingPipeline is rendered by this scene component.
+import '@babylonjs/core/PostProcesses/RenderPipeline/postProcessRenderPipelineManagerSceneComponent.js';
+// ShadowGenerator's shadow maps render only with this component; without it
+// the shadow map stays an incomplete texture that samples black under every
+// shadow-receiving mesh (the "TEXTURE_2D is incomplete" console spam).
+import '@babylonjs/core/Lights/Shadows/shadowGeneratorSceneComponent.js';
+// GlowLayer / HighlightLayer compositing.
+import '@babylonjs/core/Layers/effectLayerSceneComponent.js';
+// ParticleSystem draw stage.
+import '@babylonjs/core/Particles/particleSystemComponent.js';
+// scene.pick and camera pointer handling need the Ray side effect; without
+// it any pick logs "Ray needs to be imported before as it contains a
+// side-effect required by your code" and returns nothing.
+import '@babylonjs/core/Culling/ray.js';
 import { ParticleSystem } from '@babylonjs/core/Particles/particleSystem.js';
 import { PointerEventTypes } from '@babylonjs/core/Events/pointerEvents.js';
 import { RenderTargetTexture } from '@babylonjs/core/Materials/Textures/renderTargetTexture.js';

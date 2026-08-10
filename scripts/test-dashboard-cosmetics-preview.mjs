@@ -85,7 +85,7 @@ const CURRENT = {
 
 assert.equal(
   BABYLON_SCRIPT_URL,
-  '../js/babylon-runtime.js?v=20260718a',
+  '../js/babylon-runtime.js?v=20260810d',
   'Dashboard must lazy-load the same local Babylon bridge as the Arena',
 );
 
@@ -219,7 +219,7 @@ assert.match(dashboardHTML, /id="accountCosmeticsPreviewCanvas"/);
 assert.match(dashboardHTML, /id="accountCosmeticsPreviewBot"/);
 assert.match(dashboardHTML, /data-cosmetics-preview-reset/);
 assert.match(dashboardHTML, /Current(?:ly equipped)?[\s\S]*Preview/, 'outfitter must distinguish server-equipped and staged visuals');
-assert.match(dashboardHTML, /import\('\.\/cosmetics-preview\.js\?v=20260714e'\)/,
+assert.match(dashboardHTML, /import\('\.\/cosmetics-preview\.js\?v=20260810d'\)/,
   'the heavy preview controller must be loaded lazily');
 assert.match(dashboardHTML, /ArenaAccountCosmetics\.previewModel/,
   'Dashboard runtime must revalidate staged license IDs through the pure preview model');

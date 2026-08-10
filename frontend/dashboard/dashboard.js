@@ -525,7 +525,7 @@ function syncAccountCosmeticsPreviewRenderer(model) {
   }
 
   if (!accountCosmeticsPreviewModulePromise) {
-    accountCosmeticsPreviewModulePromise = import('./cosmetics-preview.js?v=20260714e').catch(error => {
+    accountCosmeticsPreviewModulePromise = import('./cosmetics-preview.js?v=20260810d').catch(error => {
       accountCosmeticsPreviewModulePromise = null;
       throw error;
     });
