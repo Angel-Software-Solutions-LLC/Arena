@@ -1970,7 +1970,7 @@ tr:hover td{background:rgba(88,166,255,0.07)}
               <details class="cosmetics-admin-editor" id="cosmeticCategoryEditor" data-cosmetic-editor="category" ontoggle="updateCosmeticEditorVisibility()" hidden>
                 <summary>Category details</summary>
                 <form id="cosmeticCategoryForm" class="cosmetics-admin-form" onsubmit="saveCosmeticCategory(event)">
-                  <label>Category ID<input id="cosmeticCategoryID" maxlength="80" pattern="[a-z0-9][a-z0-9_-]*" required></label>
+                  <label>Category ID<input id="cosmeticCategoryID" maxlength="80" pattern="[a-z0-9][a-z0-9_\-]*" required></label>
                   <label>Name<input id="cosmeticCategoryName" maxlength="100" required></label>
                   <label class="cosmetics-form-wide">Description<textarea id="cosmeticCategoryDescription" maxlength="500" rows="3"></textarea></label>
                   <label>Sort order<input id="cosmeticCategorySort" type="number" min="0" max="1000000" value="0" required></label>
@@ -1986,7 +1986,7 @@ tr:hover td{background:rgba(88,166,255,0.07)}
               <details class="cosmetics-admin-editor" id="cosmeticPackEditor" data-cosmetic-editor="pack" ontoggle="updateCosmeticEditorVisibility()" hidden>
                 <summary>Product details and contents</summary>
                 <form id="cosmeticPackForm" class="cosmetics-admin-form" onsubmit="saveCosmeticPack(event)">
-                  <label>Pack ID<input id="cosmeticPackID" maxlength="80" pattern="[a-z0-9][a-z0-9_-]*" required></label>
+                  <label>Pack ID<input id="cosmeticPackID" maxlength="80" pattern="[a-z0-9][a-z0-9_\-]*" required></label>
                   <label>Name<input id="cosmeticPackName" maxlength="100" required></label>
                   <label>Category<select id="cosmeticPackCategory" onchange="syncCosmeticPackCategoryRules()" required><option value="">Select category</option></select></label>
                   <label>Product price (fixed by category)<input id="cosmeticPackPrice" type="number" value="199" readonly required></label>
@@ -2019,12 +2019,12 @@ tr:hover td{background:rgba(88,166,255,0.07)}
               <details class="cosmetics-admin-editor" id="cosmeticItemEditor" data-cosmetic-editor="item" ontoggle="updateCosmeticEditorVisibility()" hidden>
                 <summary>Item details</summary>
                 <form id="cosmeticItemForm" class="cosmetics-admin-form" onsubmit="saveCosmeticItem(event)">
-                  <label>Item ID<input id="cosmeticItemID" maxlength="80" pattern="[a-z0-9][a-z0-9_-]*" required></label>
+                  <label>Item ID<input id="cosmeticItemID" maxlength="80" pattern="[a-z0-9][a-z0-9_\-]*" required></label>
                   <label>Name<input id="cosmeticItemName" maxlength="100" required></label>
                   <label>Category<select id="cosmeticItemCategory" onchange="syncCosmeticItemCategoryAndSlot('category')" required><option value="">Select category</option></select></label>
                   <label>Slot<select id="cosmeticItemSlot" onchange="syncCosmeticItemCategoryAndSlot('slot')" required><option value="bot_skin">Bot skin</option><option value="weapon_skin">Weapon finish</option><option value="attachment">Attachment</option><option value="trail">Trail</option></select></label>
-                  <label>Local asset key<input id="cosmeticItemAssetKey" maxlength="80" pattern="[a-z0-9][a-z0-9_-]*" required></label>
-                  <label>Rarity<input id="cosmeticItemRarity" value="common" maxlength="32" pattern="[a-z][a-z0-9_-]*" required></label>
+                  <label>Local asset key<input id="cosmeticItemAssetKey" maxlength="80" pattern="[a-z0-9][a-z0-9_\-]*" required></label>
+                  <label>Rarity<input id="cosmeticItemRarity" value="common" maxlength="32" pattern="[a-z][a-z0-9_\-]*" required></label>
                   <label>Price (minor unit)<input id="cosmeticItemPrice" type="number" min="0" max="1000000" step="1" inputmode="numeric" value="0" required></label>
                   <label>Currency<input id="cosmeticItemCurrency" value="USD" maxlength="3" pattern="[A-Z]{3}" required></label>
                   <label>Sort order<input id="cosmeticItemSort" type="number" min="0" max="1000000" value="0" required></label>
@@ -4678,8 +4678,10 @@ async function pollFleetUpdate(start, targetSha) {
 
 // ========== Version & Self-Update ==========
 let _updateTargetSha = null;
+let _versionInfoRequestGeneration = 0;
 
 async function loadVersionInfo() {
+  const requestGeneration = ++_versionInfoRequestGeneration;
   const el = document.getElementById('versionInfo');
   const btn = document.getElementById('updateBtn');
   if (!el) return;
@@ -4689,6 +4691,7 @@ async function loadVersionInfo() {
   _updateTargetSha = null;
   try {
     const v = await api('/version');
+    if (requestGeneration !== _versionInfoRequestGeneration) return;
     const runningShort = (v.running && v.running.short) || 'unknown';
     const runningFull = (v.running && v.running.commit) || '';
     let html = `<div>Running: <code>${esc(runningShort)}</code>`;
@@ -4719,13 +4722,20 @@ async function loadVersionInfo() {
     }
     el.innerHTML = html;
   } catch (e) {
+    if (requestGeneration !== _versionInfoRequestGeneration) return;
     el.textContent = 'Failed to load version: ' + e.message;
     el.style.color = 'var(--red)';
   }
 }
 
 async function startUpdate() {
-  if (!_updateTargetSha) return;
+  if (!_updateTargetSha) {
+    const res = document.getElementById('updateResult');
+    res.textContent = 'Version target expired; checking again before update.';
+    res.style.color = 'var(--orange)';
+    loadVersionInfo();
+    return;
+  }
   if (!confirm('Update arena-server to ' + _updateTargetSha.slice(0, 7) + '?\n\nThis rebuilds and recreates the server container (a few seconds of downtime). The database and Redis are NOT touched.')) return;
   const res = document.getElementById('updateResult');
   res.textContent = 'Starting update…';
