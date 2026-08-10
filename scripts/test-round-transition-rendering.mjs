@@ -112,3 +112,37 @@ const releaseReads = /state\.round_number \?\? state\.round[\s\S]{0,200}roundSta
 assert.ok(enterReads, 'the transition enter path must accept round_number ?? round');
 assert.ok(releaseReads, 'the transition release path must read the round the same way the enter path does');
 console.log('round-transition enter and release read the round symmetrically');
+
+// The round rule alone is not enough: servers that omit round_number/round from
+// arena_state entirely (only round_tick is guaranteed — SpectatorState in
+// go-arena/internal/game/state.go) would hold the transition forever. The
+// boundary records the last round_tick it saw; a later round_tick BELOW that
+// value is the "next round is running" release signal.
+const tickEngine = Object.create(ArenaEngine.prototype);
+tickEngine.state = { round_tick: 2990 };
+tickEngine.gameplayRenderer = {
+  beginRoundTransition: () => {},
+  endRoundTransition: () => {},
+};
+tickEngine._beginRoundTransition({ type: 'round_end', round_number: 7 });
+assert.equal(tickEngine._roundTransitionActive, true);
+assert.equal(tickEngine._roundTransitionEnteredTick, 2990,
+  'the boundary must record the last arena_state round_tick as its entry tick');
+
+tickEngine._maybeEndRoundTransition({ type: 'arena_state', round_tick: 3010 });
+assert.equal(tickEngine._roundTransitionActive, true,
+  'intermission frames whose round_tick keeps growing must keep the hold');
+
+tickEngine._maybeEndRoundTransition({ type: 'arena_state', round_tick: 4 });
+assert.equal(tickEngine._roundTransitionActive, false,
+  'an unnumbered arena_state whose round_tick reset below the boundary must release the hold');
+assert.equal(tickEngine._roundTransitionEnteredTick, null,
+  'the release must clear the recorded entry tick');
+
+// Releasing by round number still works and takes priority when present.
+tickEngine.state = { round_tick: 500 };
+tickEngine._beginRoundTransition({ type: 'round_end', round_number: 8 });
+tickEngine._maybeEndRoundTransition({ type: 'arena_state', round_number: 9, round_tick: 900 });
+assert.equal(tickEngine._roundTransitionActive, false,
+  'a numbered next-round arena_state must release even while round_tick has not reset');
+console.log('round-transition releases on round_tick reset when snapshots carry no round number');

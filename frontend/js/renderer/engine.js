@@ -157,6 +157,7 @@ export class ArenaEngine {
     this._seenArenaEvents = new Set();
     this._roundTransitionActive = false;
     this._roundTransitionRound = null;
+    this._roundTransitionEnteredTick = null;
     this._safeViewport = null;
   }
 
@@ -686,8 +687,31 @@ export class ArenaEngine {
     this._roundTransitionRound = Number.isFinite(round)
       ? round
       : (Number.isFinite(currentRound) ? currentRound : 0);
+    // Record the boundary's round_tick as well: round_end itself does not
+    // carry one, so fall back to the last arena_state before the boundary.
+    // A later round_tick BELOW this value can only mean the next round's
+    // clock has started (see _roundTickResetReleases).
+    const endTick = Number(state && state.round_tick);
+    const lastTick = Number(this.state && this.state.round_tick);
+    this._roundTransitionEnteredTick = Number.isFinite(endTick)
+      ? endTick
+      : (Number.isFinite(lastTick) ? lastTick : null);
     this._roundTransitionActive = true;
     if (this.gameplayRenderer) this.gameplayRenderer.beginRoundTransition();
+  }
+
+  /** @private A round_tick below the boundary's entry tick means the next
+   * round's clock has started. This is the release signal for snapshots that
+   * carry no round number at all: older servers' arena_state sends only
+   * round_tick (SpectatorState in go-arena/internal/game/state.go), and
+   * without this fallback the round rule can never fire against them, so the
+   * map teardown the transition starts would be permanent — a black arena
+   * with only emissive glow while the HUD keeps updating. */
+  _roundTickResetReleases(state) {
+    const tick = Number(state && state.round_tick);
+    return Number.isFinite(tick) &&
+      Number.isFinite(this._roundTransitionEnteredTick) &&
+      tick < this._roundTransitionEnteredTick;
   }
 
   /** @private Resume only for a different authoritative round. The counter
@@ -703,9 +727,11 @@ export class ArenaEngine {
     // arena with only the emissive glow left while the HUD and minimap keep
     // updating normally.
     const releaseRound = state && (state.round_number ?? state.round);
-    if (!roundStateReleasesTransition(releaseRound, this._roundTransitionRound)) return;
+    if (!roundStateReleasesTransition(releaseRound, this._roundTransitionRound) &&
+        !this._roundTickResetReleases(state)) return;
     this._roundTransitionActive = false;
     this._roundTransitionRound = null;
+    this._roundTransitionEnteredTick = null;
     if (this.gameplayRenderer) this.gameplayRenderer.endRoundTransition();
   }
 

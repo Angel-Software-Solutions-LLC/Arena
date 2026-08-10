@@ -48,7 +48,7 @@ func TestBuildSpectatorStateIncludesCosmeticsWithoutChangingMechanics(t *testing
 		},
 	}
 	state := BuildSpectatorState(
-		map[string]*BotState{bot.BotID: bot}, arena, nil, NewKillFeed(10), 10, 0, nil, RoundModifierNone,
+		map[string]*BotState{bot.BotID: bot}, arena, nil, NewKillFeed(10), 10, 0, 1, nil, RoundModifierNone,
 	)
 	if len(state.Bots) != 1 {
 		t.Fatalf("spectator bots = %d, want 1", len(state.Bots))
@@ -77,7 +77,7 @@ func TestBuildSpectatorStateIncludesLastActionTickForAnimationEdges(t *testing.T
 		LastActionTick: 42, LastActionResult: &ActionResult{Action: "grapple", Success: true},
 	}
 	state := BuildSpectatorState(
-		map[string]*BotState{bot.BotID: bot}, arena, nil, NewKillFeed(10), 50, 0, nil, RoundModifierNone,
+		map[string]*BotState{bot.BotID: bot}, arena, nil, NewKillFeed(10), 50, 0, 1, nil, RoundModifierNone,
 	)
 
 	if got := state.Bots[0].LastActionTick; got != 42 {

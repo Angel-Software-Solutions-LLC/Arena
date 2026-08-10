@@ -530,7 +530,11 @@ type WaitingBotSpectatorView struct {
 
 // BuildSpectatorState builds the full arena snapshot for spectator clients.
 // Spectators still receive float positions for smooth rendering.
-func BuildSpectatorState(bots map[string]*BotState, arena *ArenaMap, pickups []Pickup, killFeed *KillFeed, tickCount int, roundStartTick int, waitingBots map[string]*BotState, roundModifier RoundModifier) SpectatorState {
+// roundNumber identifies the round the snapshot describes: the renderer's
+// round-transition release compares it against the round_end that entered the
+// transition, so leaving it unset would hold the post-round map teardown
+// forever (the blank-arena symptom).
+func BuildSpectatorState(bots map[string]*BotState, arena *ArenaMap, pickups []Pickup, killFeed *KillFeed, tickCount int, roundStartTick int, roundNumber int, waitingBots map[string]*BotState, roundModifier RoundModifier) SpectatorState {
 	botViews := make([]BotSpectatorView, 0, len(bots))
 	for _, bot := range bots {
 		botViews = append(botViews, BuildBotSpectatorView(bot))
@@ -591,6 +595,7 @@ func BuildSpectatorState(bots map[string]*BotState, arena *ArenaMap, pickups []P
 		Type:          "arena_state",
 		Tick:          tickCount,
 		RoundTick:     tickCount - roundStartTick,
+		RoundNumber:   roundNumber,
 		RoundModifier: string(roundModifier),
 		Bots:          botViews,
 		SafeZone:      safeZone,

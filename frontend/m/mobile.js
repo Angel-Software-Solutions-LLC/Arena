@@ -16,11 +16,11 @@ import {
  * @module m/mobile
  */
 
-import { ArenaEngine } from '../js/renderer/engine.js?v=20260810a';
+import { ArenaEngine } from '../js/renderer/engine.js?v=20260810c';
 import { Minimap } from '../js/renderer/minimap.js?v=20260718c';
 import { SpectatorSocket } from '../js/spectator-ws.js';
 import { apiPath, appPath, wsURL } from '../js/paths.js?v=20260710a';
-import { handleServiceStatus, initServiceStatus } from '../js/service-status.js';
+import { handleServiceStatus, initServiceStatus } from '../js/service-status.js?v=20260810c';
 
 const ARENA_WIDTH = 2000;
 const ARENA_HEIGHT = 2000;
