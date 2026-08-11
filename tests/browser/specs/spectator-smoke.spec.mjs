@@ -143,7 +143,14 @@ test('spectator layout and round lifecycle stay bounded', async ({ page }, testI
   });
   const firstFrameId = await frameIdNow();
   expect(firstFrameId).toBeGreaterThanOrEqual(0);
-  await expect.poll(frameIdNow, { timeout: 5000 }).toBeGreaterThan(firstFrameId);
+  // Liveness, not speed: this asserts the loop is still advancing at all, so
+  // the budget only has to exceed the worst plausible frame interval. The
+  // original 5s was the one assertion in this file below the suite's 30s
+  // expect timeout, and it flaked on CI's single-core SwiftShader runner,
+  // where a full round-lifecycle run takes ~8 minutes against ~50s locally.
+  // A dead loop still fails here; it just no longer fails a slow-but-healthy
+  // one.
+  await expect.poll(frameIdNow, { timeout: 30_000 }).toBeGreaterThan(firstFrameId);
   await expect(page.locator('body')).not.toContainText(/\d+ bots connected\s*\|\s*Round \d+/i);
 
   const overflow = await page.evaluate(() => ({

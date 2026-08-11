@@ -200,6 +200,11 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 		api.Get("/bot-setup", BotSetup())
 		api.Get("/content", PublicContentBlocks)
 		api.Get("/service-status", serviceStatus.publicStatus)
+		// Browser error intake (public, rate limited, bounded in-memory only).
+		// Reports land in the admin Errors tab so a silent client-side
+		// breakage stops being invisible; see client_errors.go.
+		api.With(security.RateLimitMiddleware(config.C.ClientErrorReportRPM)).
+			Post("/client-errors", ClientErrorHandler(bus))
 		api.Get("/cosmetics/catalog", cosmeticsHandler.Catalog)
 		api.Get("/cosmetics/checkout/config", commerceHandler.CheckoutConfig)
 		api.Post("/cosmetics/webhooks/stripe", commerceHandler.StripeWebhook)
@@ -326,6 +331,11 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 			api.Get("/bot-setup", BotSetup())
 			api.Get("/content", PublicContentBlocks)
 			api.Get("/service-status", serviceStatus.publicStatus)
+		// Browser error intake (public, rate limited, bounded in-memory only).
+		// Reports land in the admin Errors tab so a silent client-side
+		// breakage stops being invisible; see client_errors.go.
+		api.With(security.RateLimitMiddleware(config.C.ClientErrorReportRPM)).
+			Post("/client-errors", ClientErrorHandler(bus))
 			api.Get("/cosmetics/catalog", cosmeticsHandler.Catalog)
 			api.Get("/cosmetics/checkout/config", commerceHandler.CheckoutConfig)
 			api.Post("/cosmetics/webhooks/stripe", commerceHandler.StripeWebhook)
