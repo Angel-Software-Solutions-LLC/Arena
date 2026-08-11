@@ -70,6 +70,11 @@
   color: var(--checkout-ink);
   font: 700 clamp(1.35rem, 4vi, 2rem)/1.08 "Space Grotesk", system-ui, sans-serif;
   letter-spacing: -0.035em;
+  /* letter-spacing is applied after every character INCLUDING the space, so
+     negative tracking shrinks the word gap as well as the letter fit. This
+     restores exactly what the tracking removed from the space, leaving the
+     letterforms as tight as designed. */
+  word-spacing: 0.035em;
   text-wrap: balance;
 }
 
