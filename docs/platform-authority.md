@@ -8,7 +8,7 @@ not copy ownership state, dual-write records, or enable checkout.
 ## W1b.1 boundary
 
 W1b.1 merged to Arena `main` in
-[`ablac/Arena#213`](https://github.com/ablac/Arena/pull/213) at merge commit
+[`Angel-Software-Solutions-LLC/Arena#213`](https://github.com/Angel-Software-Solutions-LLC/Arena/pull/213) at merge commit
 `f9207348665f48adfc3e112a36515c4573c8c609`.
 
 `go-arena/internal/platform` defines the first authority facets and a
@@ -54,7 +54,7 @@ W1b.1 establishes dependency direction only.
 
 ### W1b.2 operational metadata checkpoint
 
-[`ablac/Arena#216`](https://github.com/ablac/Arena/pull/216) delivered the
+[`Angel-Software-Solutions-LLC/Arena#216`](https://github.com/Angel-Software-Solutions-LLC/Arena/pull/216) delivered the
 cap-independent W1b.2 agent/profile, revision, history, and change-feed
 foundation. The follow-up account-capacity checkpoint completes W1b.2 while
 remaining in-process on the same PostgreSQL database. Together they add:
@@ -147,7 +147,7 @@ HTTP handler, second writable authority, or Kingdom Grid runtime adapter.
 
 ### W1b.4 terminal-license lifecycle checkpoint
 
-Arena issue [#223](https://github.com/ablac/Arena/issues/223) tracks the
+Arena issue [#223](https://github.com/Angel-Software-Solutions-LLC/Arena/issues/223) tracks the
 same-database W1b.4 delivery. The in-process authority now exposes exact
 assignment, explicit unassignment, and terminal lifecycle commands. Each exact
 command binds an 8-128 character idempotency key to its request, compares the

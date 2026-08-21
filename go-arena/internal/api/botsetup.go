@@ -328,11 +328,11 @@ func buildBotSetupResponse() map[string]interface{} {
 			"sdks": map[string]interface{}{
 				"python": map[string]interface{}{
 					"install": "pip install arena-sdk",
-					"repo":    "https://github.com/ablac/Arena/tree/main/sdk/python",
+					"repo":    "https://github.com/Angel-Software-Solutions-LLC/Arena/tree/main/sdk/python",
 				},
 				"nodejs": map[string]interface{}{
 					"install": "npm install @arena/sdk",
-					"repo":    "https://github.com/ablac/Arena/tree/main/sdk/nodejs",
+					"repo":    "https://github.com/Angel-Software-Solutions-LLC/Arena/tree/main/sdk/nodejs",
 				},
 			},
 
