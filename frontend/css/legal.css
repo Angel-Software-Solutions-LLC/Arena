@@ -135,6 +135,11 @@ body.legal-page {
   font-size: clamp(2rem, 4.5vw, 2.9rem);
   line-height: 1.05;
   letter-spacing: -0.03em;
+  /* letter-spacing is applied after every character INCLUDING the space, so
+     negative tracking shrinks the word gap as well as the letter fit. This
+     restores exactly what the tracking removed from the space, leaving the
+     letterforms as tight as designed. */
+  word-spacing: 0.03em;
   text-wrap: balance;
 }
 
@@ -225,6 +230,11 @@ body.legal-page {
   font-size: clamp(1.28rem, 2.2vw, 1.56rem);
   line-height: 1.25;
   letter-spacing: -0.01em;
+  /* letter-spacing is applied after every character INCLUDING the space, so
+     negative tracking shrinks the word gap as well as the letter fit. This
+     restores exactly what the tracking removed from the space, leaving the
+     letterforms as tight as designed. */
+  word-spacing: 0.01em;
 }
 
 .legal-article h3 {

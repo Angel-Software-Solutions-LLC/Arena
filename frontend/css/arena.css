@@ -417,7 +417,12 @@ body.arena-fullscreen .site-header {
   font-size: clamp(1.8rem, 3.8vw, 2.7rem);
   font-weight: 800;
   letter-spacing: -0.05em;
-  line-height: 0.98;
+  /* letter-spacing is applied after every character INCLUDING the space, so
+     negative tracking shrinks the word gap as well as the letter fit. This
+     restores exactly what the tracking removed from the space, leaving the
+     letterforms as tight as designed. */
+  word-spacing: 0.05em;
+  line-height: 1.05;
 }
 
 .dashboard-drawer .drawer-shell-label {
@@ -517,8 +522,13 @@ body.arena-fullscreen .site-header {
 
 .onboarding-header h2 {
   font-size: clamp(2rem, 4vw, 3.4rem);
-  line-height: 0.96;
+  line-height: 1.02;
   letter-spacing: -0.06em;
+  /* letter-spacing is applied after every character INCLUDING the space, so
+     negative tracking shrinks the word gap as well as the letter fit. This
+     restores exactly what the tracking removed from the space, leaving the
+     letterforms as tight as designed. */
+  word-spacing: 0.06em;
 }
 
 .onboarding-kicker {
@@ -649,6 +659,11 @@ body.arena-fullscreen .site-header {
   font-size: clamp(1.6rem, 2.4vw, 2.2rem);
   line-height: 1.02;
   letter-spacing: -0.04em;
+  /* letter-spacing is applied after every character INCLUDING the space, so
+     negative tracking shrinks the word gap as well as the letter fit. This
+     restores exactly what the tracking removed from the space, leaving the
+     letterforms as tight as designed. */
+  word-spacing: 0.04em;
   margin-bottom: 18px;
 }
 
@@ -706,6 +721,11 @@ body.arena-fullscreen .site-header {
   font-size: 1.15rem;
   line-height: 1.15;
   letter-spacing: -0.03em;
+  /* letter-spacing is applied after every character INCLUDING the space, so
+     negative tracking shrinks the word gap as well as the letter fit. This
+     restores exactly what the tracking removed from the space, leaving the
+     letterforms as tight as designed. */
+  word-spacing: 0.03em;
   color: var(--text-primary);
 }
 
@@ -885,6 +905,11 @@ body.arena-fullscreen .site-header {
   font-size: clamp(1.7rem, 2.8vw, 2.5rem);
   font-weight: 800;
   letter-spacing: -0.03em;
+  /* letter-spacing is applied after every character INCLUDING the space, so
+     negative tracking shrinks the word gap as well as the letter fit. This
+     restores exactly what the tracking removed from the space, leaving the
+     letterforms as tight as designed. */
+  word-spacing: 0.03em;
   margin-bottom: 28px;
   font-family: var(--font-sans);
 }
