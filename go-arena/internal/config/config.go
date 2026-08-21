@@ -245,7 +245,7 @@ type Config struct {
 	UpdateGitHubToken string `envconfig:"ARENA_UPDATE_GITHUB_TOKEN" default:""`
 	// owner/repo and branch the "update to latest" check compares the running
 	// build against (production release branch by default).
-	UpdateRepo   string `envconfig:"ARENA_UPDATE_REPO" default:"ablac/Arena"`
+	UpdateRepo   string `envconfig:"ARENA_UPDATE_REPO" default:"Angel-Software-Solutions-LLC/Arena"`
 	UpdateBranch string `envconfig:"ARENA_UPDATE_BRANCH" default:"main"`
 
 	// Demo-bot fleet control (optional). Base URL of the private fleet's

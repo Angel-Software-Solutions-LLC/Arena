@@ -5,10 +5,15 @@ Thanks for helping improve Arena. This project welcomes bug reports, docs fixes,
 ## Workflow
 
 1. Open or pick an issue when the change is larger than a small typo.
-2. Create a branch from current `main`.
+2. Create a branch from current `develop`.
 3. Make focused changes.
 4. Run the checks that match what you touched.
-5. Open a pull request into `main`.
+5. Open a pull request into `develop`.
+
+`develop` is the integration channel for all changes. `main` is the production
+channel and only accepts release pull requests whose source branch is
+`develop`. Direct pushes to both branches are blocked. Required CI validates
+every pull request; human review is welcome but is not required.
 
 Branch names:
 

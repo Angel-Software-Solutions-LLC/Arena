@@ -474,7 +474,7 @@ func versionHandler() http.HandlerFunc {
 			CommitShort: version.ShortCommit(),
 			BuildTime:   version.BuildTime,
 			GoVersion:   runtime.Version(),
-			Repo:        "https://github.com/ablac/Arena",
+			Repo:        "https://github.com/Angel-Software-Solutions-LLC/Arena",
 		})
 	}
 }

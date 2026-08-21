@@ -453,7 +453,7 @@ function initAboutPanel() {
       commitEl.textContent = v.commit_short || 'unknown';
       const link = document.getElementById('about-commit-link');
       if (link && v.commit && v.commit !== 'unknown') {
-        link.href = `${v.repo || 'https://github.com/ablac/Arena'}/commit/${v.commit}`;
+        link.href = `${v.repo || 'https://github.com/Angel-Software-Solutions-LLC/Arena'}/commit/${v.commit}`;
         link.title = v.commit;
       }
       const buildEl = document.getElementById('about-build-time');
