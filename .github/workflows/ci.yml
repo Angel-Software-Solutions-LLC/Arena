@@ -5,6 +5,9 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main, develop]
+    # ready_for_review is not among the default pull_request types, so without
+    # naming all four a draft PR marked ready would never get a CI run.
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
 permissions:
@@ -19,8 +22,11 @@ defaults:
     shell: bash
 
 jobs:
+  # Draft PRs run no CI. Guard on every job without needs; jobs with needs
+  # skip when their dependencies skip, and review handles skips itself.
   policy:
     name: PR policy
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -38,6 +44,7 @@ jobs:
 
   backend:
     name: Go quality and tests
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 25
     services:
@@ -86,6 +93,7 @@ jobs:
 
   frontend-and-sdks:
     name: Frontend and SDK validation
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -221,6 +229,7 @@ jobs:
 
   python-sdk-310:
     name: Python SDK (3.10 compatibility)
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -240,7 +249,9 @@ jobs:
 
   review:
     name: CI review
-    if: always()
+    # always() so upstream failures still get reported, but a draft PR skips
+    # this too — with every needs skipped it would otherwise fail the draft.
+    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
     needs: [policy, backend, frontend-and-sdks, browser-smoke, python-sdk-310]
     runs-on: ubuntu-latest
     timeout-minutes: 5
