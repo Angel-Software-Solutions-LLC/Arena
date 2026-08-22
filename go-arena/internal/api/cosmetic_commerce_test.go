@@ -1085,9 +1085,9 @@ func TestCosmeticCatalogAdvertisesCheckoutOnlyWithUsableAuthAndRedis(t *testing.
 	config.C.SMTPPort = 465
 	config.C.SMTPTLSMode = "implicit"
 	config.C.SMTPTLSServerName = "mail.angel-serv.com"
-	config.C.SMTPUsername = "noreply@angel-serv.com"
+	config.C.SMTPUsername = "hello@angel-serv.com"
 	config.C.SMTPPassword = "test-app-password"
-	config.C.SMTPFrom = "Arena <noreply@angel-serv.com>"
+	config.C.SMTPFrom = "Arena <hello@angel-serv.com>"
 	security.RedisClient = redisClient
 
 	checkoutEnabled := func() bool {

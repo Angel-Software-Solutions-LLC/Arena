@@ -76,7 +76,7 @@ fetches or renders the link therefore cannot consume it. Request responses are
 generic and do not disclose whether an account already exists.
 
 Angel-serv runs Stalwart for transactional mail. Provision a dedicated regular
-user `noreply@angel-serv.com`, then give Arena a high-entropy credential used
+user `hello@angel-serv.com`, then give Arena a high-entropy credential used
 only by this transactional sender; do not reuse a recovery, admin, or personal
 mailbox credential. Configure the production container with:
 
@@ -91,9 +91,9 @@ ARENA_SMTP_HOST=100.71.171.28
 ARENA_SMTP_PORT=465
 ARENA_SMTP_TLS_MODE=implicit
 ARENA_SMTP_TLS_SERVER_NAME=mail.angel-serv.com
-ARENA_SMTP_USERNAME=noreply@angel-serv.com
+ARENA_SMTP_USERNAME=hello@angel-serv.com
 ARENA_SMTP_PASSWORD=replace-with-send-only-app-password
-ARENA_SMTP_FROM=Arena <noreply@angel-serv.com>
+ARENA_SMTP_FROM=Arena <hello@angel-serv.com>
 ```
 
 Arena sends a multipart text/HTML message with one branded call to action, a

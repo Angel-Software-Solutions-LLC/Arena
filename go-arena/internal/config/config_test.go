@@ -228,9 +228,9 @@ func validCustomerEmailAuthConfig() Config {
 		SMTPPort:                         465,
 		SMTPTLSMode:                      "implicit",
 		SMTPTLSServerName:                "mail.angel-serv.com",
-		SMTPUsername:                     "noreply@angel-serv.com",
+		SMTPUsername:                     "hello@angel-serv.com",
 		SMTPPassword:                     "mailbox-secret",
-		SMTPFrom:                         "Arena <noreply@angel-serv.com>",
+		SMTPFrom:                         "Arena <hello@angel-serv.com>",
 	}
 }
 
@@ -310,15 +310,15 @@ func TestLoadReadsNativeCustomerEmailAuth(t *testing.T) {
 	t.Setenv("ARENA_SMTP_PORT", "465")
 	t.Setenv("ARENA_SMTP_TLS_MODE", "implicit")
 	t.Setenv("ARENA_SMTP_TLS_SERVER_NAME", "mail.angel-serv.com")
-	t.Setenv("ARENA_SMTP_USERNAME", "noreply@angel-serv.com")
+	t.Setenv("ARENA_SMTP_USERNAME", "hello@angel-serv.com")
 	t.Setenv("ARENA_SMTP_PASSWORD", "send-only-app-password")
-	t.Setenv("ARENA_SMTP_FROM", "Arena <noreply@angel-serv.com>")
+	t.Setenv("ARENA_SMTP_FROM", "Arena <hello@angel-serv.com>")
 	C = Config{}
 	Load()
 	if !C.CustomerEmailAuthEnabled || C.CustomerEmailTokenTTLMinutes != 15 ||
 		C.CustomerEmailSendCooldownSeconds != 60 || C.CustomerEmailSendRPM != 5 ||
 		C.SMTPHost != "100.71.171.28" || C.SMTPPort != 465 || C.SMTPTLSMode != "implicit" ||
-		C.SMTPTLSServerName != "mail.angel-serv.com" || C.SMTPUsername != "noreply@angel-serv.com" {
+		C.SMTPTLSServerName != "mail.angel-serv.com" || C.SMTPUsername != "hello@angel-serv.com" {
 		t.Fatalf("native email auth config was not loaded: %+v", C)
 	}
 }
