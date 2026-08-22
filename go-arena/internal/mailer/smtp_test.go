@@ -9,7 +9,7 @@ import (
 )
 
 func TestBuildMagicLinkMessageIsMultipartAndEscapesCustomerName(t *testing.T) {
-	from, _ := mail.ParseAddress("Arena <noreply@angel-serv.com>")
+	from, _ := mail.ParseAddress("Arena <hello@angel-serv.com>")
 	to, _ := mail.ParseAddress("pilot@example.com")
 	message, err := buildMagicLinkMessage(
 		from,
@@ -25,8 +25,8 @@ func TestBuildMagicLinkMessageIsMultipartAndEscapesCustomerName(t *testing.T) {
 	}
 	text := string(message)
 	for _, required := range []string{
-		"From: \"Arena\" <noreply@angel-serv.com>",
-		"Reply-To: \"Arena\" <noreply@angel-serv.com>",
+		"From: \"Arena\" <hello@angel-serv.com>",
+		"Reply-To: \"Arena\" <hello@angel-serv.com>",
 		"To: <pilot@example.com>",
 		"Subject: Your Arena sign-in link",
 		"Date: Sat, 11 Jul 2026 20:00:00 +0000",
@@ -61,7 +61,7 @@ func TestBuildMagicLinkMessageIsMultipartAndEscapesCustomerName(t *testing.T) {
 func TestNewSMTPMagicLinkSenderFailsClosedWithoutVerifiedTLSAndExactSender(t *testing.T) {
 	base := SMTPConfig{
 		Host: "100.71.171.28", Port: 465, TLSMode: "implicit", TLSServerName: "mail.angel-serv.com",
-		Username: "noreply@angel-serv.com", Password: "app-password", From: "Arena <noreply@angel-serv.com>",
+		Username: "hello@angel-serv.com", Password: "app-password", From: "Arena <hello@angel-serv.com>",
 	}
 	for _, test := range []struct {
 		name   string
