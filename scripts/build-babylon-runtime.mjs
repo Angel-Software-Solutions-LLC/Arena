@@ -20,7 +20,7 @@ const result = await build({
   minify: true,
   legalComments: 'eof',
   banner: {
-    js: '/*! @babylonjs/core 9.14.0 (Apache-2.0) | earcut 2.2.4 (ISC) */',
+    js: '/*! @babylonjs/core 9.21.2 (Apache-2.0) | earcut 3.2.3 (ISC) */',
   },
   write: false,
 });

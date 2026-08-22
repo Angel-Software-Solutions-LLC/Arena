@@ -1,59 +1,45 @@
 version: 2
+
+# One Dependabot PR per week for the whole repository, covering every
+# ecosystem below. Security updates are not grouped by this and still
+# arrive individually, so urgent fixes never wait for the weekly batch.
+multi-ecosystem-groups:
+  weekly-updates:
+    schedule:
+      interval: weekly
+
 updates:
-  # One batched PR per ecosystem per week instead of one PR per package.
-  # Security updates are not grouped by this and still arrive individually,
-  # so urgent fixes are never held for the weekly batch.
   - package-ecosystem: npm
     directories:
       - /
       - /sdk/nodejs
       - /tests/browser
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
-    groups:
-      all-npm-updates:
-        patterns:
-          - "*"
+    multi-ecosystem-group: weekly-updates
+    patterns:
+      - "*"
 
   - package-ecosystem: gomod
     directory: /go-arena
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
-    groups:
-      all-go-updates:
-        patterns:
-          - "*"
+    multi-ecosystem-group: weekly-updates
+    patterns:
+      - "*"
 
   - package-ecosystem: pip
     directory: /sdk/python
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
-    groups:
-      all-python-updates:
-        patterns:
-          - "*"
+    multi-ecosystem-group: weekly-updates
+    patterns:
+      - "*"
 
   - package-ecosystem: docker
     directories:
       - /go-arena
       - /updater
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
-    groups:
-      all-docker-updates:
-        patterns:
-          - "*"
+    multi-ecosystem-group: weekly-updates
+    patterns:
+      - "*"
 
   - package-ecosystem: github-actions
     directory: /
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
-    groups:
-      all-actions-updates:
-        patterns:
-          - "*"
+    multi-ecosystem-group: weekly-updates
+    patterns:
+      - "*"
