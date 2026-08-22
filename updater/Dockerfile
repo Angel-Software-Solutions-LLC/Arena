@@ -5,9 +5,9 @@
 # updater/server.mjs for the security model. Built from a separate context
 # (updater/) so it never inherits the main app's dependency tree.
 
-FROM docker:27-cli AS docker-cli
+FROM docker:29-cli AS docker-cli
 
-FROM node:22-bookworm-slim
+FROM node:26-bookworm-slim
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends rsync tar ca-certificates git openssh-client \
