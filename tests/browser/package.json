@@ -6,10 +6,10 @@
     "test": "playwright test"
   },
   "devDependencies": {
-    "@playwright/test": "1.61.1"
+    "@playwright/test": "1.62.1"
   },
   "dependencies": {
-    "babylonjs": "^9.14.0",
-    "earcut": "^2.2.4"
+    "babylonjs": "^9.21.2",
+    "earcut": "^3.2.3"
   }
 }

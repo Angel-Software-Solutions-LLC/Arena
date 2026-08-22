@@ -6,8 +6,8 @@
     "check:babylon": "node scripts/build-babylon-runtime.mjs --check"
   },
   "devDependencies": {
-    "@babylonjs/core": "9.14.0",
-    "earcut": "2.2.4",
-    "esbuild": "0.28.1"
+    "@babylonjs/core": "9.21.2",
+    "earcut": "3.2.3",
+    "esbuild": "0.28.2"
   }
 }
