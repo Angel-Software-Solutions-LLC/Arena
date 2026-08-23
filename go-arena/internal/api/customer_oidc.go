@@ -61,14 +61,9 @@ type customerOIDCTransaction struct {
 }
 
 type CustomerOIDCHandler struct {
-	oauth2Config      *oauth2.Config
-	verifier          *oidc.IDTokenVerifier
-	issuer            string
-	emailStore        customerEmailStore
-	emailSender       customerEmailSender
-	emailSignInURL    string
-	emailTokenTTL     time.Duration
-	emailSendCooldown time.Duration
+	oauth2Config *oauth2.Config
+	verifier     *oidc.IDTokenVerifier
+	issuer       string
 	// See config.CustomerLinkLegacyByEmail. False means no sign-in carries an
 	// address at any point, not even in memory.
 	linkLegacyByEmail bool
@@ -81,13 +76,18 @@ type CustomerOIDCHandler struct {
 
 type customerSessionContextKey struct{}
 
+// customerAccountAuthEnabled reports whether a customer can sign in at all.
+//
+// One way in now. Signing in is an Accounts sign-in; there is no second,
+// Arena-operated path that mails somebody a link, because operating one meant
+// holding the address it was mailed to.
 func customerAccountAuthEnabled(handler *CustomerOIDCHandler) bool {
-	return handler != nil && (handler.oauth2Config != nil || (handler.emailSender != nil && handler.emailStore != nil))
+	return handler != nil && handler.oauth2Config != nil
 }
 
 func newCustomerOIDCHandlerWithAuthority(authority platform.IdentityAuthority) *CustomerOIDCHandler {
 	cfg := &config.C
-	if !cfg.CustomerOIDCEnabled && !cfg.CustomerEmailAuthEnabled {
+	if !cfg.CustomerOIDCEnabled {
 		return nil
 	}
 	h := &CustomerOIDCHandler{
@@ -95,30 +95,18 @@ func newCustomerOIDCHandlerWithAuthority(authority platform.IdentityAuthority) *
 		states:    make(map[string]customerOIDCTransaction),
 		authority: authority,
 	}
-	if cfg.CustomerEmailAuthEnabled {
-		if err := configureCustomerEmailAuth(h, *cfg); err != nil {
-			slog.Error("failed to initialise native customer email auth", "error", err)
-			if !cfg.CustomerOIDCEnabled {
-				return nil
-			}
-		}
-	}
 	if cfg.CustomerOIDCEnabled {
 		if cfg.CustomerOIDCIssuer == "" || cfg.CustomerOIDCClientID == "" ||
 			cfg.CustomerOIDCClientSecret == "" || cfg.CustomerOIDCRedirectURI == "" {
 			slog.Warn("customer OIDC enabled but missing required config")
-			if h.emailSender == nil {
-				return nil
-			}
+			return nil
 		} else {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			provider, err := oidc.NewProvider(ctx, cfg.CustomerOIDCIssuer)
 			cancel()
 			if err != nil {
 				slog.Error("failed to initialise customer OIDC provider", "issuer", cfg.CustomerOIDCIssuer, "error", err)
-				if h.emailSender == nil {
-					return nil
-				}
+				return nil
 			} else {
 				/*
 				 * `email` is requested only while legacy accounts are still
@@ -510,29 +498,39 @@ func (h *CustomerOIDCHandler) SessionInfoHandler(w http.ResponseWriter, r *http.
 	setCustomerNoStore(w)
 	session := h.GetSession(r)
 	oidcEnabled := h != nil && h.oauth2Config != nil
-	emailEnabled := h != nil && h.emailSender != nil && h.emailStore != nil
 	if session != nil {
 		h.refreshSessionCookie(w, r, session)
 	}
 	if session == nil {
+		/*
+		 * `email_login_enabled` is still reported, and is always false.
+		 *
+		 * A deployed dashboard reads this document to decide what to draw, and
+		 * a key that vanishes is a key that reads as `undefined` — which is
+		 * falsey, so the old script does the right thing, but only by
+		 * accident. Saying false out loud keeps a browser that has not
+		 * reloaded its bundle correct on purpose, and the field can go once
+		 * nothing asks for it.
+		 */
 		writeJSON(w, http.StatusOK, map[string]any{
 			"authenticated":       false,
-			"login_enabled":       oidcEnabled || emailEnabled,
+			"login_enabled":       oidcEnabled,
 			"oidc_login_enabled":  oidcEnabled,
-			"email_login_enabled": emailEnabled,
+			"email_login_enabled": false,
 			"login_url":           customerAPIDashboardPath(r, "/login"),
-			"email_start_url":     customerAccountAPIPath(r, "/email/start"),
-			"email_verify_url":    customerAccountAPIPath(r, "/email/verify"),
 		})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"authenticated":       true,
-		"login_enabled":       oidcEnabled || emailEnabled,
+		"login_enabled":       oidcEnabled,
 		"oidc_login_enabled":  oidcEnabled,
-		"email_login_enabled": emailEnabled,
+		"email_login_enabled": false,
 		"account": map[string]any{
-			"id":                session.AccountID,
+			"id": session.AccountID,
+			// Empty for a linked account, which is every account after the
+			// cutover. The key stays so a dashboard that has not reloaded
+			// still finds what it reads; there is simply nothing in it.
 			"email":             session.Email,
 			"display_name":      session.Name,
 			"name":              session.Name,

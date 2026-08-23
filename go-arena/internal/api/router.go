@@ -217,7 +217,6 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 			}
 			api.With(MakeCustomerAuthMiddleware(customerOIDCHandler)).Post("/dashboard/logout", customerOIDCHandler.LogoutHandler)
 			api.Get("/account/session", customerOIDCHandler.SessionInfoHandler)
-			registerCustomerEmailAuthRoutes(api, customerOIDCHandler)
 		} else {
 			api.Get("/dashboard/login", CustomerLoginUnavailableHandler)
 			api.Post("/dashboard/logout", CustomerLoginUnavailableHandler)
@@ -331,11 +330,11 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 			api.Get("/bot-setup", BotSetup())
 			api.Get("/content", PublicContentBlocks)
 			api.Get("/service-status", serviceStatus.publicStatus)
-		// Browser error intake (public, rate limited, bounded in-memory only).
-		// Reports land in the admin Errors tab so a silent client-side
-		// breakage stops being invisible; see client_errors.go.
-		api.With(security.RateLimitMiddleware(config.C.ClientErrorReportRPM)).
-			Post("/client-errors", ClientErrorHandler(bus))
+			// Browser error intake (public, rate limited, bounded in-memory only).
+			// Reports land in the admin Errors tab so a silent client-side
+			// breakage stops being invisible; see client_errors.go.
+			api.With(security.RateLimitMiddleware(config.C.ClientErrorReportRPM)).
+				Post("/client-errors", ClientErrorHandler(bus))
 			api.Get("/cosmetics/catalog", cosmeticsHandler.Catalog)
 			api.Get("/cosmetics/checkout/config", commerceHandler.CheckoutConfig)
 			api.Post("/cosmetics/webhooks/stripe", commerceHandler.StripeWebhook)
@@ -348,7 +347,6 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 				}
 				api.With(MakeCustomerAuthMiddleware(customerOIDCHandler)).Post("/dashboard/logout", customerOIDCHandler.LogoutHandler)
 				api.Get("/account/session", customerOIDCHandler.SessionInfoHandler)
-				registerCustomerEmailAuthRoutes(api, customerOIDCHandler)
 			} else {
 				api.Get("/dashboard/login", CustomerLoginUnavailableHandler)
 				api.Post("/dashboard/logout", CustomerLoginUnavailableHandler)
@@ -433,14 +431,6 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 	r.Handle("/*", noCacheStaticHandler(fileServer))
 
 	return r
-}
-
-func registerCustomerEmailAuthRoutes(api chi.Router, handler *CustomerOIDCHandler) {
-	if handler == nil || handler.emailSender == nil || handler.emailStore == nil {
-		return
-	}
-	api.With(security.FailClosedRateLimitMiddleware(config.C.CustomerEmailSendRPM)).Post("/account/email/start", handler.EmailStartHandler)
-	api.With(security.RateLimitMiddleware(config.C.AdminRateLimitRPM)).Post("/account/email/verify", handler.EmailVerifyHandler)
 }
 
 func registerCustomerCosmeticCommerceRoutes(account chi.Router, handler *CosmeticCommerceHandler) {
