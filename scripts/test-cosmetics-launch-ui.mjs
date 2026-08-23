@@ -12,6 +12,9 @@ const botsSource = readFileSync(new URL('../frontend/js/renderer/bots.js', impor
 const botBodySource = readFileSync(new URL('../frontend/js/renderer/bot-body.js', import.meta.url), 'utf8');
 const rigSource = readFileSync(new URL('../frontend/js/renderer/character-rig.js', import.meta.url), 'utf8');
 
+assert.doesNotMatch(desktopHTML, /verify your email|verified-email/i,
+  'the Arena shell must use account-neutral verification copy');
+
 assert.ok(desktopHTML.indexOf('js/cosmetic-themes.js') < desktopHTML.indexOf('js/app.js'),
   'desktop must load procedural themes before the live renderer module chain');
 assert.ok(mobileHTML.indexOf('../js/cosmetic-themes.js') < mobileHTML.indexOf('mobile.js'),
@@ -25,7 +28,9 @@ assert.doesNotMatch(appSource, /initCosmeticsPanel|cosmetics-panel\.js/,
 
 assert.match(desktopHTML, /js\/app\.js\?v=20260810e/);
 assert.match(mobileHTML, /mobile\.js\?v=20260810e/);
-assert.match(shopHTML, /cosmetics-shop\.js\?v=20260810d/);
+assert.match(desktopHTML, /css\/embedded-checkout\.css\?v=20260713a/);
+assert.match(desktopHTML, /js\/embedded-checkout\.js\?v=20260823b/);
+assert.match(shopHTML, /cosmetics-shop\.js\?v=20260823b/);
 assert.match(appSource, /renderer\/engine\.js\?v=20260810e/);
 assert.match(mobileSource, /renderer\/engine\.js\?v=20260810e/);
 assert.match(shopSource, /shop-preview\.js\?v=20260718o/);

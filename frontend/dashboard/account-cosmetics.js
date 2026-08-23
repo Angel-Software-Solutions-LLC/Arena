@@ -58,6 +58,8 @@
       ? source.account
       : source;
     const email = cleanText(rawAccount.email).toLowerCase();
+    const displayName = cleanText(rawAccount.display_name);
+    const legacyName = cleanText(rawAccount.name);
     const emailVerified = rawAccount.email_verified === true || Boolean(cleanText(rawAccount.email_verified_at));
     const authenticated = typeof source.authenticated === 'boolean'
       ? source.authenticated
@@ -73,9 +75,29 @@
         id: cleanText(rawAccount.id),
         email,
         email_verified: emailVerified,
-        name: cleanText(rawAccount.name || rawAccount.display_name),
+        name: displayName || legacyName,
       },
     };
+  }
+
+  function isVerifiedAccount(rawAccount) {
+    const account = rawAccount && typeof rawAccount === 'object' ? rawAccount : {};
+    return Boolean(cleanText(account.id)) && account.email_verified === true;
+  }
+
+  function hasVerifiedAccount(rawSession) {
+    const source = rawSession && typeof rawSession === 'object' ? rawSession : {};
+    const session = normalizeSession(source);
+    return source.authenticated === true && isVerifiedAccount(session.account);
+  }
+
+  function accountLabel(rawAccount) {
+    const account = rawAccount && typeof rawAccount === 'object' ? rawAccount : {};
+    const displayName = cleanText(account.display_name);
+    const legacyName = cleanText(account.name);
+    return displayName || legacyName
+      || cleanText(account.email).toLowerCase()
+      || 'Angel account';
   }
 
   function normalizeBot(raw) {
@@ -337,8 +359,8 @@
 
   function assignmentIntent(snapshot, licenseID, botID) {
     const state = normalizeSnapshot(snapshot);
-    if (!state.account.email || state.account.email_verified !== true) {
-      return {ok: false, reason: 'verified-email-required'};
+    if (!isVerifiedAccount(state.account)) {
+      return {ok: false, reason: 'verified-account-required'};
     }
     const license = state.licenses.find(entry => entry.id === licenseID);
     if (!license) return {ok: false, reason: 'license-not-found'};
@@ -654,7 +676,7 @@
         <div><div class="cosmetic-kicker">Account credentials</div><h2 id="account-keys-title">API keys</h2></div>
         <span>${collection.active_count} of ${collection.limit} active</span>
       </div>
-      <p class="cosmetic-rule">Keys are generated and stored against this verified email account. You can keep up to 5 active keys and revoke any one without affecting purchases.</p>
+      <p class="cosmetic-rule">Keys are generated and stored with this verified account. You can keep up to 5 active keys and revoke any one without affecting purchases.</p>
       ${generatedPanel}
       <form id="accountKeyForm" class="account-key-form">
         <label for="accountKeyBotName">Bot name</label>
@@ -881,7 +903,7 @@
   // the underlying data (snapshot.bots) is still fetched alongside cosmetic
   // inventory, not through account-profile.js's own data flow.
   function renderLinkedBots(snapshot, view) {
-    const email = snapshot.account.email || 'your verified email';
+    const owner = accountLabel(snapshot.account);
     const botRows = snapshot.bots.length
       ? snapshot.bots.map(bot => `<li data-linked-bot-id="${escapeHTML(bot.id)}">
           <span><strong>${escapeHTML(bot.name)}</strong>${bot.key_prefix ? `<small>${escapeHTML(bot.key_prefix)}...</small>` : ''}</span>
@@ -892,7 +914,7 @@
       <div class="cosmetic-inventory-head">
         <div><div class="cosmetic-kicker">Your bots</div><h2 id="linked-bots-title">Linked bots</h2></div>
       </div>
-      <p class="cosmetic-rule">Claim a bot you started anonymously by proving its server-issued token. Linking does not transfer cosmetic ownership to the token -- purchases always stay with ${escapeHTML(email)}.</p>
+      <p class="cosmetic-rule">Claim a bot you started anonymously by proving its server-issued token. Linking does not transfer cosmetic ownership to the token -- purchases always stay with ${escapeHTML(owner)}.</p>
       <ul class="linked-bot-list">${botRows}</ul>
       <form id="linkBotForm" class="link-bot-form">
         <label for="linkBotKey">Claim or link an existing bot</label>
@@ -906,7 +928,7 @@
   function renderPanel(rawSnapshot, options) {
     const snapshot = normalizeSnapshot(rawSnapshot);
     const view = options && typeof options === 'object' ? options : {};
-    const email = snapshot.account.email || 'your verified email';
+    const owner = accountLabel(snapshot.account);
 
     const groups = new Map();
     snapshot.licenses.forEach(license => {
@@ -950,11 +972,11 @@
 
     return `<div class="cosmetic-account-summary">
       <div>
-        <div class="cosmetic-kicker">Verified owner</div>
-        <h2>${escapeHTML(email)}</h2>
+        <div class="cosmetic-kicker">Verified account</div>
+        <h2>${escapeHTML(owner)}</h2>
         <p>What this account owns, and which linked bot wears each item. Purchases stay with this account even if a bot API key is rotated, revoked, or lost. Link a bot and manage API keys from the Profile tab.</p>
       </div>
-      <span class="verified-email-badge">Email verified</span>
+      <span class="verified-email-badge">Account verified</span>
     </div>
     ${view.error ? `<div class="tip warn" role="alert"><b>Could not update cosmetics:</b> ${escapeHTML(view.error)}</div>` : ''}
     ${view.notice ? `<div class="tip good" role="status"><b>Saved:</b> ${escapeHTML(view.notice)}</div>` : ''}
@@ -973,11 +995,14 @@
   }
 
   root.ArenaAccountCosmetics = Object.freeze({
+    accountLabel,
     accountRoute,
     assignmentIntent,
     checkoutIntent,
     equippedLoadout,
     escapeHTML,
+    hasVerifiedAccount,
+    isVerifiedAccount,
     keyCreateIntent,
     keyRevokeIntent,
     normalizeCatalog,

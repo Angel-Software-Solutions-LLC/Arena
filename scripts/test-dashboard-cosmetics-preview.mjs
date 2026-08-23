@@ -219,7 +219,7 @@ assert.match(dashboardHTML, /id="accountCosmeticsPreviewCanvas"/);
 assert.match(dashboardHTML, /id="accountCosmeticsPreviewBot"/);
 assert.match(dashboardHTML, /data-cosmetics-preview-reset/);
 assert.match(dashboardHTML, /Current(?:ly equipped)?[\s\S]*Preview/, 'outfitter must distinguish server-equipped and staged visuals');
-assert.match(dashboardHTML, /import\('\.\/cosmetics-preview\.js\?v=20260810d'\)/,
+assert.match(dashboardHTML, /import\('\.\/cosmetics-preview\.js\?v=20260823b'\)/,
   'the heavy preview controller must be loaded lazily');
 assert.match(dashboardHTML, /ArenaAccountCosmetics\.previewModel/,
   'Dashboard runtime must revalidate staged license IDs through the pure preview model');

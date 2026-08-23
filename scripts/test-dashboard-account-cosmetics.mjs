@@ -30,6 +30,44 @@ assert.equal(signedOut.oidc_login_enabled, true);
 assert.equal(signedOut.email_login_enabled, false);
 assert.equal(signedOut.email_start_url, undefined, 'the retired endpoints are gone from the session shape');
 assert.equal(signedOut.email_verify_url, undefined);
+const postCutoverSession = {
+  authenticated: true,
+  account: {
+    id: 'acct-post-cutover',
+    email: '',
+    email_verified: true,
+    display_name: 'Arena Pilot',
+  },
+};
+const normalizedPostCutoverSession = cosmetics.normalizeSession(postCutoverSession);
+assert.equal(normalizedPostCutoverSession.account.id, 'acct-post-cutover');
+assert.equal(normalizedPostCutoverSession.account.email_verified, true);
+assert.equal(normalizedPostCutoverSession.account.email, '');
+assert.equal(normalizedPostCutoverSession.account.name, 'Arena Pilot');
+assert.equal(cosmetics.hasVerifiedAccount(postCutoverSession), true,
+  'a signed-in verified Angel account with no email must remain eligible');
+assert.equal(cosmetics.hasVerifiedAccount({...postCutoverSession, authenticated:false}), false,
+  'an explicit sign-out must not be eligible');
+assert.equal(cosmetics.hasVerifiedAccount({account:{
+  id:'acct-legacy-email', email:'legacy@example.com', email_verified:true,
+}}), false,
+  'a verified legacy email account without explicit authentication must not be eligible');
+assert.equal(cosmetics.hasVerifiedAccount({...postCutoverSession, account:{...postCutoverSession.account, id:''}}), false,
+  'an account ID is required for eligibility');
+assert.equal(cosmetics.hasVerifiedAccount({...postCutoverSession, account:{...postCutoverSession.account, email_verified:false}}), false,
+  'an unverified account must not be eligible');
+assert.equal(cosmetics.accountLabel(postCutoverSession.account), 'Arena Pilot');
+const whitespaceDisplayName = {display_name:'   ', name:'Legacy Name', email:'legacy@example.com'};
+assert.equal(cosmetics.normalizeSession({authenticated:true, account:whitespaceDisplayName}).account.name, 'Legacy Name',
+  'a whitespace-only display name must fall back to a legacy name during normalization');
+assert.equal(cosmetics.accountLabel(whitespaceDisplayName), 'Legacy Name',
+  'a whitespace-only display name must fall back to a legacy name for account labels');
+assert.equal(cosmetics.normalizeSession({authenticated:true, account:{display_name:'Preferred Name', name:'Legacy Name'}}).account.name, 'Preferred Name',
+  'a real display name must still win over the legacy name during normalization');
+assert.equal(cosmetics.accountLabel({display_name:'Preferred Name', name:'Legacy Name'}), 'Preferred Name',
+  'a real display name must still win over the legacy name for account labels');
+assert.equal(cosmetics.accountLabel({email:' Legacy@Example.COM '}), 'legacy@example.com');
+assert.equal(cosmetics.accountLabel({}), 'Angel account');
 assert.equal(cosmetics.accountRoute('session'), '/account/session');
 assert.equal(cosmetics.accountRoute('checkout'), '/account/cosmetics/checkout');
 assert.equal(cosmetics.accountRoute('subscriptionCheckout'), '/account/cosmetics/subscription/checkout');
@@ -76,6 +114,20 @@ assert.equal(snapshot.licenses.length, 2, 'multiple purchased copies must remain
 assert.equal(snapshot.bots[0].avatar_color, '#123456', 'linked bots must retain the server-owned preview color');
 assert.equal(snapshot.bots[0].default_weapon, 'bow', 'linked bots must retain the server-owned preview weapon');
 assert.equal(cosmetics.slotLabel('trail'), 'Trails');
+
+const postCutoverSnapshot = cosmetics.normalizeSnapshot({
+  account: postCutoverSession.account,
+  bots: [{id:'bot-post-cutover',name:'Post-cutover Bot',key_is_active:true}],
+  licenses: [{
+    id:'license-post-cutover', status:'active',
+    item:{id:'skin-post-cutover',name:'Post-cutover Skin',slot:'bot_skin'},
+  }],
+});
+assert.deepEqual(
+  JSON.parse(JSON.stringify(cosmetics.assignmentIntent(postCutoverSnapshot, 'license-post-cutover', 'bot-post-cutover'))),
+  {ok:true,kind:'assign',license_id:'license-post-cutover',bot_id:'bot-post-cutover',previous_bot_id:null},
+  'a verified account without an email may assign a real active license to an active linked bot',
+);
 
 const previewSnapshot = cosmetics.normalizeSnapshot({
   account: {id:'acct-preview',email:'preview@example.com',email_verified:true},
@@ -523,7 +575,7 @@ recentPurchaseCheck('bounded history', () => {
 
 const unverified = structuredClone(snapshot);
 unverified.account.email_verified = false;
-assert.equal(cosmetics.assignmentIntent(unverified, 'license-2', 'bot-2').reason, 'verified-email-required');
+assert.equal(cosmetics.assignmentIntent(unverified, 'license-2', 'bot-2').reason, 'verified-account-required');
 
 const html = cosmetics.renderPanel(snapshot, {});
 assert.match(html, /Purchases stay with this account even if a bot API key is rotated, revoked, or lost/);
@@ -543,11 +595,23 @@ assert.doesNotMatch(html, /Neon <Grid>/, 'cosmetic names must be escaped');
 assert.match(html, /Neon &lt;Grid&gt;/);
 assert.doesNotMatch(html, /value="arena_alpha"/, 'rendered account UI must not contain raw API keys');
 
+const postCutoverHTML = cosmetics.renderPanel(postCutoverSnapshot, {});
+assert.match(postCutoverHTML, /Arena Pilot/);
+assert.match(postCutoverHTML, /Verified account/);
+assert.match(postCutoverHTML, /Account verified/);
+assert.doesNotMatch(postCutoverHTML, /verified email/i);
+assert.doesNotMatch(postCutoverHTML, /email account/i);
+assert.doesNotMatch(postCutoverHTML, /Email verified/);
+
 const linkedBotsHTML = cosmetics.renderLinkedBots(snapshot, {});
 assert.match(linkedBotsHTML, /id="linkBotForm"/);
 assert.match(linkedBotsHTML, /data-bot-unlink="bot-1"/);
 assert.match(linkedBotsHTML, /Alpha/);
 assert.match(linkedBotsHTML, /Beta/);
+const postCutoverLinkedBotsHTML = cosmetics.renderLinkedBots(postCutoverSnapshot, {});
+assert.match(postCutoverLinkedBotsHTML, /purchases always stay with Arena Pilot/);
+assert.doesNotMatch(postCutoverLinkedBotsHTML, /email/i,
+  'linked-bot ownership guidance must not depend on an email');
 recentPurchaseCheck('empty linked-bots state', () => {
   const noBotsSnapshot = cosmetics.normalizeSnapshot({account:snapshot.account, bots:[], licenses:[]});
   assert.match(cosmetics.renderLinkedBots(noBotsSnapshot, {}), /No bots linked yet/);
@@ -576,6 +640,9 @@ assert.match(managedKeysHTML, /id="accountKeyForm"/);
 assert.match(managedKeysHTML, /data-account-key-revoke="key-1"/);
 assert.match(managedKeysHTML, /value="arena_one_time_secret"/, 'a newly issued key should be shown exactly once inside the authenticated Dashboard');
 assert.match(managedKeysHTML, /data-account-key-clear/);
+assert.match(managedKeysHTML, /stored with this verified account/);
+assert.doesNotMatch(managedKeysHTML, /email account/i,
+  'API-key guidance must use account-neutral wording');
 
 const billingMismatchHTML = cosmetics.renderPanel({
   ...snapshot,
@@ -642,9 +709,11 @@ const linkHandler = dashboardHTML.slice(
 assert.doesNotMatch(linkHandler, /saveKey|localStorage/, 'linking a bot must not persist the proof key in dashboard storage');
 
 recentPurchaseCheck('dashboard script cache version', () => {
-  assert.match(dashboardHTML, /account-cosmetics\.js\?v=20260714h/);
+  assert.match(dashboardHTML, /dashboard\.css\?v=20260823b/);
+  assert.match(dashboardHTML, /account-cosmetics\.js\?v=20260823b/);
+  assert.match(dashboardHTML, /dashboard\.js\?v=20260823b/);
   assert.match(dashboardHTML, /href="\.\.\/css\/embedded-checkout\.css\?v=20260713a"/);
-  assert.match(dashboardHTML, /src="\.\.\/js\/embedded-checkout\.js\?v=20260713a"/);
+  assert.match(dashboardHTML, /src="\.\.\/js\/embedded-checkout\.js\?v=20260823b"/);
 });
 recentPurchaseCheck('checkout return remains reconciling', () => {
   assert.match(dashboardHTML, /checkoutReturn === 'return'[\s\S]*?status:'reconciling'/);
