@@ -193,7 +193,11 @@ async function api(path, opts={}) {
 async function pub(path) { return (await fetch(getBase()+path)).json(); }
 
 function hasVerifiedAccount() {
-  return accountSession.authenticated === true && accountSession.account?.email_verified === true && Boolean(accountSession.account?.email);
+  return window.ArenaAccountCosmetics.hasVerifiedAccount(accountSession);
+}
+
+function accountIdentityLabel() {
+  return window.ArenaAccountCosmetics.accountLabel(accountSession.account);
 }
 
 async function accountRequest(path, opts={}) {
@@ -426,7 +430,7 @@ function updatePrivateAuthUI() {
   document.getElementById('accountLogoutBtn').style.display = accountReady ? '' : 'none';
   const identity = document.getElementById('accountToolbarIdentity');
   identity.classList.toggle('visible', accountReady);
-  identity.innerHTML = accountReady ? `Owned by <strong>${esc(accountSession.account.email)}</strong>` : '';
+  identity.innerHTML = accountReady ? `Owned by <strong>${esc(accountIdentityLabel())}</strong>` : '';
   const hasSwitcherChoice = accountReady || getSavedKeys().length > 0;
   document.getElementById('botSwitcher').style.display = hasSwitcherChoice ? '' : 'none';
 }
@@ -457,7 +461,7 @@ function syncAccountCosmeticsPreviewRenderer(model) {
   }
 
   if (!accountCosmeticsPreviewModulePromise) {
-    accountCosmeticsPreviewModulePromise = import('./cosmetics-preview.js?v=20260810d').catch(error => {
+    accountCosmeticsPreviewModulePromise = import('./cosmetics-preview.js?v=20260823b').catch(error => {
       accountCosmeticsPreviewModulePromise = null;
       throw error;
     });
@@ -833,7 +837,7 @@ async function createAccountKey(form) {
     if (!apiKeyValue) throw new Error('The API-key service did not return the one-time key value.');
     accountGeneratedKey = data;
     accountKeyCreateBusy = false;
-    await refreshAccountCosmetics('API key created and linked to this verified email account.');
+    await refreshAccountCosmetics('API key created and linked to this verified account.');
   } catch (error) {
     accountKeyCreateBusy = false;
     accountKeysError = error?.message || 'Could not create an API key.';
@@ -1167,7 +1171,7 @@ async function handleAccountPanelSubmit(event) {
   input.value = '';
   try {
     await accountRequest(window.ArenaAccountCosmetics.accountRoute('bots'), {method:'POST',body:JSON.stringify({api_key:rawKey})});
-    await refreshAccountCosmetics('Bot linked. Cosmetic ownership remains with your email account.');
+    await refreshAccountCosmetics('Bot linked. Cosmetic ownership remains with your account.');
   } catch (e) {
     accountViewError = e.message || 'Could not link that bot.';
     renderAccountCosmetics();
@@ -1384,7 +1388,7 @@ async function unassignAccountLicense(licenseID) {
   try {
     await accountRequest(window.ArenaAccountCosmetics.accountRoute('assignment', licenseID), {method:'DELETE'});
     accountBusyLicenseID = '';
-    await refreshAccountCosmetics('Cosmetic removed from the bot. It remains owned by your email account.');
+    await refreshAccountCosmetics('Cosmetic removed from the bot. It remains owned by your account.');
   } catch (e) {
     accountBusyLicenseID = '';
     accountViewError = e.message || 'Could not remove that cosmetic.';
@@ -1679,7 +1683,7 @@ function switchBot(key) {
 
 function buildBotSwitcher() {
   const keys = getSavedKeys();
-  const accountOption = hasVerifiedAccount() ? `<option value="" ${apiKey?'':'selected'}>Cosmetics - ${esc(accountSession.account.email)}</option>` : '';
+  const accountOption = hasVerifiedAccount() ? `<option value="" ${apiKey?'':'selected'}>Cosmetics - ${esc(accountIdentityLabel())}</option>` : '';
   document.getElementById('botSwitcher').innerHTML = accountOption + keys.map(k => `<option value="${esc(k.key)}" ${k.key===apiKey?'selected':''}>Stats - ${esc(k.label||k.name||'Bot')}</option>`).join('');
   // Compare selects
   const opts = keys.map(k=>`<option value="${esc(k.key)}">${esc(k.label||k.name)}</option>`).join('');
@@ -2836,4 +2840,3 @@ renderStrategy = function() {
   renderMatchupMatrix();
   renderDecisionTree();
 };
-
