@@ -125,8 +125,6 @@ let accountSession = {
   oidc_login_enabled:false,
   login_url:'',
   logout_url:'',
-  email_start_url:'',
-  email_verify_url:'',
   account:{id:'',email:'',email_verified:false,name:''},
   csrf_token:'',
 };
@@ -155,7 +153,6 @@ let accountProfile = null;
 let accountProfileError = '';
 let accountProfileLoadSequence = 0;
 const DASHBOARD_PARAMS = new URLSearchParams(window.location.search);
-let pendingCustomerEmailToken = takeCustomerEmailTokenFromHash();
 let accountPendingPackID = DASHBOARD_PARAMS.get('pack') || '';
 const checkoutReturn = String(DASHBOARD_PARAMS.get('checkout') || DASHBOARD_PARAMS.get('checkout_status') || '').toLowerCase();
 let accountCheckoutState = checkoutReturn === 'success'
@@ -271,78 +268,6 @@ function openArenaShop() {
   navigateAccount(siteRootPath() + '?shop_open=1');
 }
 
-function takeCustomerEmailTokenFromHash() {
-  const rawHash = String(window.location.hash || '');
-  if (!rawHash.startsWith('#')) return '';
-  const params = new URLSearchParams(rawHash.slice(1));
-  const token = String(params.get('email_token') || '').trim();
-  if (!token) return '';
-  params.delete('email_token');
-  const remaining = params.toString();
-  const cleanURL = location.pathname + location.search + (remaining ? '#'+remaining : '');
-  history.replaceState(null, '', cleanURL);
-  return token;
-}
-
-async function emailAuthRequest(path, body) {
-  const endpoint = path.startsWith('/api/v1/') || path.startsWith('/arena/api/v1/')
-    ? path
-    : getBase()+path;
-  const response = await fetch(endpoint, {
-    method:'POST',
-    credentials:'same-origin',
-    cache:'no-store',
-    headers:{Accept:'application/json','Content-Type':'application/json'},
-    body:JSON.stringify(body),
-  });
-  const text = await response.text();
-  let payload = null;
-  if (text) {
-    try { payload = JSON.parse(text); }
-    catch (e) { payload = {message:text}; }
-  }
-  if (!response.ok) throw new Error(payload?.error || payload?.message || `Request failed (${response.status})`);
-  return payload;
-}
-
-async function startCustomerEmailAuth(event) {
-  event.preventDefault();
-  const form = document.getElementById('accountEmailForm');
-  const emailInput = document.getElementById('accountEmailInput');
-  const nameInput = document.getElementById('accountDisplayNameInput');
-  const submit = document.getElementById('accountEmailSubmit');
-  const status = document.getElementById('accountEmailStatus');
-  if (!accountSession.email_login_enabled) {
-    status.className = 'account-email-status is-error';
-    status.textContent = 'Email registration is not configured on this Arena yet.';
-    return;
-  }
-  if (!form.reportValidity()) return;
-  if (window.ArenaConsentGate) {
-    const accepted = await window.ArenaConsentGate.ensureConsent();
-    if (!accepted) return;
-  }
-  submit.disabled = true;
-  submit.textContent = 'Sending secure link...';
-  status.className = 'account-email-status';
-  status.textContent = '';
-  try {
-    const payload = await emailAuthRequest(accountSession.email_start_url || '/account/email/start', {
-      email:emailInput.value.trim(),
-      display_name:nameInput.value.trim(),
-      return_to:accountReturnPath(),
-    });
-    status.className = 'account-email-status is-success';
-    status.textContent = payload?.message || 'If that address can receive Arena mail, a sign-in link will arrive shortly.';
-  } catch (error) {
-    status.className = 'account-email-status is-error';
-    status.textContent = error.message || 'The sign-in email could not be sent. Try again shortly.';
-  } finally {
-    submit.disabled = !accountSession.email_login_enabled;
-    submit.textContent = 'Email me a sign-in link';
-  }
-}
-
 function notifyOtherTabsSignedIn() {
   import('../js/account-session.js?v=20260714a')
     .then(({notifySessionChanged}) => notifySessionChanged())
@@ -365,64 +290,39 @@ function watchAccountSessionAcrossTabs() {
   }).catch(error => console.warn('Cross-tab session sync unavailable', error));
 }
 
-async function confirmCustomerEmailToken() {
-  const button = document.getElementById('accountEmailConfirmButton');
-  const status = document.getElementById('accountEmailConfirmStatus');
-  if (!pendingCustomerEmailToken || !accountSession.email_login_enabled) {
-    status.className = 'account-email-status is-error';
-    status.textContent = 'This sign-in link is unavailable. Request a new one.';
-    return;
-  }
-  button.disabled = true;
-  button.textContent = 'Verifying secure link...';
-  status.className = 'account-email-status';
-  status.textContent = '';
-  try {
-    const payload = await emailAuthRequest(accountSession.email_verify_url || '/account/email/verify', {token:pendingCustomerEmailToken});
-    const redirectTo = safeCustomerEmailRedirectPath(payload?.redirect_to);
-    pendingCustomerEmailToken = '';
-    document.getElementById('accountEmailConfirm').hidden = true;
-    // A magic link always opens in a fresh tab (the browser controls that,
-    // not this page). This is the other half of the fix: tell any other
-    // already-open Arena tab it should pick up the new sign-in itself,
-    // instead of leaving it stuck on whatever it showed before the link was
-    // clicked. See watchAccountSessionAcrossTabs() below for the read side.
-    notifyOtherTabsSignedIn();
-    if (redirectTo !== accountReturnPath()) {
-      navigateAccount(redirectTo);
-      return;
-    }
-    await initializeAccountMode();
-  } catch (error) {
-    status.className = 'account-email-status is-error';
-    status.textContent = error.message || 'This sign-in link is invalid or expired. Request a new one.';
-  } finally {
-    button.disabled = false;
-    button.textContent = 'Continue to Arena';
-  }
-}
-
 async function startAccountLogin() {
   const button = document.getElementById('accountSignInButton');
-  if (button?.dataset.retrySession === 'true') {
-    button.disabled = true;
-    button.textContent = 'Checking email sign-in...';
-    delete button.dataset.retrySession;
-    document.getElementById('loginError').textContent = '';
-    initializeAccountMode();
-    return;
-  }
   if (!accountSession.oidc_login_enabled) {
-    document.getElementById('loginError').textContent = 'SSO sign-in is not configured on this Arena.';
+    document.getElementById('loginError').textContent = 'Angel Accounts sign-in is not configured on this Arena.';
     return;
   }
+  // Consent first: the popup is a new window, and asking for agreement inside
+  // one the person did not expect is how a consent gate gets clicked through.
   if (window.ArenaConsentGate) {
     const accepted = await window.ArenaConsentGate.ensureConsent();
     if (!accepted) return;
   }
-  const loginURL = accountSession.login_url || getBase()+'/dashboard/login';
-  const separator = loginURL.includes('?') ? '&' : '?';
-  navigateAccount(loginURL+separator+'return_to='+encodeURIComponent(accountReturnPath()));
+  document.getElementById('loginError').textContent = '';
+  const original = button ? button.textContent : '';
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'Waiting for Angel Accounts...';
+  }
+  try {
+    const {signInWithAccounts} = await import('../js/accounts-login.js?v=20260823a');
+    await signInWithAccounts({returnTo: accountReturnPath()});
+    // Re-read the session whatever the popup reported. It resolves false for a
+    // window closed by hand, and that window may still have completed the
+    // sign-in on its way out -- the server is what decides, not the popup.
+    await initializeAccountMode();
+  } catch (error) {
+    document.getElementById('loginError').textContent = error?.message || 'Could not start sign-in.';
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = original || 'Sign in';
+    }
+  }
 }
 
 async function signOutAccount() {
@@ -458,27 +358,23 @@ async function signOutAccount() {
   }
 }
 
+// One control, one state to decide: can this Arena reach Angel Accounts. The
+// panel used to arbitrate between two sign-in methods and a pending email
+// token; there is one method now, so the only question left is whether to
+// offer it or explain that it is not configured.
 function updateAccountLoginUI() {
   const button = document.getElementById('accountSignInButton');
   if (!button) return;
   delete button.dataset.retrySession;
-  const emailEnabled = accountSession.email_login_enabled === true;
   const oidcEnabled = accountSession.oidc_login_enabled === true;
-  const form = document.getElementById('accountEmailForm');
-  const submit = document.getElementById('accountEmailSubmit');
   const setup = document.getElementById('accountEmailSetup');
-  const confirm = document.getElementById('accountEmailConfirm');
-  const divider = document.getElementById('accountAuthDivider');
-  const confirmingEmail = emailEnabled && Boolean(pendingCustomerEmailToken);
-  form.hidden = !emailEnabled || confirmingEmail;
-  confirm.hidden = !confirmingEmail;
-  submit.disabled = !emailEnabled;
-  setup.hidden = emailEnabled || oidcEnabled || confirmingEmail;
-  setup.textContent = 'Email account registration is not configured on this Arena yet.';
-  button.hidden = !oidcEnabled || confirmingEmail;
+  if (setup) {
+    setup.hidden = oidcEnabled;
+    setup.textContent = 'Angel Accounts sign-in is not configured on this Arena yet.';
+  }
+  button.hidden = !oidcEnabled;
   button.disabled = !oidcEnabled;
-  button.textContent = 'Continue with SSO';
-  divider.hidden = !(emailEnabled && oidcEnabled) || confirmingEmail;
+  button.textContent = 'Sign in with Angel Accounts';
 }
 
 function updatePrivateAuthUI() {
@@ -1595,8 +1491,6 @@ async function handleEmbeddedCheckoutAbort(event) {
 }
 
 function bindAccountCosmeticsUI() {
-  document.getElementById('accountEmailForm').addEventListener('submit', startCustomerEmailAuth);
-  document.getElementById('accountEmailConfirmButton').addEventListener('click', confirmCustomerEmailToken);
   document.getElementById('accountSignInButton').addEventListener('click', startAccountLogin);
   document.getElementById('accountLogoutBtn').addEventListener('click', signOutAccount);
   // Linked bots and API keys render into #tab-profile now (see
@@ -1635,30 +1529,6 @@ async function initializeAccountMode() {
       csrf_token: payload.csrf_token || payload.account?.csrf_token || '',
     };
     updateAccountLoginUI();
-    if (pendingCustomerEmailToken) {
-      if (!normalized.email_login_enabled) {
-        pendingCustomerEmailToken = '';
-        updateAccountLoginUI();
-        document.getElementById('loginError').textContent = 'This Arena is not configured to accept email sign-in links.';
-      } else {
-        document.getElementById('login').style.display='flex';
-        document.getElementById('app').style.display='none';
-        return false;
-      }
-    }
-    if (!hasVerifiedAccount()) {
-      if (normalized.authenticated) document.getElementById('loginError').textContent = 'Your identity provider did not supply a verified email address.';
-      return false;
-    }
-    // A user may start the legacy bot-key login while this session request is
-    // in flight. Keep the verified account context, but never replace their
-    // explicit bot-stats choice when that happens.
-    if (apiKey) {
-      buildBotSwitcher();
-      updatePrivateAuthUI();
-      refreshAccountCosmetics();
-      return true;
-    }
     document.getElementById('login').style.display='none';
     document.getElementById('app').style.display='block';
     apiKey = '';
@@ -1667,17 +1537,22 @@ async function initializeAccountMode() {
     activateTab(resolveAccountLandingTab('cosmetics'));
     return true;
   } catch (e) {
+    /*
+     * The session document could not be read, so whether sign-in works is
+     * unknown rather than known-broken. Offer the button anyway: pressing it
+     * either works or produces a real error, and both are better than a
+     * greyed control that cannot explain itself. Bot performance by API key
+     * is unaffected and still available behind it.
+     */
     accountSession.login_enabled = false;
-    accountSession.email_login_enabled = false;
     accountSession.oidc_login_enabled = false;
-    document.getElementById('accountEmailForm').hidden = true;
-    document.getElementById('accountEmailSetup').hidden = true;
+    const setup = document.getElementById('accountEmailSetup');
+    if (setup) setup.hidden = true;
     const button = document.getElementById('accountSignInButton');
     button.hidden = false;
     button.disabled = false;
-    button.dataset.retrySession = 'true';
-    button.textContent = 'Retry email sign-in check';
-    document.getElementById('loginError').textContent = 'Could not check email account sign-in. Bot performance by API key is still available.';
+    button.textContent = 'Sign in with Angel Accounts';
+    document.getElementById('loginError').textContent = 'Could not check Angel Accounts sign-in. Bot performance by API key is still available.';
     return false;
   }
 }

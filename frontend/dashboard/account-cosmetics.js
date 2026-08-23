@@ -49,8 +49,6 @@
       oidc_login_enabled: source.oidc_login_enabled === true,
       login_url: cleanText(source.login_url),
       logout_url: cleanText(source.logout_url),
-      email_start_url: cleanText(source.email_start_url),
-      email_verify_url: cleanText(source.email_verify_url),
       account: {
         id: cleanText(rawAccount.id),
         email,

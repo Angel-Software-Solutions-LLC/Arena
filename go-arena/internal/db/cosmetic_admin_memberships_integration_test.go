@@ -25,8 +25,8 @@ func TestPostgresAdminMembershipCreatesOneLicensePerCurrentPurchasablePackItem(t
 	account := createAdminMembershipTestAccount(t, ctx, "Member@Example.com", "admin-membership-current")
 	expiresAt := time.Now().UTC().Add(30 * 24 * time.Hour)
 
-	membership, licensesCreated, err := CreateCosmeticAdminMembership(
-		ctx, account.Email, expiresAt, "Community event prize", "admin-token",
+	membership, licensesCreated, err := CreateCosmeticAdminMembershipForAccount(
+		ctx, account.ID, expiresAt, "Community event prize", "admin-token",
 	)
 	if err != nil {
 		t.Fatalf("CreateCosmeticAdminMembership: %v", err)
@@ -49,18 +49,21 @@ func TestPostgresAdminMembershipCreatesOneLicensePerCurrentPurchasablePackItem(t
 		t.Fatalf("membership license counts = mappings:%d distinct:%d active:%d, want %d each",
 			mappings, distinctItems, activeLicenses, launchSubscriptionCosmeticCount)
 	}
-	var email, note, actor, status string
+	// The audit row is joined to the account, and a linked account holds no
+	// address — so what is checked is that the membership points at the right
+	// *account*, which is the identifier the audit trail actually turns on.
+	var accountID, note, actor, status string
 	var storedExpiry time.Time
 	if err := Pool.QueryRow(ctx, `
-		SELECT a.email, m.note, m.granted_by, m.status, m.expires_at
+		SELECT a.id, m.note, m.granted_by, m.status, m.expires_at
 		FROM cosmetic_admin_memberships m
 		JOIN customer_accounts a ON a.id = m.account_id
-		WHERE m.id = $1`, membership.ID).Scan(&email, &note, &actor, &status, &storedExpiry); err != nil {
+		WHERE m.id = $1`, membership.ID).Scan(&accountID, &note, &actor, &status, &storedExpiry); err != nil {
 		t.Fatalf("inspect membership audit metadata: %v", err)
 	}
-	if email != "member@example.com" || note != "Community event prize" || actor != "admin-token" ||
+	if accountID != account.ID || note != "Community event prize" || actor != "admin-token" ||
 		status != "active" || storedExpiry.Before(expiresAt.Add(-time.Microsecond)) || storedExpiry.After(expiresAt.Add(time.Microsecond)) {
-		t.Fatalf("membership metadata = %q %q %q %q %v", email, note, actor, status, storedExpiry)
+		t.Fatalf("membership metadata = %q %q %q %q %v", accountID, note, actor, status, storedExpiry)
 	}
 }
 
@@ -70,8 +73,8 @@ func TestPostgresAdminMembershipSyncAddsFuturePackItemsExactlyOnce(t *testing.T)
 		t.Fatalf("EnsureCoreSchema: %v", err)
 	}
 	account := createAdminMembershipTestAccount(t, ctx, "future-member@example.com", "admin-membership-future")
-	membership, _, err := CreateCosmeticAdminMembership(
-		ctx, account.Email, time.Now().UTC().Add(60*24*time.Hour), "Future sets included", "admin-session",
+	membership, _, err := CreateCosmeticAdminMembershipForAccount(
+		ctx, account.ID, time.Now().UTC().Add(60*24*time.Hour), "Future sets included", "admin-session",
 	)
 	if err != nil {
 		t.Fatalf("CreateCosmeticAdminMembership: %v", err)
@@ -116,21 +119,50 @@ func TestPostgresAdminCosmeticAccessLookupByEmail(t *testing.T) {
 		t.Fatalf("EnsureCoreSchema: %v", err)
 	}
 	account := createAdminMembershipTestAccount(t, ctx, "access-member@example.com", "admin-access")
-	if _, _, err := CreateCosmeticAdminMembership(
-		ctx, account.Email, time.Now().UTC().Add(7*24*time.Hour), "Seven day grant", "admin-session",
+	if _, _, err := CreateCosmeticAdminMembershipForAccount(
+		ctx, account.ID, time.Now().UTC().Add(7*24*time.Hour), "Seven day grant", "admin-session",
 	); err != nil {
 		t.Fatalf("CreateCosmeticAdminMembership: %v", err)
 	}
-	if _, created, err := GrantCosmeticLicense(ctx, account.Email, "skin-neon-grid", "manual", "admin-manual-copy"); err != nil || !created {
+	if _, created, err := GrantCosmeticLicenseToAccount(ctx, account.ID, "skin-neon-grid", "manual", "admin-manual-copy"); err != nil || !created {
 		t.Fatalf("manual comparison grant = (%v, %v)", created, err)
 	}
 
-	access, err := GetCosmeticAdminAccessByEmail(ctx, " ACCESS-MEMBER@EXAMPLE.COM ")
+	/*
+	 * By account, which is how an administrator reaches a linked customer.
+	 * The address lookup below is kept and still exercised, but it can only
+	 * find someone who has not signed in since the cutover — this account has
+	 * been linked, so its address column is empty and nothing can match it.
+	 */
+	access, err := GetCosmeticAdminAccessByAccount(ctx, account.ID)
+	if err != nil {
+		t.Fatalf("GetCosmeticAdminAccessByAccount: %v", err)
+	}
+	if access == nil || access.Account.ID != account.ID || len(access.Memberships) != 1 || len(access.Licenses) != launchSubscriptionCosmeticCount+1 {
+		t.Fatalf("admin access lookup = %+v, want the account, one membership, %d licenses", access, launchSubscriptionCosmeticCount+1)
+	}
+
+	// The address route, on an account that still has one: a pending
+	// fulfilment row created by a purchase before its buyer ever signed in.
+	pending, err := GetOrCreateCustomerAccountByEmail(ctx, "not-yet-linked@example.com")
+	if err != nil {
+		t.Fatalf("pending account: %v", err)
+	}
+	byEmail, err := GetCosmeticAdminAccessByEmail(ctx, " NOT-YET-LINKED@EXAMPLE.COM ")
 	if err != nil {
 		t.Fatalf("GetCosmeticAdminAccessByEmail: %v", err)
 	}
-	if access == nil || access.Account.Email != account.Email || len(access.Memberships) != 1 || len(access.Licenses) != launchSubscriptionCosmeticCount+1 {
-		t.Fatalf("admin access lookup = %+v, want normalized account, one membership, %d licenses", access, launchSubscriptionCosmeticCount+1)
+	if byEmail == nil || byEmail.Account.ID != pending.ID || byEmail.Email != "not-yet-linked@example.com" {
+		t.Fatalf("address lookup = %+v, want the normalized pending account", byEmail)
+	}
+
+	// And on a linked account, it finds nobody rather than erroring.
+	linkedByEmail, err := GetCosmeticAdminAccessByEmail(ctx, "access-member@example.com")
+	if err != nil {
+		t.Fatalf("GetCosmeticAdminAccessByEmail on a linked account: %v", err)
+	}
+	if linkedByEmail.Account.ID != "" {
+		t.Fatalf("a linked account was still reachable by address: %+v", linkedByEmail)
 	}
 }
 
@@ -147,8 +179,8 @@ func TestPostgresCustomerInventoryReflectsActiveAdminMembership(t *testing.T) {
 	}
 	account := createAdminMembershipTestAccount(t, ctx, "granted-member@example.com", "admin-inventory-membership")
 	expiresAt := time.Now().UTC().Add(14 * 24 * time.Hour)
-	membership, _, err := CreateCosmeticAdminMembership(
-		ctx, account.Email, expiresAt, "Support ticket #42", "admin-token",
+	membership, _, err := CreateCosmeticAdminMembershipForAccount(
+		ctx, account.ID, expiresAt, "Support ticket #42", "admin-token",
 	)
 	if err != nil {
 		t.Fatalf("CreateCosmeticAdminMembership: %v", err)
@@ -218,11 +250,11 @@ func TestPostgresAdminMembershipExpiryAndRevokeRemoveOnlyMappedUse(t *testing.T)
 			}
 			account := createAdminMembershipTestAccount(t, ctx, test.name+"@example.com", "admin-"+test.name)
 			expiresAt := time.Now().UTC().Add(time.Hour)
-			membership, _, err := CreateCosmeticAdminMembership(ctx, account.Email, expiresAt, test.name, "admin-token")
+			membership, _, err := CreateCosmeticAdminMembershipForAccount(ctx, account.ID, expiresAt, test.name, "admin-token")
 			if err != nil {
 				t.Fatalf("CreateCosmeticAdminMembership: %v", err)
 			}
-			manual, created, err := GrantCosmeticLicense(ctx, account.Email, "skin-neon-grid", "manual", "preserve-"+test.name)
+			manual, created, err := GrantCosmeticLicenseToAccount(ctx, account.ID, "skin-neon-grid", "manual", "preserve-"+test.name)
 			if err != nil || !created {
 				t.Fatalf("manual license = (%+v, %v, %v)", manual, created, err)
 			}
@@ -277,8 +309,8 @@ func TestPostgresAdminMembershipRejectsPastExpiry(t *testing.T) {
 		t.Fatalf("EnsureCoreSchema: %v", err)
 	}
 	account := createAdminMembershipTestAccount(t, ctx, "past-member@example.com", "admin-membership-past")
-	if _, _, err := CreateCosmeticAdminMembership(
-		ctx, account.Email, time.Now().UTC().Add(-time.Minute), "Already expired", "admin-token",
+	if _, _, err := CreateCosmeticAdminMembershipForAccount(
+		ctx, account.ID, time.Now().UTC().Add(-time.Minute), "Already expired", "admin-token",
 	); err == nil {
 		t.Fatal("past membership expiry was accepted")
 	}
@@ -291,7 +323,7 @@ func TestPostgresAdminMembershipExpiryUsesExactTimestampBoundary(t *testing.T) {
 	}
 	account := createAdminMembershipTestAccount(t, ctx, "boundary-member@example.com", "admin-membership-boundary")
 	expiresAt := time.Now().UTC().Add(time.Hour).Truncate(time.Microsecond)
-	membership, _, err := CreateCosmeticAdminMembership(ctx, account.Email, expiresAt, "Boundary", "admin-token")
+	membership, _, err := CreateCosmeticAdminMembershipForAccount(ctx, account.ID, expiresAt, "Boundary", "admin-token")
 	if err != nil {
 		t.Fatalf("CreateCosmeticAdminMembership: %v", err)
 	}
@@ -315,8 +347,8 @@ func TestPostgresMembershipLicenseRequiresMembershipLevelRevocation(t *testing.T
 		t.Fatalf("EnsureCoreSchema: %v", err)
 	}
 	account := createAdminMembershipTestAccount(t, ctx, "membership-revoke@example.com", "admin-membership-license-revoke")
-	membership, _, err := CreateCosmeticAdminMembership(
-		ctx, account.Email, time.Now().UTC().Add(24*time.Hour), "Membership copy", "admin-token",
+	membership, _, err := CreateCosmeticAdminMembershipForAccount(
+		ctx, account.ID, time.Now().UTC().Add(24*time.Hour), "Membership copy", "admin-token",
 	)
 	if err != nil {
 		t.Fatalf("CreateCosmeticAdminMembership: %v", err)
@@ -342,8 +374,8 @@ func TestPostgresElapsedMembershipFailsClosedBeforeExpiryWorker(t *testing.T) {
 		t.Fatalf("EnsureCoreSchema: %v", err)
 	}
 	account := createAdminMembershipTestAccount(t, ctx, "elapsed-member@example.com", "admin-membership-elapsed")
-	membership, _, err := CreateCosmeticAdminMembership(
-		ctx, account.Email, time.Now().UTC().Add(time.Hour), "Elapsed", "admin-token",
+	membership, _, err := CreateCosmeticAdminMembershipForAccount(
+		ctx, account.ID, time.Now().UTC().Add(time.Hour), "Elapsed", "admin-token",
 	)
 	if err != nil {
 		t.Fatalf("CreateCosmeticAdminMembership: %v", err)
@@ -388,8 +420,8 @@ func TestPostgresCustomerScopedExpiryAllowsImmediateReplacement(t *testing.T) {
 		t.Fatalf("EnsureCoreSchema: %v", err)
 	}
 	account := createAdminMembershipTestAccount(t, ctx, "replacement-member@example.com", "admin-membership-replacement")
-	first, _, err := CreateCosmeticAdminMembership(
-		ctx, account.Email, time.Now().UTC().Add(time.Hour), "First", "admin-token",
+	first, _, err := CreateCosmeticAdminMembershipForAccount(
+		ctx, account.ID, time.Now().UTC().Add(time.Hour), "First", "admin-token",
 	)
 	if err != nil {
 		t.Fatalf("CreateCosmeticAdminMembership(first): %v", err)
@@ -400,12 +432,12 @@ func TestPostgresCustomerScopedExpiryAllowsImmediateReplacement(t *testing.T) {
 		WHERE id = $1`, first.ID); err != nil {
 		t.Fatalf("elapse first membership: %v", err)
 	}
-	changed, _, err := ExpireCustomerCosmeticAdminMemberships(ctx, account.Email, time.Now().UTC())
+	changed, _, err := ExpireAccountCosmeticAdminMemberships(ctx, account.ID, time.Now().UTC())
 	if err != nil || changed != 1 {
 		t.Fatalf("ExpireCustomerCosmeticAdminMemberships = (%d, %v)", changed, err)
 	}
-	second, _, err := CreateCosmeticAdminMembership(
-		ctx, account.Email, time.Now().UTC().Add(48*time.Hour), "Replacement", "admin-token",
+	second, _, err := CreateCosmeticAdminMembershipForAccount(
+		ctx, account.ID, time.Now().UTC().Add(48*time.Hour), "Replacement", "admin-token",
 	)
 	if err != nil || second == nil || second.ID == first.ID {
 		t.Fatalf("replacement membership = (%+v, %v)", second, err)

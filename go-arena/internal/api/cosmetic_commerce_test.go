@@ -1075,19 +1075,23 @@ func TestCosmeticCatalogAdvertisesCheckoutOnlyWithUsableAuthAndRedis(t *testing.
 	config.C.StripeWebhookSecrets = "whsec_catalog_readiness"
 	config.C.StripeSuccessURL = "https://arena.example/dashboard/?checkout=success"
 	config.C.StripeCancelURL = "https://arena.example/dashboard/?checkout=cancel"
-	config.C.CustomerOIDCEnabled = false
-	config.C.CustomerEmailAuthEnabled = true
-	config.C.CustomerEmailSignInURL = "https://arena.example/dashboard/"
-	config.C.CustomerEmailTokenTTLMinutes = 15
-	config.C.CustomerEmailSendCooldownSeconds = 60
-	config.C.CustomerEmailSendRPM = 5
-	config.C.SMTPHost = "100.71.171.28"
-	config.C.SMTPPort = 465
-	config.C.SMTPTLSMode = "implicit"
-	config.C.SMTPTLSServerName = "mail.angel-serv.com"
-	config.C.SMTPUsername = "hello@angel-serv.com"
-	config.C.SMTPPassword = "test-app-password"
-	config.C.SMTPFrom = "Arena <hello@angel-serv.com>"
+	/*
+	 * A real discovery document, served locally.
+	 *
+	 * This used to prove the positive case with the native email sign-in,
+	 * which no longer exists — Accounts is the only way in. Rather than delete
+	 * the assertion, it now stands up something `oidc.NewProvider` will
+	 * actually accept, so "customer auth initialised" is demonstrated by the
+	 * provider handshake succeeding rather than asserted about a config
+	 * struct.
+	 */
+	issuer := newStubAccountsIssuer(t)
+	config.C.CustomerOIDCEnabled = true
+	config.C.CustomerOIDCIssuer = issuer
+	config.C.CustomerOIDCClientID = "arena-dashboard"
+	config.C.CustomerOIDCClientSecret = "arena-dashboard-secret"
+	config.C.CustomerOIDCRedirectURI = "https://arena.example/api/v1/dashboard/callback"
+	config.C.CustomerOIDCSessionTTL = 720
 	security.RedisClient = redisClient
 
 	checkoutEnabled := func() bool {
@@ -1107,11 +1111,9 @@ func TestCosmeticCatalogAdvertisesCheckoutOnlyWithUsableAuthAndRedis(t *testing.
 	}
 
 	if !checkoutEnabled() {
-		t.Fatal("complete native email auth with Redis did not advertise checkout")
+		t.Fatal("working Accounts sign-in with Redis did not advertise checkout")
 	}
 
-	config.C.CustomerEmailAuthEnabled = false
-	config.C.CustomerOIDCEnabled = true
 	config.C.CustomerOIDCIssuer = ""
 	config.C.CustomerOIDCClientID = ""
 	config.C.CustomerOIDCClientSecret = ""
@@ -1120,10 +1122,45 @@ func TestCosmeticCatalogAdvertisesCheckoutOnlyWithUsableAuthAndRedis(t *testing.
 		t.Fatal("checkout was advertised after customer auth failed to initialise")
 	}
 
-	config.C.CustomerOIDCEnabled = false
-	config.C.CustomerEmailAuthEnabled = true
+	config.C.CustomerOIDCIssuer = issuer
+	config.C.CustomerOIDCClientID = "arena-dashboard"
+	config.C.CustomerOIDCClientSecret = "arena-dashboard-secret"
+	config.C.CustomerOIDCRedirectURI = "https://arena.example/api/v1/dashboard/callback"
 	security.RedisClient = nil
 	if checkoutEnabled() {
 		t.Fatal("checkout was advertised without the required Redis quota")
 	}
+}
+
+// newStubAccountsIssuer serves the smallest discovery document
+// `oidc.NewProvider` will accept, and returns its issuer URL.
+//
+// Enough to prove the handshake happens; it issues no tokens and is never
+// asked to. The endpoints it advertises are the real Accounts shapes so that a
+// reader can see what Arena is talking to.
+func newStubAccountsIssuer(t *testing.T) string {
+	t.Helper()
+	mux := http.NewServeMux()
+	var base string
+	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"issuer":                                base,
+			"authorization_endpoint":                base + "/connect",
+			"token_endpoint":                        base + "/api/v1/token",
+			"jwks_uri":                              base + "/.well-known/jwks.json",
+			"response_types_supported":              []string{"code"},
+			"subject_types_supported":               []string{"public"},
+			"id_token_signing_alg_values_supported": []string{"RS256"},
+			"code_challenge_methods_supported":      []string{"S256"},
+		})
+	})
+	mux.HandleFunc("/.well-known/jwks.json", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"keys": []any{}})
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	base = server.URL
+	return base
 }

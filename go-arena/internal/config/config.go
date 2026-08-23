@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"math"
 	"net"
-	"net/mail"
 	"net/url"
 	"os"
 	"strings"
@@ -416,28 +415,39 @@ type Config struct {
 	// customer_oidc.go): a visitor who returns at least once within any
 	// 30-day window never has to sign back in, while an abandoned or stolen
 	// cookie still lapses.
-	CustomerOIDCSessionTTL      int `envconfig:"ARENA_CUSTOMER_OIDC_SESSION_TTL_HOURS" default:"720"`
-	CustomerBotLinkRPM          int `envconfig:"ARENA_CUSTOMER_BOT_LINK_RPM" default:"10"`
-	CustomerBotLinkPerHour      int `envconfig:"ARENA_CUSTOMER_BOT_LINK_PER_HOUR" default:"10"`
-	CustomerAPIKeyMutationRPM   int `envconfig:"ARENA_CUSTOMER_API_KEY_MUTATION_RPM" default:"30"`
-	CustomerAPIKeyCreatePerHour int `envconfig:"ARENA_CUSTOMER_API_KEY_CREATE_PER_HOUR" default:"10"`
-	CustomerAPIKeyRevokePerHour int `envconfig:"ARENA_CUSTOMER_API_KEY_REVOKE_PER_HOUR" default:"20"`
+	CustomerOIDCSessionTTL int `envconfig:"ARENA_CUSTOMER_OIDC_SESSION_TTL_HOURS" default:"720"`
+
+	// CustomerLinkLegacyByEmail is the cutover switch for retiring stored
+	// email addresses.
+	//
+	// While it is on, sign-in asks Accounts for the `email` scope and uses a
+	// verified address, in memory only, to find the pre-cutover Arena account
+	// that signed up with it — so that person keeps their bots, their
+	// cosmetics and their handle. The address is never written; the row that
+	// is matched has its own address emptied by the same transaction.
+	//
+	// Turn it off once the straggler report is empty or accounted for. Arena
+	// then stops requesting the scope at all, and no sign-in carries an
+	// address anywhere, even transiently. That is the end state the owner
+	// asked for; this flag exists because you cannot get there in one step
+	// without stranding everybody who already had an account.
+	CustomerLinkLegacyByEmail   bool `envconfig:"ARENA_CUSTOMER_LINK_LEGACY_BY_EMAIL" default:"true"`
+	CustomerBotLinkRPM          int  `envconfig:"ARENA_CUSTOMER_BOT_LINK_RPM" default:"10"`
+	CustomerBotLinkPerHour      int  `envconfig:"ARENA_CUSTOMER_BOT_LINK_PER_HOUR" default:"10"`
+	CustomerAPIKeyMutationRPM   int  `envconfig:"ARENA_CUSTOMER_API_KEY_MUTATION_RPM" default:"30"`
+	CustomerAPIKeyCreatePerHour int  `envconfig:"ARENA_CUSTOMER_API_KEY_CREATE_PER_HOUR" default:"10"`
+	CustomerAPIKeyRevokePerHour int  `envconfig:"ARENA_CUSTOMER_API_KEY_REVOKE_PER_HOUR" default:"20"`
 
 	// Native customer email auth is an alternative to customer OIDC. It sends
 	// one-time passwordless links through the deployment's transactional SMTP
 	// service and reuses the same customer session/CSRF boundary as OIDC.
-	CustomerEmailAuthEnabled         bool   `envconfig:"ARENA_CUSTOMER_EMAIL_AUTH_ENABLED" default:"false"`
-	CustomerEmailSignInURL           string `envconfig:"ARENA_CUSTOMER_EMAIL_SIGN_IN_URL" default:""`
-	CustomerEmailTokenTTLMinutes     int    `envconfig:"ARENA_CUSTOMER_EMAIL_TOKEN_TTL_MINUTES" default:"15"`
-	CustomerEmailSendCooldownSeconds int    `envconfig:"ARENA_CUSTOMER_EMAIL_SEND_COOLDOWN_SECONDS" default:"60"`
-	CustomerEmailSendRPM             int    `envconfig:"ARENA_CUSTOMER_EMAIL_SEND_RPM" default:"5"`
-	SMTPHost                         string `envconfig:"ARENA_SMTP_HOST" default:""`
-	SMTPPort                         int    `envconfig:"ARENA_SMTP_PORT" default:"465"`
-	SMTPTLSMode                      string `envconfig:"ARENA_SMTP_TLS_MODE" default:"implicit"`
-	SMTPTLSServerName                string `envconfig:"ARENA_SMTP_TLS_SERVER_NAME" default:""`
-	SMTPUsername                     string `envconfig:"ARENA_SMTP_USERNAME" default:""`
-	SMTPPassword                     string `envconfig:"ARENA_SMTP_PASSWORD" default:""`
-	SMTPFrom                         string `envconfig:"ARENA_SMTP_FROM" default:""`
+	SMTPHost          string `envconfig:"ARENA_SMTP_HOST" default:""`
+	SMTPPort          int    `envconfig:"ARENA_SMTP_PORT" default:"465"`
+	SMTPTLSMode       string `envconfig:"ARENA_SMTP_TLS_MODE" default:"implicit"`
+	SMTPTLSServerName string `envconfig:"ARENA_SMTP_TLS_SERVER_NAME" default:""`
+	SMTPUsername      string `envconfig:"ARENA_SMTP_USERNAME" default:""`
+	SMTPPassword      string `envconfig:"ARENA_SMTP_PASSWORD" default:""`
+	SMTPFrom          string `envconfig:"ARENA_SMTP_FROM" default:""`
 
 	// Cosmetics checkout is disabled by default. Enabling it requires the
 	// verified customer auth provider, durable database state, and a complete
@@ -673,9 +683,13 @@ func ValidateCosmeticsCheckoutConfig(cfg Config) error {
 		strings.TrimSpace(cfg.CustomerOIDCClientSecret) != "" &&
 		strings.TrimSpace(cfg.CustomerOIDCRedirectURI) != "" &&
 		cfg.CustomerOIDCSessionTTL > 0
-	emailReady := cfg.CustomerEmailAuthEnabled && ValidateCustomerEmailAuthConfig(cfg) == nil
-	if !oidcReady && !emailReady {
-		return fmt.Errorf("cosmetics checkout requires fully configured customer OIDC or native verified-email auth")
+
+	// Accounts is the only way a customer signs in, so it is the only thing
+	// checkout can be gated on. There is no second, Arena-operated path to
+	// fall back to any more, and that is deliberate: operating one meant
+	// holding the address it mailed.
+	if !oidcReady {
+		return fmt.Errorf("cosmetics checkout requires fully configured customer OIDC (Angel Accounts sign-in)")
 	}
 	if cfg.DBOptional {
 		return fmt.Errorf("cosmetics checkout requires the database; ARENA_DB_OPTIONAL must be false")
@@ -738,77 +752,6 @@ func stripeAPIKeyMode(value string, publishable bool) string {
 	default:
 		return ""
 	}
-}
-
-// ValidateCustomerEmailAuthConfig keeps passwordless registration fail-closed.
-// The SMTP credential is a send-only app password and transport encryption is
-// mandatory, including when the service is reached over a private address.
-func ValidateCustomerEmailAuthConfig(cfg Config) error {
-	if !cfg.CustomerEmailAuthEnabled {
-		return nil
-	}
-	if cfg.DBOptional {
-		return fmt.Errorf("native customer email auth requires the database; ARENA_DB_OPTIONAL must be false")
-	}
-	if err := validateCustomerEmailSignInURL(cfg.CustomerEmailSignInURL); err != nil {
-		return err
-	}
-	if cfg.CustomerOIDCSessionTTL <= 0 {
-		return fmt.Errorf("ARENA_CUSTOMER_OIDC_SESSION_TTL_HOURS must be positive for customer sessions")
-	}
-	if cfg.CustomerEmailTokenTTLMinutes < 5 || cfg.CustomerEmailTokenTTLMinutes > 60 {
-		return fmt.Errorf("ARENA_CUSTOMER_EMAIL_TOKEN_TTL_MINUTES must be between 5 and 60")
-	}
-	if cfg.CustomerEmailSendCooldownSeconds < 10 || cfg.CustomerEmailSendCooldownSeconds > 3600 {
-		return fmt.Errorf("ARENA_CUSTOMER_EMAIL_SEND_COOLDOWN_SECONDS must be between 10 and 3600")
-	}
-	if cfg.CustomerEmailSendRPM <= 0 || cfg.CustomerEmailSendRPM > 60 {
-		return fmt.Errorf("ARENA_CUSTOMER_EMAIL_SEND_RPM must be between 1 and 60")
-	}
-	if strings.TrimSpace(cfg.SMTPHost) == "" {
-		return fmt.Errorf("ARENA_SMTP_HOST is required")
-	}
-	if cfg.SMTPPort <= 0 || cfg.SMTPPort > 65535 {
-		return fmt.Errorf("ARENA_SMTP_PORT must be between 1 and 65535")
-	}
-	mode := strings.ToLower(strings.TrimSpace(cfg.SMTPTLSMode))
-	if mode != "implicit" && mode != "starttls" {
-		return fmt.Errorf("ARENA_SMTP_TLS_MODE must be implicit or starttls")
-	}
-	if strings.TrimSpace(cfg.SMTPTLSServerName) == "" {
-		return fmt.Errorf("ARENA_SMTP_TLS_SERVER_NAME is required")
-	}
-	username, err := mail.ParseAddress(strings.TrimSpace(cfg.SMTPUsername))
-	if err != nil || username.Address != strings.TrimSpace(cfg.SMTPUsername) {
-		return fmt.Errorf("ARENA_SMTP_USERNAME must be a mailbox address")
-	}
-	if strings.TrimSpace(cfg.SMTPPassword) == "" {
-		return fmt.Errorf("ARENA_SMTP_PASSWORD is required")
-	}
-	from, err := mail.ParseAddress(strings.TrimSpace(cfg.SMTPFrom))
-	if err != nil || from.Address == "" || !strings.EqualFold(from.Address, username.Address) {
-		return fmt.Errorf("ARENA_SMTP_FROM must use the authenticated ARENA_SMTP_USERNAME mailbox")
-	}
-	return nil
-}
-
-func validateCustomerEmailSignInURL(raw string) error {
-	value := strings.TrimSpace(raw)
-	parsed, err := url.Parse(value)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
-		return fmt.Errorf("ARENA_CUSTOMER_EMAIL_SIGN_IN_URL must be an absolute HTTPS Dashboard URL")
-	}
-	cleanPath := strings.TrimSuffix(parsed.EscapedPath(), "/")
-	if cleanPath != "/dashboard" && cleanPath != "/arena/dashboard" {
-		return fmt.Errorf("ARENA_CUSTOMER_EMAIL_SIGN_IN_URL must point to /dashboard/ or /arena/dashboard/")
-	}
-	if strings.EqualFold(parsed.Scheme, "https") {
-		return nil
-	}
-	if strings.EqualFold(parsed.Scheme, "http") && isLoopbackCheckoutHost(parsed.Hostname()) {
-		return nil
-	}
-	return fmt.Errorf("ARENA_CUSTOMER_EMAIL_SIGN_IN_URL must use HTTPS (HTTP is allowed only for loopback hosts)")
 }
 
 // ParseStripeWebhookSecrets converts the comma-separated rotation list into
@@ -933,10 +876,6 @@ func Load() {
 	}
 	if err := ValidateAFKConfig(C); err != nil {
 		slog.Error("invalid AFK configuration", "error", err)
-		panic(err)
-	}
-	if err := ValidateCustomerEmailAuthConfig(C); err != nil {
-		slog.Error("invalid customer email auth configuration", "error", err)
 		panic(err)
 	}
 	if err := ValidateCosmeticsCheckoutConfig(C); err != nil {

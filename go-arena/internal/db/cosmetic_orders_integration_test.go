@@ -386,7 +386,7 @@ func TestPostgresCosmeticRefundLifecycleRevokesOnlyMappedCopies(t *testing.T) {
 		Scan(&mappedLicenseID, &mappedItemID); err != nil {
 		t.Fatalf("load mapped license: %v", err)
 	}
-	unrelated, created, err := GrantCosmeticLicense(ctx, account.Email, mappedItemID, "manual", "refund-unrelated")
+	unrelated, created, err := GrantCosmeticLicenseToAccount(ctx, account.ID, mappedItemID, "manual", "refund-unrelated")
 	if err != nil || !created {
 		t.Fatalf("grant unrelated license = (%+v, %v, %v)", unrelated, created, err)
 	}

@@ -215,111 +215,21 @@ func TestValidateCosmeticsCheckoutConfigAllowsDisabledAndLoopbackDevelopment(t *
 	}
 }
 
-func validCustomerEmailAuthConfig() Config {
-	return Config{
-		DBOptional:                       false,
-		CustomerOIDCSessionTTL:           24,
-		CustomerEmailAuthEnabled:         true,
-		CustomerEmailSignInURL:           "https://arena.example/dashboard/",
-		CustomerEmailTokenTTLMinutes:     15,
-		CustomerEmailSendCooldownSeconds: 60,
-		CustomerEmailSendRPM:             5,
-		SMTPHost:                         "stalwart",
-		SMTPPort:                         465,
-		SMTPTLSMode:                      "implicit",
-		SMTPTLSServerName:                "mail.angel-serv.com",
-		SMTPUsername:                     "hello@angel-serv.com",
-		SMTPPassword:                     "mailbox-secret",
-		SMTPFrom:                         "Arena <hello@angel-serv.com>",
-	}
-}
-
-func TestValidateCustomerEmailAuthConfigFailsClosed(t *testing.T) {
-	tests := []struct {
-		name   string
-		mutate func(*Config)
-		want   string
-	}{
-		{name: "database optional", mutate: func(cfg *Config) { cfg.DBOptional = true }, want: "database"},
-		{name: "sign-in URL missing", mutate: func(cfg *Config) { cfg.CustomerEmailSignInURL = "" }, want: "ARENA_CUSTOMER_EMAIL_SIGN_IN_URL"},
-		{name: "public HTTP URL", mutate: func(cfg *Config) { cfg.CustomerEmailSignInURL = "http://arena.example/dashboard/" }, want: "ARENA_CUSTOMER_EMAIL_SIGN_IN_URL"},
-		{name: "token TTL disabled", mutate: func(cfg *Config) { cfg.CustomerEmailTokenTTLMinutes = 0 }, want: "ARENA_CUSTOMER_EMAIL_TOKEN_TTL_MINUTES"},
-		{name: "cooldown disabled", mutate: func(cfg *Config) { cfg.CustomerEmailSendCooldownSeconds = 0 }, want: "ARENA_CUSTOMER_EMAIL_SEND_COOLDOWN_SECONDS"},
-		{name: "rate disabled", mutate: func(cfg *Config) { cfg.CustomerEmailSendRPM = 0 }, want: "ARENA_CUSTOMER_EMAIL_SEND_RPM"},
-		{name: "SMTP host missing", mutate: func(cfg *Config) { cfg.SMTPHost = "" }, want: "ARENA_SMTP_HOST"},
-		{name: "SMTP port invalid", mutate: func(cfg *Config) { cfg.SMTPPort = 0 }, want: "ARENA_SMTP_PORT"},
-		{name: "SMTP transport insecure", mutate: func(cfg *Config) { cfg.SMTPTLSMode = "none" }, want: "ARENA_SMTP_TLS_MODE"},
-		{name: "TLS name missing", mutate: func(cfg *Config) { cfg.SMTPTLSServerName = "" }, want: "ARENA_SMTP_TLS_SERVER_NAME"},
-		{name: "username missing", mutate: func(cfg *Config) { cfg.SMTPUsername = "" }, want: "ARENA_SMTP_USERNAME"},
-		{name: "password missing", mutate: func(cfg *Config) { cfg.SMTPPassword = "" }, want: "ARENA_SMTP_PASSWORD"},
-		{name: "from invalid", mutate: func(cfg *Config) { cfg.SMTPFrom = "not-an-address" }, want: "ARENA_SMTP_FROM"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := validCustomerEmailAuthConfig()
-			tt.mutate(&cfg)
-			err := ValidateCustomerEmailAuthConfig(cfg)
-			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("ValidateCustomerEmailAuthConfig() error = %v, want %q", err, tt.want)
-			}
-		})
-	}
-	if err := ValidateCustomerEmailAuthConfig(Config{}); err != nil {
-		t.Fatalf("disabled customer email auth should not require SMTP: %v", err)
-	}
-	loopback := validCustomerEmailAuthConfig()
-	loopback.CustomerEmailSignInURL = "http://127.0.0.1:8000/dashboard/"
-	if err := ValidateCustomerEmailAuthConfig(loopback); err != nil {
-		t.Fatalf("loopback development URL: %v", err)
-	}
-}
-
-func TestCosmeticsCheckoutAcceptsCompleteEmailAuthInsteadOfOIDC(t *testing.T) {
+func TestCosmeticsCheckoutRequiresAccountsSignIn(t *testing.T) {
+	// The inverse of what used to be asserted here. Checkout could once be
+	// satisfied by Arena's own verified-email sign-in *instead of* OIDC; that
+	// path is gone, so the only thing that can satisfy it is a fully
+	// configured Accounts client, and its absence must fail closed.
 	cfg := validCosmeticsCheckoutConfig()
 	cfg.CustomerOIDCEnabled = false
-	email := validCustomerEmailAuthConfig()
-	cfg.CustomerEmailAuthEnabled = true
-	cfg.CustomerEmailSignInURL = email.CustomerEmailSignInURL
-	cfg.CustomerEmailTokenTTLMinutes = email.CustomerEmailTokenTTLMinutes
-	cfg.CustomerEmailSendCooldownSeconds = email.CustomerEmailSendCooldownSeconds
-	cfg.CustomerEmailSendRPM = email.CustomerEmailSendRPM
-	cfg.SMTPHost = email.SMTPHost
-	cfg.SMTPPort = email.SMTPPort
-	cfg.SMTPTLSMode = email.SMTPTLSMode
-	cfg.SMTPTLSServerName = email.SMTPTLSServerName
-	cfg.SMTPUsername = email.SMTPUsername
-	cfg.SMTPPassword = email.SMTPPassword
-	cfg.SMTPFrom = email.SMTPFrom
-	if err := ValidateCosmeticsCheckoutConfig(cfg); err != nil {
-		t.Fatalf("complete verified-email auth should satisfy checkout: %v", err)
+	if err := ValidateCosmeticsCheckoutConfig(cfg); err == nil {
+		t.Fatal("checkout was accepted with no way for a customer to sign in")
 	}
-}
 
-func TestLoadReadsNativeCustomerEmailAuth(t *testing.T) {
-	previous := C
-	t.Cleanup(func() { C = previous })
-	t.Setenv("ARENA_COSMETICS_CHECKOUT_ENABLED", "false")
-	t.Setenv("ARENA_DB_OPTIONAL", "false")
-	t.Setenv("ARENA_CUSTOMER_EMAIL_AUTH_ENABLED", "true")
-	t.Setenv("ARENA_CUSTOMER_EMAIL_SIGN_IN_URL", "https://arena.example/dashboard/")
-	t.Setenv("ARENA_CUSTOMER_EMAIL_TOKEN_TTL_MINUTES", "15")
-	t.Setenv("ARENA_CUSTOMER_EMAIL_SEND_COOLDOWN_SECONDS", "60")
-	t.Setenv("ARENA_CUSTOMER_EMAIL_SEND_RPM", "5")
-	t.Setenv("ARENA_CUSTOMER_OIDC_SESSION_TTL_HOURS", "24")
-	t.Setenv("ARENA_SMTP_HOST", "100.71.171.28")
-	t.Setenv("ARENA_SMTP_PORT", "465")
-	t.Setenv("ARENA_SMTP_TLS_MODE", "implicit")
-	t.Setenv("ARENA_SMTP_TLS_SERVER_NAME", "mail.angel-serv.com")
-	t.Setenv("ARENA_SMTP_USERNAME", "hello@angel-serv.com")
-	t.Setenv("ARENA_SMTP_PASSWORD", "send-only-app-password")
-	t.Setenv("ARENA_SMTP_FROM", "Arena <hello@angel-serv.com>")
-	C = Config{}
-	Load()
-	if !C.CustomerEmailAuthEnabled || C.CustomerEmailTokenTTLMinutes != 15 ||
-		C.CustomerEmailSendCooldownSeconds != 60 || C.CustomerEmailSendRPM != 5 ||
-		C.SMTPHost != "100.71.171.28" || C.SMTPPort != 465 || C.SMTPTLSMode != "implicit" ||
-		C.SMTPTLSServerName != "mail.angel-serv.com" || C.SMTPUsername != "hello@angel-serv.com" {
-		t.Fatalf("native email auth config was not loaded: %+v", C)
+	cfg = validCosmeticsCheckoutConfig()
+	cfg.CustomerOIDCClientSecret = ""
+	if err := ValidateCosmeticsCheckoutConfig(cfg); err == nil {
+		t.Fatal("checkout was accepted with a half-configured Accounts client")
 	}
 }
 
