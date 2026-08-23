@@ -97,9 +97,28 @@ func (h *CosmeticsHandler) Catalog(w http.ResponseWriter, r *http.Request) {
 			return nil, err
 		}
 		// h.checkoutEnabled is set once at construction, so baking it into the
-		// cached body is safe.
+		// cached body is safe. So is the handoff: it comes from a setting read
+		// at startup, and a deploy is what changes it.
 		checkoutEnabled := h.checkoutEnabled && cosmeticCatalogHasPurchasablePack(catalog)
-		return json.Marshal(map[string]interface{}{
+		handoff := accountsShopHandoff()
+		/*
+		 * Two separate facts, and they are kept separate on purpose.
+		 *
+		 * `checkout_enabled` means "Arena will take your money", and once
+		 * buying moves that is false and stays false — the endpoints refuse.
+		 * `purchase_handoff_url` means "somewhere else will". A client that
+		 * knows only the old flag stops offering a checkout it can no longer
+		 * complete, which is the correct behaviour for a stale bundle; a
+		 * client that knows both sends the buyer to the right place.
+		 *
+		 * Collapsing them into one truthy flag would have made the stale
+		 * bundle open a Stripe session against an endpoint that now answers
+		 * 409, which is the one outcome worth engineering around.
+		 */
+		if handoff != "" {
+			checkoutEnabled = false
+		}
+		body := map[string]interface{}{
 			"categories": catalog.Categories,
 			"packs":      catalog.Packs,
 			"items":      catalog.Items,
@@ -108,7 +127,11 @@ func (h *CosmeticsHandler) Catalog(w http.ResponseWriter, r *http.Request) {
 			// handler, even if an operator stages purchasable catalog entries.
 			"checkout_enabled":   checkoutEnabled,
 			"subscription_offer": db.DefaultCosmeticSubscriptionOffer(checkoutEnabled),
-		})
+		}
+		if handoff != "" {
+			body["purchase_handoff_url"] = handoff
+		}
+		return json.Marshal(body)
 	}, "cosmetics catalog is unavailable", http.StatusServiceUnavailable)
 }
 

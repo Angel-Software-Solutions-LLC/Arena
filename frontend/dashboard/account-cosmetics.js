@@ -14,6 +14,26 @@
     return typeof value === 'string' ? value.trim() : '';
   }
 
+  /**
+   * A URL this page is willing to navigate somebody to, or ''.
+   *
+   * Everything that reaches here comes from Arena's own server, so this is not
+   * a defence against a hostile catalogue — it is a floor under a
+   * configuration mistake. An operator who sets the handoff to a path, or
+   * leaves a placeholder in it, gets a Buy control that does nothing rather
+   * than one that navigates somewhere unintended. `javascript:` is refused by
+   * the same rule that refuses everything else: only https is an address.
+   */
+  function httpsURL(value) {
+    const raw = cleanText(value);
+    if (!raw.startsWith('https://') || raw.length <= 'https://'.length) return '';
+    // Whitespace and quotes cannot appear in a URL that was not built wrong,
+    // and both are how a value ends up escaping the attribute it is written
+    // into. Refuse rather than encode: there is no correct handoff that needs
+    // either, so a value carrying one is a mistake to surface, not to repair.
+    return /[\s"'<>]/.test(raw) ? '' : raw;
+  }
+
   const PREVIEW_SLOT_DEFAULTS = Object.freeze({
     bot_skin: 'standard',
     weapon_skin: 'standard',
@@ -299,6 +319,15 @@
     const source = payload && typeof payload === 'object' ? payload : {};
     return {
       checkout_enabled: source.checkout_enabled === true,
+      /*
+       * Where buying happens, when it does not happen here.
+       *
+       * Only ever an absolute https URL from the server, and read as such: a
+       * relative or javascript: value would be a destination this page then
+       * navigates to, so anything that is not plainly an https origin is
+       * treated as absent rather than sanitised into something plausible.
+       */
+      purchase_handoff_url: httpsURL(source.purchase_handoff_url),
       categories: Array.isArray(source.categories) ? source.categories : [],
       items: Array.isArray(source.items) ? source.items : [],
       packs: Array.isArray(source.packs) ? source.packs.filter(pack => pack && typeof pack === 'object') : [],
@@ -363,26 +392,50 @@
   function checkoutIntent(rawCatalog, packID) {
     const catalog = normalizeCatalog(rawCatalog);
     const normalizedID = cleanText(packID);
-    if (!catalog.checkout_enabled) return {ok: false, reason: 'checkout-disabled'};
+    /*
+     * The pack still has to exist and still has to be for sale, handoff or
+     * not. Sending somebody to another site to buy a thing this Arena has
+     * retired would be a worse failure than refusing here, because the refusal
+     * would arrive after they had left.
+     */
+    if (!catalog.checkout_enabled && !catalog.purchase_handoff_url) {
+      return {ok: false, reason: 'checkout-disabled'};
+    }
     if (!normalizedID) return {ok: false, reason: 'pack-not-found'};
     const pack = catalog.packs.find(entry => cleanText(entry.id) === normalizedID);
     if (!pack) return {ok: false, reason: 'pack-not-found'};
     if (pack.is_purchasable !== true) return {ok: false, reason: 'pack-not-purchasable'};
+    if (catalog.purchase_handoff_url) {
+      return {ok: true, kind: 'handoff', url: catalog.purchase_handoff_url};
+    }
     return {
       ok: true,
+      kind: 'checkout',
       path: accountRoute('checkout'),
       body: {pack_id: normalizedID, quantity: 1},
     };
   }
 
-  function subscriptionIntent(rawOffer, rawSubscription) {
+  function subscriptionIntent(rawOffer, rawSubscription, rawHandoffURL) {
     const offer = normalizeSubscriptionOffer(rawOffer);
     const subscription = rawSubscription && typeof rawSubscription === 'object'
       ? normalizeSubscription(rawSubscription)
       : null;
+    /*
+     * Starting All Access moves to the Angel account. Managing one that
+     * already exists does not, and the difference matters: a subscription
+     * started before the switch is live money in Arena's own Stripe account,
+     * and Arena's portal is the only place its holder can cancel it. Sending
+     * them to an Angel account that does not hold that subscription would
+     * leave a recurring charge nobody can reach.
+     */
+    const handoff = httpsURL(rawHandoffURL);
     const checkoutStatuses = new Set(['created', 'checkout_pending', 'canceled', 'expired']);
     if (subscription?.can_manage) {
       return {ok: true, kind: 'portal', path: accountRoute('subscriptionPortal')};
+    }
+    if (handoff) {
+      return {ok: true, kind: 'handoff', url: handoff};
     }
     if (subscription && checkoutStatuses.has(subscription.status)) {
       if (!offer.enabled) return {ok: false, reason: 'subscription-disabled'};
@@ -500,7 +553,7 @@
     const offer = snapshot.subscription_offer.enabled ? snapshot.subscription_offer : (catalogOffer || snapshot.subscription_offer);
     const subscription = snapshot.subscription;
     const membership = snapshot.membership;
-    const intent = subscriptionIntent(offer, subscription);
+    const intent = subscriptionIntent(offer, subscription, view.catalog?.purchase_handoff_url);
     const periodEnd = subscriptionPeriodLabel(subscription?.current_period_end);
     const membershipEnd = subscriptionPeriodLabel(membership?.expires_at);
     let status = 'Available';
@@ -528,9 +581,11 @@
     }
     const action = intent.ok && intent.kind === 'portal'
       ? '<button type="button" class="sm all-access-action" data-subscription-portal>Manage subscription</button>'
-      : intent.ok
-        ? `<button type="button" class="sm all-access-action" data-subscription-checkout>${membership ? 'Subscribe to keep access' : 'Subscribe for $19.99 / month'}</button>`
-        : '<span class="all-access-unavailable">Subscription checkout is not open yet</span>';
+      : intent.ok && intent.kind === 'handoff'
+        ? `<button type="button" class="sm all-access-action" data-subscription-checkout>${membership ? 'Keep access in your Angel account' : 'Subscribe in your Angel account'}</button>`
+        : intent.ok
+          ? `<button type="button" class="sm all-access-action" data-subscription-checkout>${membership ? 'Subscribe to keep access' : 'Subscribe for $19.99 / month'}</button>`
+          : '<span class="all-access-unavailable">Subscription checkout is not open yet</span>';
     const pending = view.subscriptionState?.status === 'pending';
     const feedback = view.subscriptionState?.status === 'error'
       ? `<p class="all-access-feedback is-error" role="alert">${escapeHTML(view.subscriptionState.message || 'Subscription management is temporarily unavailable.')}</p>`
@@ -621,7 +676,8 @@
   function renderShopPack(pack, catalog, checkoutState) {
     const packID = cleanText(pack.id);
     const pending = checkoutState?.status === 'pending' && checkoutState.packID === packID;
-    const purchasable = catalog.checkout_enabled && pack.is_purchasable === true;
+    const handoff = catalog.purchase_handoff_url;
+    const purchasable = (catalog.checkout_enabled || Boolean(handoff)) && pack.is_purchasable === true;
     const isTrail = pack.category_id === 'trails' && pack.items?.length === 1 && pack.items[0]?.slot === 'trail';
     const items = Array.isArray(pack.items) ? pack.items.slice(0, 3) : [];
     const contents = items.length
@@ -629,8 +685,14 @@
       : `<span>${isTrail ? 'Individual trail' : 'Coordinated set'}</span>`;
     const swatch = shopSwatch(pack);
     const swatchAttribute = swatch ? ` style="background:${escapeHTML(swatch)}"` : '';
+    // Same control either way, because it is the same act. What changes is
+    // what it says will happen next, so nobody is surprised by an address bar
+    // that is no longer Arena's.
+    const buyLabel = pending
+      ? (handoff ? 'Opening your Angel account...' : 'Opening checkout...')
+      : `Buy ${escapeHTML(formatPrice(pack))}${handoff ? ' in your Angel account' : ''}`;
     const action = purchasable
-      ? `<button type="button" class="sm cosmetic-shop-buy" data-pack-checkout="${escapeHTML(packID)}"${pending ? ' disabled' : ''}>${pending ? 'Opening checkout...' : `Buy ${escapeHTML(formatPrice(pack))}`}</button>`
+      ? `<button type="button" class="sm cosmetic-shop-buy" data-pack-checkout="${escapeHTML(packID)}"${pending ? ' disabled' : ''}>${buyLabel}</button>`
       : '<span class="cosmetic-shop-state">Checkout coming soon</span>';
     return `<article class="cosmetic-shop-pack" data-shop-pack="${escapeHTML(packID)}">
       <div class="cosmetic-shop-swatch" aria-hidden="true"${swatchAttribute}></div>
@@ -806,7 +868,9 @@
         <div><div class="cosmetic-kicker">Account ledger</div><h2 id="cosmetic-purchases-title">Recent purchases</h2></div>
         <span>Latest 20</span>
       </div>
-      <p class="cosmetic-rule">Statuses come from Arena's signed payment ledger. Returning from checkout does not mark an order paid.</p>
+      <p class="cosmetic-rule">${httpsURL(view.catalog?.purchase_handoff_url)
+        ? 'Orders Arena took payment for before buying moved to your Angel account. Anything bought since is in your Angel account\'s own receipts.'
+        : "Statuses come from Arena's signed payment ledger. Returning from checkout does not mark an order paid."}</p>
       ${body}
     </section>`;
   }
@@ -860,6 +924,30 @@
     const inactiveCount = snapshot.licenses.length - activeCount;
     const licenseSummary = `${activeCount} active${inactiveCount ? ` / ${inactiveCount} inactive` : ''}`;
 
+    /*
+     * Where purchases live now, and how to go and get the newest one.
+     *
+     * Arena reads what somebody owns at the moment they sign in, and holds no
+     * credential to ask again later (see customer_entitlements.go on the
+     * server for why that is the deliberate choice). So a pack bought in the
+     * Angel account a minute ago is genuinely not here yet, and the honest
+     * thing is to say so and offer the one action that fixes it rather than
+     * let somebody conclude their purchase vanished.
+     *
+     * The action is a sign-in. On a live Angel session that is one press and
+     * a window that closes itself, which is why it can be offered as a
+     * refresh rather than as "sign in again".
+     */
+    const handoffURL = httpsURL(view.catalog?.purchase_handoff_url);
+    const collectionAction = handoffURL
+      ? `<div class="cosmetic-inventory-actions"><span>${escapeHTML(licenseSummary)}</span>` +
+        `<button type="button" class="sm" data-entitlements-refresh${view.entitlementsBusy ? ' disabled' : ''}>` +
+        `${view.entitlementsBusy ? 'Reading your account...' : 'Refresh purchases'}</button></div>`
+      : `<span>${escapeHTML(licenseSummary)}</span>`;
+    const collectionRule = handoffURL
+      ? 'Purchases are made and held in your Angel account, and read into Arena when you sign in. Bought something just now? <b>Refresh purchases</b> reads your account again. '
+      : '';
+
     return `<div class="cosmetic-account-summary">
       <div>
         <div class="cosmetic-kicker">Verified owner</div>
@@ -875,9 +963,9 @@
     <section class="cosmetic-inventory">
       <div class="cosmetic-inventory-head">
         <div><div class="cosmetic-kicker">Your collection</div><h2>Cosmetic licenses</h2></div>
-        <span>${escapeHTML(licenseSummary)}</span>
+        ${collectionAction}
       </div>
-      <p class="cosmetic-rule">Every purchased pack item appears here as its own license, assignable to one linked bot at a time. <b>Assign</b> puts a license on a bot so it's available to that bot; <b>Equip</b> makes it the bot's active look in that slot right now.</p>
+      <p class="cosmetic-rule">${collectionRule}Every purchased pack item appears here as its own license, assignable to one linked bot at a time. <b>Assign</b> puts a license on a bot so it's available to that bot; <b>Equip</b> makes it the bot's active look in that slot right now.</p>
       ${inventory}
     </section>
     ${renderShopLink()}

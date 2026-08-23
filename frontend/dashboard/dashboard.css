@@ -561,6 +561,11 @@ tr:hover td{background:rgba(71,215,255,.035)}
 .link-bot-form small{color:#91a6bd;font:400 9px/1.5 'IBM Plex Mono',monospace}
 .cosmetic-inventory-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .cosmetic-inventory-head>span{color:#91a6bd;font:500 10px/1 'IBM Plex Mono',monospace}
+/* The collection head carries an action once purchases live in the Angel
+   account: the licence count keeps its place and the refresh sits beside it,
+   rather than the count moving to make room. */
+.cosmetic-inventory-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end}
+.cosmetic-inventory-actions>span{color:#91a6bd;font:500 10px/1 'IBM Plex Mono',monospace}
 .cosmetic-rule{margin:5px 0 17px;padding:10px 12px;border-left:2px solid #47d7ff;background:rgba(71,215,255,.05)}
 .cosmetic-group+.cosmetic-group{margin-top:20px}
 .cosmetic-license-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}

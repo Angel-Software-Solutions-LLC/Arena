@@ -79,6 +79,11 @@ func (h *CosmeticCommerceHandler) subscriptionReady() bool {
 }
 
 func (h *CosmeticCommerceHandler) SubscriptionCheckout(w http.ResponseWriter, r *http.Request) {
+	// Starting a subscription. Refused before any state is read or written, so
+	// nothing here half-happens on the way to a handoff.
+	if refuseWhenPurchasingMoved(w) {
+		return
+	}
 	setCustomerNoStore(w)
 	if !h.subscriptionReady() {
 		writeError(w, http.StatusServiceUnavailable, "cosmetic subscription checkout is not available")
@@ -255,6 +260,20 @@ func writeCosmeticSubscriptionCheckoutResponse(w http.ResponseWriter, status int
 }
 
 func (h *CosmeticCommerceHandler) SubscriptionPortal(w http.ResponseWriter, r *http.Request) {
+	/*
+	 * Deliberately NOT gated on the handoff, unlike every other endpoint here.
+	 *
+	 * A subscription started before the switch is live money in Arena's own
+	 * Stripe account, and this portal is the only place its holder can pause
+	 * or cancel it. Redirecting them to an Angel account that does not hold
+	 * that subscription would leave a recurring charge nobody can reach.
+	 *
+	 * The repository already decided this, and a test already asserts it:
+	 * TestCosmeticSubscriptionPortalRemainsAvailableWhenNewSalesArePaused.
+	 * Managing an existing subscription is not a sale, so it does not stop
+	 * when sales do. Starting a new one is, and SubscriptionCheckout above is
+	 * gated accordingly.
+	 */
 	setCustomerNoStore(w)
 	if h == nil || h.provider == nil || h.subscriptionStore == nil {
 		writeError(w, http.StatusServiceUnavailable, "cosmetic subscription billing portal is not available")

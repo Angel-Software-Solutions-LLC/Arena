@@ -87,6 +87,20 @@
     return error;
   }
 
+  /**
+   * Where buying happens when it does not happen here, or ''.
+   *
+   * The value comes from Arena's own checkout config, so this is a floor under
+   * a misconfigured deployment rather than a defence against a hostile one: a
+   * Buy control that does nothing beats one that navigates somewhere
+   * unintended, and only an https origin is an address worth leaving for.
+   */
+  function handoffURL(value) {
+    const raw = typeof value === 'string' ? value.trim() : '';
+    if (!raw.startsWith('https://') || raw.length <= 'https://'.length) return '';
+    return /[\s"'<>]/.test(raw) ? '' : raw;
+  }
+
   function clearCompletionCloseTimer() {
 	if (completionCloseTimer !== null && typeof root.clearTimeout === 'function') {
 	  root.clearTimeout(completionCloseTimer);
@@ -233,6 +247,23 @@
     configPromise = root.fetch(checkoutConfigURL(), {credentials:'same-origin',headers:{Accept:'application/json'}})
       .then(async response => {
         const data = await response.json().catch(() => ({}));
+        /*
+         * Purchasing moved to the Angel account. Recognised here, before the
+         * "is checkout enabled" test below, because in handoff mode `enabled`
+         * is deliberately false — a browser running an older bundle should
+         * stop offering a checkout it cannot complete, and one running this
+         * bundle should send the buyer somewhere instead of reporting that
+         * checkout is off.
+         */
+        if (data?.mode === 'handoff') {
+          const handoff = handoffURL(data.handoff_url);
+          if (handoff) return {handoff};
+          // Handoff mode with no usable destination is a misconfiguration, and
+          // it is reported as one. Falling through would test `enabled`, which
+          // is deliberately false here, and the buyer would be told checkout
+          // is off rather than that this deployment is wired wrong.
+          throw checkoutError('Purchases have moved, but this Arena was not told where to.');
+        }
         if (!response.ok || !data?.enabled) throw checkoutError(data?.error || 'Checkout is not enabled.');
         const publishableKey = String(data.publishable_key || '').trim();
         if (!/^pk_(test|live)_/.test(publishableKey)) throw checkoutError('Checkout returned an invalid browser key.');
@@ -249,7 +280,39 @@
 	const generation = beginLocalCheckoutGeneration();
     setDialogState('preparing', 'Preparing secure checkout…');
     try {
-      const [Stripe, config] = await Promise.all([loadStripeScript(), loadCheckoutConfig()]);
+      /*
+       * Both are started together, and the configuration is read first.
+       *
+       * Together, because in the ordinary case Stripe's script and this
+       * config are two independent round trips and serialising them would
+       * cost a visible pause before the payment form appears. Config first,
+       * because it is the answer that decides whether the script is wanted at
+       * all: once purchasing has moved there is no form to fill in here, and
+       * waiting on a payment library to find that out would be a delay in
+       * service of nothing.
+       */
+      const configReady = loadCheckoutConfig();
+      const scriptReady = loadStripeScript();
+      // A script failure is irrelevant if we are about to leave, but an
+      // unhandled rejection is not; this claims it either way.
+      scriptReady.catch(() => {});
+      const config = await configReady;
+      if (config.handoff) {
+        setDialogState('ready', 'Opening your Angel account…');
+        root.location.assign(config.handoff);
+        /*
+         * A browser has left the page by now. The throw is for everything
+         * that has not — a blocked navigation, a test — so that no caller
+         * goes on to mount a payment form for a purchase happening on another
+         * origin. It carries a marker so the handler below can tell it from a
+         * failure: nothing went wrong, and the dialog already says where the
+         * buyer is going.
+         */
+        const handedOff = checkoutError('Purchases are completed in your Angel account.');
+        handedOff.handoff = config.handoff;
+        throw handedOff;
+      }
+      const Stripe = await scriptReady;
 	  requireLocalCheckoutGeneration(generation);
       if (!stripeInstance) stripeInstance = Stripe(config.publishableKey);
       if (!stripeInstance || typeof stripeInstance.initEmbeddedCheckout !== 'function') {
@@ -258,7 +321,7 @@
       setDialogState('ready', 'Secure checkout ready. Opening payment form…');
 	  return generation;
     } catch (error) {
-	  if (generation === localCheckoutGeneration) {
+	  if (!error?.handoff && generation === localCheckoutGeneration) {
 		setDialogState('error', error?.message || 'Secure checkout could not open.');
 	  }
       throw error;

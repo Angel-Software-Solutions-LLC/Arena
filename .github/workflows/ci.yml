@@ -138,6 +138,7 @@ jobs:
           node scripts/test-site-footer.mjs
           node scripts/test-dashboard-cosmetics-checkout.mjs
           node scripts/test-embedded-stripe-checkout.mjs
+          node scripts/test-purchases-via-accounts.mjs
           node scripts/test-cosmetic-themes.mjs
           node scripts/test-cosmetics-renderer.mjs
           node scripts/test-cosmetics-launch-ui.mjs
