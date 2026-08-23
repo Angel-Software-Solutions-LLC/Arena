@@ -37,6 +37,10 @@ const (
 	customerSessionCookieName = "arena_customer_session"
 	customerStateCookieName   = "arena_customer_oauth_state"
 	customerStateTTL          = 10 * time.Minute
+
+	// The page a popup sign-in lands on. Static, same-origin with whatever
+	// opened it, and does nothing but hand the news over and close.
+	customerPopupLandingFile = "signed-in.html"
 )
 
 // CustomerSession is intentionally separate from OIDCSession. In particular,
@@ -58,6 +62,11 @@ type customerOIDCTransaction struct {
 	Nonce                string
 	PKCEVerifier         string
 	ReturnTo             string
+	// Popup is remembered here rather than round-tripped through the
+	// provider. Where the browser lands at the end of the flow is Arena's
+	// decision about its own UI, and putting it in the request would let
+	// anything that can craft a login URL choose it.
+	Popup bool
 }
 
 type CustomerOIDCHandler struct {
@@ -194,6 +203,7 @@ func (h *CustomerOIDCHandler) LoginHandler(w http.ResponseWriter, r *http.Reques
 		Nonce:                nonce,
 		PKCEVerifier:         pkceVerifier,
 		ReturnTo:             safeCustomerReturnTo(r),
+		Popup:                r.URL.Query().Get("popup") == "1",
 	}
 	h.mu.Lock()
 	h.states[state] = txn
@@ -323,7 +333,20 @@ func (h *CustomerOIDCHandler) CallbackHandler(w http.ResponseWriter, r *http.Req
 	// The account id, and not the address. A log line is a place an address
 	// outlives the database it was deleted from.
 	slog.Info("customer signed in with Angel Accounts", "account_id", account.ID)
-	http.Redirect(w, r, txn.ReturnTo, http.StatusFound)
+	/*
+	 * A popup finishes on a page of Arena's own, which tells the window that
+	 * opened it and closes itself. The session cookie is already set by the
+	 * time that page loads, so the opener has only to re-read it.
+	 *
+	 * Sending the popup to `ReturnTo` instead would leave a second, full copy
+	 * of the dashboard sitting in a small window, and the person who pressed
+	 * Sign in still looking at a signed-out one.
+	 */
+	destination := txn.ReturnTo
+	if txn.Popup {
+		destination = customerDashboardPath(r) + customerPopupLandingFile
+	}
+	http.Redirect(w, r, destination, http.StatusFound)
 }
 
 func (h *CustomerOIDCHandler) bindVerifiedIdentity(ctx context.Context, email, issuer, subject, displayName string) (*db.CustomerAccount, error) {

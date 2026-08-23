@@ -134,7 +134,7 @@ jobs:
           node scripts/test-dashboard-startup.mjs
           node scripts/test-dashboard-account-cosmetics.mjs
           node scripts/test-dashboard-cosmetics-preview.mjs
-          node scripts/test-dashboard-email-auth.mjs
+          node scripts/test-dashboard-accounts-login.mjs
           node scripts/test-dashboard-cosmetics-checkout.mjs
           node scripts/test-embedded-stripe-checkout.mjs
           node scripts/test-cosmetic-themes.mjs

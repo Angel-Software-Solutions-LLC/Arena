@@ -22,11 +22,14 @@ const verifiedSession = cosmetics.normalizeSession({authenticated:true, login_en
 assert.equal(verifiedSession.account.email_verified, true, 'a server verification timestamp should authorize the account UX');
 assert.equal(verifiedSession.login_enabled, true);
 assert.equal(verifiedSession.login_url, '/api/v1/dashboard/login');
-const emailSession = cosmetics.normalizeSession({authenticated:false,login_enabled:true,email_login_enabled:true,oidc_login_enabled:false,email_start_url:'/api/v1/account/email/start',email_verify_url:'/api/v1/account/email/verify'});
-assert.equal(emailSession.email_login_enabled, true);
-assert.equal(emailSession.oidc_login_enabled, false);
-assert.equal(emailSession.email_start_url, '/api/v1/account/email/start');
-assert.equal(emailSession.email_verify_url, '/api/v1/account/email/verify');
+// Arena's own email sign-in is retired; the server reports it off and the
+// session shape no longer carries its endpoints. What is left to normalise is
+// whether Angel Accounts is reachable, which is now the only question.
+const signedOut = cosmetics.normalizeSession({authenticated:false,login_enabled:true,email_login_enabled:false,oidc_login_enabled:true});
+assert.equal(signedOut.oidc_login_enabled, true);
+assert.equal(signedOut.email_login_enabled, false);
+assert.equal(signedOut.email_start_url, undefined, 'the retired endpoints are gone from the session shape');
+assert.equal(signedOut.email_verify_url, undefined);
 assert.equal(cosmetics.accountRoute('session'), '/account/session');
 assert.equal(cosmetics.accountRoute('checkout'), '/account/cosmetics/checkout');
 assert.equal(cosmetics.accountRoute('subscriptionCheckout'), '/account/cosmetics/subscription/checkout');
@@ -601,14 +604,33 @@ assert.match(failedKeysHTML, /id="accountKeyCreate"[^>]*disabled/, 'Dashboard mu
 const dashboardHTML = readFileSync(new URL('../frontend/dashboard/index.html', import.meta.url), 'utf8')
   // The dashboard runtime and styles were extracted from inline blocks to
   // dashboard.js/dashboard.css; these probes span all three, so read them
-  // as one source.
+  // as one source. accounts-login.js joins them because the sign-in flow
+  // itself moved there when it became a popup -- the route below is stated
+  // once, in the module that opens the window.
   + readFileSync(new URL('../frontend/dashboard/dashboard.js', import.meta.url), 'utf8')
-  + readFileSync(new URL('../frontend/dashboard/dashboard.css', import.meta.url), 'utf8');
-assert.match(dashboardHTML, /dashboard\/login/, 'verified-email sign-in should use the customer dashboard login route');
-assert.match(dashboardHTML, /id="accountSignInButton"[^>]*disabled/, 'email login stays disabled until session capability is known');
+  + readFileSync(new URL('../frontend/dashboard/dashboard.css', import.meta.url), 'utf8')
+  + readFileSync(new URL('../frontend/js/accounts-login.js', import.meta.url), 'utf8');
+assert.match(dashboardHTML, /dashboard\/login/, 'sign-in should use the customer dashboard login route');
+assert.match(dashboardHTML, /id="accountSignInButton"[^>]*disabled/, 'sign-in stays disabled until session capability is known');
 assert.match(dashboardHTML, /method:'POST'/, 'account sign-out should use a CSRF-protected POST');
 assert.match(dashboardHTML, /data-account-retry/, 'an initial inventory failure should expose a retry action');
-assert.match(dashboardHTML, /Retry email sign-in check/, 'a failed session capability request should be retryable, not mislabeled as unconfigured');
+/*
+ * The claim behind this has not changed, only how it is met. A session
+ * document that could not be read used to relabel the button "Retry email
+ * sign-in check"; with one sign-in method there is nothing to relabel, so the
+ * button is simply offered enabled — pressing it either works or produces a
+ * real error, and neither is the "not configured" message that would be a lie.
+ */
+assert.match(
+  dashboardHTML,
+  /Could not check Angel Accounts sign-in\. Bot performance by API key is still available\./,
+  'a failed session capability request should say so, not claim sign-in is unconfigured',
+);
+assert.doesNotMatch(
+  dashboardHTML,
+  /setup\.hidden = false;[\s\S]{0,200}not configured/,
+  'an unreadable session must not be reported as an unconfigured Arena',
+);
 assert.match(dashboardHTML, /\(tabName==='cosmetics' \|\| tabName==='profile'\) && hasVerifiedAccount\(\)\) refreshAccountCosmetics\(\)/, 'opening Cosmetics or Profile must fetch even when API-key login won the startup race -- Profile now needs the same linked-bots/keys data Cosmetics does');
 assert.match(dashboardHTML, /sessionStorage\.setItem\('arena_keys'/, 'legacy bot-performance keys should be tab-scoped');
 assert.doesNotMatch(dashboardHTML, /localStorage\.setItem\('arena_keys'/, 'bot bearer keys must not persist across browser sessions');
