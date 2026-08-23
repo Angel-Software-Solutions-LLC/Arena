@@ -23,7 +23,7 @@ const maxCosmeticAdminMembershipDuration = 5 * 365 * 24 * time.Hour
 type CosmeticAdminMembership struct {
 	ID           string     `json:"id"`
 	AccountID    string     `json:"account_id"`
-	Email        string     `json:"email"`
+	Email        string     `json:"email,omitempty"`
 	Status       string     `json:"status"`
 	Note         string     `json:"note"`
 	GrantedBy    string     `json:"granted_by"`
@@ -129,13 +129,20 @@ func EnsureCosmeticAdminMembershipsSchema(ctx context.Context) error {
 
 func scanCosmeticAdminMembership(row rowScanner) (*CosmeticAdminMembership, error) {
 	var membership CosmeticAdminMembership
+	// The joined address is null for every linked account, which is the
+	// normal case now rather than an anomaly. It reads as empty, the same way
+	// it does on the account itself.
+	var email *string
 	if err := row.Scan(
-		&membership.ID, &membership.AccountID, &membership.Email, &membership.Status,
+		&membership.ID, &membership.AccountID, &email, &membership.Status,
 		&membership.Note, &membership.GrantedBy, &membership.GrantedAt, &membership.ExpiresAt,
 		&membership.RevokedBy, &membership.RevokeReason, &membership.RevokedAt,
 		&membership.UpdatedAt, &membership.LicenseCount,
 	); err != nil {
 		return nil, err
+	}
+	if email != nil {
+		membership.Email = *email
 	}
 	return &membership, nil
 }
@@ -162,7 +169,26 @@ func getCosmeticAdminMembership(ctx context.Context, membershipID string) (*Cosm
 	return membership, nil
 }
 
+// CreateCosmeticAdminMembership comps a membership to whoever owns an address.
+//
+// Thin, for the same reason GrantCosmeticLicense is: an account linked to an
+// Accounts identity has no address to be found by. It resolves and delegates.
 func CreateCosmeticAdminMembership(ctx context.Context, rawEmail string, expiresAt time.Time, note, actor string) (*CosmeticAdminMembership, int, error) {
+	if Pool == nil {
+		return nil, 0, ErrNoDatabase
+	}
+	account, err := GetOrCreateCustomerAccountByEmail(ctx, rawEmail)
+	if err != nil {
+		return nil, 0, err
+	}
+	return CreateCosmeticAdminMembershipForAccount(ctx, account.ID, expiresAt, note, actor)
+}
+
+// CreateCosmeticAdminMembershipForAccount comps a membership to an account.
+//
+// The form an administrator will actually reach for once the shop is driven by
+// Accounts identities: they are looking at a customer, not at an address.
+func CreateCosmeticAdminMembershipForAccount(ctx context.Context, accountID string, expiresAt time.Time, note, actor string) (*CosmeticAdminMembership, int, error) {
 	if Pool == nil {
 		return nil, 0, ErrNoDatabase
 	}
@@ -173,7 +199,7 @@ func CreateCosmeticAdminMembership(ctx context.Context, rawEmail string, expires
 	if actor == "" || len(actor) > 200 || len(note) > 500 || !expiresAt.After(now) || expiresAt.After(now.Add(maxCosmeticAdminMembershipDuration)) {
 		return nil, 0, ErrCosmeticAdminMembershipInvalid
 	}
-	account, err := GetOrCreateCustomerAccountByEmail(ctx, rawEmail)
+	account, err := GetCustomerAccount(ctx, strings.TrimSpace(accountID))
 	if err != nil {
 		return nil, 0, err
 	}
@@ -350,6 +376,13 @@ func GetActiveCosmeticAdminMembership(ctx context.Context, accountID string) (*C
 	return membership, nil
 }
 
+// GetCosmeticAdminAccessByEmail looks a customer up by address.
+//
+// It finds only accounts that still hold one — that is, accounts nobody has
+// signed into since the cutover. For anything else an administrator has the
+// account id in front of them; see GetCosmeticAdminAccessByAccount. Returning
+// an empty result rather than an error is the behaviour this always had for an
+// address nobody recognises, and a linked account is now exactly that.
 func GetCosmeticAdminAccessByEmail(ctx context.Context, rawEmail string) (*CosmeticAdminAccess, error) {
 	if Pool == nil {
 		return nil, ErrNoDatabase
@@ -358,14 +391,41 @@ func GetCosmeticAdminAccessByEmail(ctx context.Context, rawEmail string) (*Cosme
 	if err != nil {
 		return nil, err
 	}
-	access := &CosmeticAdminAccess{Email: email, Licenses: []CosmeticLicense{}, Memberships: []CosmeticAdminMembership{}}
-	account, err := scanCustomerAccount(Pool.QueryRow(ctx, customerAccountSelect()+` WHERE email = $1`, email))
-	if errors.Is(err, pgx.ErrNoRows) {
+	var accountID string
+	lookupErr := Pool.QueryRow(ctx, `SELECT id FROM customer_accounts WHERE email = $1`, email).Scan(&accountID)
+	if errors.Is(lookupErr, pgx.ErrNoRows) {
+		return &CosmeticAdminAccess{Email: email, Licenses: []CosmeticLicense{}, Memberships: []CosmeticAdminMembership{}}, nil
+	}
+	if lookupErr != nil {
+		return nil, fmt.Errorf("GetCosmeticAdminAccessByEmail account: %w", lookupErr)
+	}
+	access, err := GetCosmeticAdminAccessByAccount(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+	access.Email = email
+	return access, nil
+}
+
+// GetCosmeticAdminAccessByAccount looks a customer up by the identifier that
+// still exists after the cutover.
+func GetCosmeticAdminAccessByAccount(ctx context.Context, accountID string) (*CosmeticAdminAccess, error) {
+	if Pool == nil {
+		return nil, ErrNoDatabase
+	}
+	accountID = strings.TrimSpace(accountID)
+	access := &CosmeticAdminAccess{Licenses: []CosmeticLicense{}, Memberships: []CosmeticAdminMembership{}}
+	if accountID == "" {
+		return access, nil
+	}
+	account, err := GetCustomerAccount(ctx, accountID)
+	if errors.Is(err, ErrCustomerAccountNotFound) {
 		return access, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("GetCosmeticAdminAccessByEmail account: %w", err)
+		return nil, fmt.Errorf("GetCosmeticAdminAccessByAccount account: %w", err)
 	}
+	access.Email = account.Email
 	access.Account = *account
 	if _, err := SyncCustomerCosmeticAdminMembershipLicenses(ctx, account.ID); err != nil {
 		return nil, err
@@ -377,13 +437,13 @@ func GetCosmeticAdminAccessByEmail(ctx context.Context, rawEmail string) (*Cosme
 	rows, err := Pool.Query(ctx, cosmeticAdminMembershipSelect()+`
 		WHERE m.account_id = $1 ORDER BY m.granted_at DESC, m.id DESC`, account.ID)
 	if err != nil {
-		return nil, fmt.Errorf("GetCosmeticAdminAccessByEmail memberships: %w", err)
+		return nil, fmt.Errorf("GetCosmeticAdminAccessByAccount memberships: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		membership, err := scanCosmeticAdminMembership(rows)
 		if err != nil {
-			return nil, fmt.Errorf("GetCosmeticAdminAccessByEmail membership scan: %w", err)
+			return nil, fmt.Errorf("GetCosmeticAdminAccessByAccount membership scan: %w", err)
 		}
 		access.Memberships = append(access.Memberships, *membership)
 	}
@@ -451,6 +511,13 @@ func ExpireCosmeticAdminMemberships(ctx context.Context, now time.Time, limit in
 	return changedCount, sortedBotIDs(affectedSet), nil
 }
 
+// ExpireCustomerCosmeticAdminMemberships sweeps one customer's expired
+// memberships, found by address.
+//
+// Resolves and delegates, like its siblings. An address that belongs to nobody
+// — including one whose account has since been linked and emptied — sweeps
+// nothing rather than failing, which is the behaviour it always had for an
+// unknown address.
 func ExpireCustomerCosmeticAdminMemberships(ctx context.Context, rawEmail string, now time.Time) (int, []string, error) {
 	if Pool == nil {
 		return 0, nil, ErrNoDatabase
@@ -465,6 +532,19 @@ func ExpireCustomerCosmeticAdminMemberships(ctx context.Context, rawEmail string
 			return 0, []string{}, nil
 		}
 		return 0, nil, fmt.Errorf("ExpireCustomerCosmeticAdminMemberships account: %w", err)
+	}
+	return ExpireAccountCosmeticAdminMemberships(ctx, accountID, now)
+}
+
+// ExpireAccountCosmeticAdminMemberships sweeps one account's expired
+// memberships.
+func ExpireAccountCosmeticAdminMemberships(ctx context.Context, accountID string, now time.Time) (int, []string, error) {
+	if Pool == nil {
+		return 0, nil, ErrNoDatabase
+	}
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return 0, []string{}, nil
 	}
 	if now.IsZero() {
 		now = time.Now().UTC()

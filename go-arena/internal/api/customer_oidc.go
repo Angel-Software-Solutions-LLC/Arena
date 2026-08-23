@@ -69,6 +69,9 @@ type CustomerOIDCHandler struct {
 	emailSignInURL    string
 	emailTokenTTL     time.Duration
 	emailSendCooldown time.Duration
+	// See config.CustomerLinkLegacyByEmail. False means no sign-in carries an
+	// address at any point, not even in memory.
+	linkLegacyByEmail bool
 	authority         platform.IdentityAuthority
 
 	sessions map[string]*CustomerSession
@@ -117,12 +120,26 @@ func newCustomerOIDCHandlerWithAuthority(authority platform.IdentityAuthority) *
 					return nil
 				}
 			} else {
+				/*
+				 * `email` is requested only while legacy accounts are still
+				 * being linked, and is the first thing to go when they are
+				 * not. Asking for a claim we have no intention of storing is
+				 * defensible for the length of a cutover and indefensible
+				 * afterwards — it shows up on the consent screen as something
+				 * Arena wants, and the honest answer at that point is that it
+				 * does not.
+				 */
+				scopes := []string{oidc.ScopeOpenID, "profile"}
+				if cfg.CustomerLinkLegacyByEmail {
+					scopes = append(scopes, "email")
+				}
+				h.linkLegacyByEmail = cfg.CustomerLinkLegacyByEmail
 				h.oauth2Config = &oauth2.Config{
 					ClientID:     cfg.CustomerOIDCClientID,
 					ClientSecret: cfg.CustomerOIDCClientSecret,
 					RedirectURL:  cfg.CustomerOIDCRedirectURI,
 					Endpoint:     provider.Endpoint(),
-					Scopes:       []string{oidc.ScopeOpenID, "profile", "email"},
+					Scopes:       scopes,
 				}
 				h.verifier = provider.Verifier(&oidc.Config{ClientID: cfg.CustomerOIDCClientID})
 				h.issuer = cfg.CustomerOIDCIssuer
@@ -277,9 +294,24 @@ func (h *CustomerOIDCHandler) CallbackHandler(w http.ResponseWriter, r *http.Req
 		http.Error(w, "invalid identity claims", http.StatusForbidden)
 		return
 	}
-	if !claims.EmailVerified || strings.TrimSpace(claims.Email) == "" {
-		http.Error(w, "a verified email address is required", http.StatusForbidden)
-		return
+	/*
+	 * An address is no longer required to sign in, and that is the point.
+	 *
+	 * Accounts has already decided who this person is; the id_token's subject
+	 * is that decision, and it is what Arena binds to. Refusing a sign-in for
+	 * want of an address would make Arena depend on a claim it has no reason
+	 * to receive — and once the `email` scope is dropped at the end of the
+	 * cutover, no sign-in would carry one and every one of them would fail.
+	 *
+	 * An address is still *used* when it arrives verified, for the one job
+	 * described on the binder: matching a pre-cutover row so its owner keeps
+	 * their bots and cosmetics. Unverified is treated as absent, because an
+	 * unverified address is not evidence of anything and adopting an account
+	 * on the strength of one would be an account takeover.
+	 */
+	linkEmail := ""
+	if h.linkLegacyByEmail && claims.EmailVerified {
+		linkEmail = strings.TrimSpace(claims.Email)
 	}
 	if claims.Name == "" {
 		claims.Name = claims.PreferredUser
@@ -288,19 +320,21 @@ func (h *CustomerOIDCHandler) CallbackHandler(w http.ResponseWriter, r *http.Req
 	if verifiedIssuer == "" {
 		verifiedIssuer = h.issuer
 	}
-	account, err := h.bindVerifiedIdentity(ctx, claims.Email, verifiedIssuer, idToken.Subject, claims.Name)
+	account, err := h.bindVerifiedIdentity(ctx, linkEmail, verifiedIssuer, idToken.Subject, claims.Name)
 	if err != nil {
 		slog.Warn("customer account binding failed", "error", err, "subject", idToken.Subject)
 		http.Error(w, "unable to bind customer account", http.StatusConflict)
 		return
 	}
 	if account.EmailVerifiedAt == nil {
-		slog.Error("verified customer account is missing verification timestamp", "account_id", account.ID)
+		slog.Error("linked customer account is missing its identity-verified timestamp", "account_id", account.ID)
 		http.Error(w, "unable to verify customer account", http.StatusInternalServerError)
 		return
 	}
 	h.establishCustomerSession(w, r, account, idToken.Subject)
-	slog.Info("customer OIDC login", "account_id", account.ID, "email", account.Email)
+	// The account id, and not the address. A log line is a place an address
+	// outlives the database it was deleted from.
+	slog.Info("customer signed in with Angel Accounts", "account_id", account.ID)
 	http.Redirect(w, r, txn.ReturnTo, http.StatusFound)
 }
 

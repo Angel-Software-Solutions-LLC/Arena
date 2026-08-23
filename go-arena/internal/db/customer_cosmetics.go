@@ -32,8 +32,12 @@ var (
 // intentionally absent: keys prove control of a bot, but account ownership
 // survives key loss, revocation, and replacement.
 type CustomerAccount struct {
-	ID              string     `json:"id"`
-	Email           string     `json:"email"`
+	ID string `json:"id"`
+	// Empty for every account linked to an Accounts identity, which after the
+	// cutover is all of them. Kept on the struct rather than deleted because
+	// the cutover is sequenced: a legacy row still carries one until its owner
+	// next signs in, and the straggler report reads exactly this field.
+	Email           string     `json:"email,omitempty"`
 	DisplayName     string     `json:"display_name"`
 	EmailVerifiedAt *time.Time `json:"email_verified_at,omitempty"`
 	CreatedAt       time.Time  `json:"created_at"`
@@ -105,10 +109,18 @@ func NormalizeCustomerEmail(raw string) (string, error) {
 
 func scanCustomerAccount(row pgx.Row) (*CustomerAccount, error) {
 	var account CustomerAccount
-	err := row.Scan(&account.ID, &account.Email, &account.DisplayName, &account.EmailVerifiedAt,
+	// The address column is nullable now, and for a linked account it is
+	// null. An absent address is not an error and not a special case for
+	// every caller to handle — it reads as the empty string, which is what
+	// "we do not hold one" has always looked like everywhere above this.
+	var email *string
+	err := row.Scan(&account.ID, &email, &account.DisplayName, &account.EmailVerifiedAt,
 		&account.CreatedAt, &account.UpdatedAt)
 	if err != nil {
 		return nil, err
+	}
+	if email != nil {
+		account.Email = *email
 	}
 	return &account, nil
 }
@@ -162,14 +174,46 @@ func GetOrCreateCustomerAccountByEmail(ctx context.Context, rawEmail string) (*C
 // email account. It first follows a stable issuer+subject binding. Email
 // fallback is deliberately restricted to an identity-null pending account so
 // a second identity can never take over an already-bound email owner.
-func UpsertVerifiedCustomerAccount(ctx context.Context, rawEmail, issuer, subject, displayName string) (*CustomerAccount, error) {
+// UpsertVerifiedCustomerAccount binds an Accounts identity to an Arena account
+// without keeping the person's email address.
+//
+// The owner's instruction is the whole design: *"I don't want to have anyone's
+// email addresses stored anymore, but instead switch it to the Accounts
+// login."* Accounts is the identity provider now, so an address here would be a
+// second copy of something we do not own, cannot keep current, and have no
+// remaining use for — every question Arena used to answer with it is now
+// answered by the `(oidc_issuer, oidc_subject)` pair.
+//
+// `linkEmail` is therefore an *input only*, and never reaches a column. It
+// exists for one job: adopting an account that was created before this change,
+// whose only identifier is the address it signed up with. The address is
+// matched, the row is claimed, and the column is emptied in the same
+// transaction — so an account is de-emailed by the very act of being linked,
+// and a second sign-in finds it by subject and never looks at an address again.
+// Pass an empty string once the cutover is finished and no legacy rows remain.
+//
+// `email_verified_at` is deliberately *kept* and refreshed. Despite the name it
+// is the identity-verified marker the rest of the server reads — `keys.go`
+// refuses bot API-key management without it — and the fact being recorded is
+// still true, and now attested by Accounts rather than by Arena's own mail. The
+// column's name outlived its meaning; renaming it is a separate change, because
+// three readers and a session cache would move with it.
+func UpsertVerifiedCustomerAccount(ctx context.Context, linkEmail, issuer, subject, displayName string) (*CustomerAccount, error) {
 	if Pool == nil {
 		return nil, ErrNoDatabase
 	}
-	email, err := NormalizeCustomerEmail(rawEmail)
-	if err != nil {
-		return nil, err
+	// Empty is allowed and expected: an identity that needs no legacy row
+	// adopted supplies no address at all. Anything non-empty must still be a
+	// real address, because it is about to be matched against stored ones.
+	var email *string
+	if strings.TrimSpace(linkEmail) != "" {
+		normalized, err := NormalizeCustomerEmail(linkEmail)
+		if err != nil {
+			return nil, err
+		}
+		email = &normalized
 	}
+	var err error
 	issuer = strings.TrimSpace(issuer)
 	subject = strings.TrimSpace(subject)
 	displayName = strings.TrimSpace(displayName)
@@ -194,18 +238,29 @@ func UpsertVerifiedCustomerAccount(ctx context.Context, rawEmail, issuer, subjec
 	}
 	if err == nil {
 		if _, err = lockCustomerAccount(ctx, tx, accountID, false); err == nil {
+			// Every sign-in clears the address, not just the first. That makes
+			// the purge self-healing: a row linked before this change still
+			// carries what it stored then, and is emptied the next time its
+			// owner appears, without a migration having to find it.
 			_, err = tx.Exec(ctx, `
 				UPDATE customer_accounts
-				SET email = $2, display_name = $3, email_verified_at = NOW(), updated_at = NOW()
-				WHERE id = $1 AND oidc_issuer = $4 AND oidc_subject = $5`,
-				accountID, email, displayName, issuer, subject)
+				SET email = NULL, display_name = $2, email_verified_at = NOW(), updated_at = NOW()
+				WHERE id = $1 AND oidc_issuer = $3 AND oidc_subject = $4`,
+				accountID, displayName, issuer, subject)
 		}
 	} else {
-		// Only an as-yet-unbound fulfillment account may be claimed by email.
-		err = tx.QueryRow(ctx, `
-			SELECT id FROM customer_accounts
-			WHERE email = $1 AND oidc_issuer IS NULL AND oidc_subject IS NULL
-			FOR UPDATE`, email).Scan(&accountID)
+		// Only an as-yet-unbound legacy account may be claimed by address, and
+		// only while an address is still being supplied. With linking finished
+		// this lookup does not run at all and the branch below simply creates
+		// an account that never had one.
+		if email == nil {
+			err = pgx.ErrNoRows
+		} else {
+			err = tx.QueryRow(ctx, `
+				SELECT id FROM customer_accounts
+				WHERE email = $1 AND oidc_issuer IS NULL AND oidc_subject IS NULL
+				FOR UPDATE`, *email).Scan(&accountID)
+		}
 		if errors.Is(err, pgx.ErrNoRows) {
 			// A concurrent callback for this same identity may have completed
 			// while the pending-email row lock was waiting. Recheck the stable
@@ -219,24 +274,60 @@ func UpsertVerifiedCustomerAccount(ctx context.Context, rawEmail, issuer, subjec
 				if _, err = lockCustomerAccount(ctx, tx, accountID, false); err == nil {
 					_, err = tx.Exec(ctx, `
 						UPDATE customer_accounts
-						SET email = $2, display_name = $3, email_verified_at = NOW(), updated_at = NOW()
-						WHERE id = $1 AND oidc_issuer = $4 AND oidc_subject = $5`,
-						accountID, email, displayName, issuer, subject)
+						SET email = NULL, display_name = $2, email_verified_at = NOW(), updated_at = NOW()
+						WHERE id = $1 AND oidc_issuer = $3 AND oidc_subject = $4`,
+						accountID, displayName, issuer, subject)
 				}
 			} else if errors.Is(raceErr, pgx.ErrNoRows) {
+				/*
+				 * One identity per address, for as long as an address is held.
+				 *
+				 * This used to be enforced by the UNIQUE index alone: the
+				 * insert below carried the address, a row already holding it
+				 * raised 23505, and that surfaced as an identity conflict. The
+				 * insert no longer carries one, so the index no longer fires
+				 * and the check has to be made in the open.
+				 *
+				 * It is not a formality. Without it a second Accounts subject
+				 * presenting a verified address that some *already linked*
+				 * account still carries would quietly be given an account of
+				 * its own, and the collision nobody looked at would be the
+				 * first sign that two identities claim one mailbox. Takeover
+				 * was never possible — claiming an existing row requires it to
+				 * be unlinked — but silence is the wrong answer to this.
+				 *
+				 * Once a row is purged it holds no address, matches nothing
+				 * here, and stops being able to collide at all.
+				 */
+				if email != nil {
+					var conflicting string
+					clashErr := tx.QueryRow(ctx, `
+						SELECT id FROM customer_accounts WHERE email = $1`, *email).Scan(&conflicting)
+					if clashErr == nil {
+						return nil, ErrCustomerIdentityConflict
+					}
+					if !errors.Is(clashErr, pgx.ErrNoRows) {
+						return nil, fmt.Errorf("UpsertVerifiedCustomerAccount address check: %w", clashErr)
+					}
+				}
 				accountID = uuid.NewString()
+				// A brand-new account is created without an address at all.
+				// There is nothing to purge later because nothing is written.
 				_, err = tx.Exec(ctx, `
 					INSERT INTO customer_accounts
 						(id, email, display_name, email_verified_at, oidc_issuer, oidc_subject, created_at, updated_at)
-					VALUES ($1, $2, $3, NOW(), $4, $5, NOW(), NOW())`,
-					accountID, email, displayName, issuer, subject)
+					VALUES ($1, NULL, $2, NOW(), $3, $4, NOW(), NOW())`,
+					accountID, displayName, issuer, subject)
 			} else {
 				err = raceErr
 			}
 		} else if err == nil {
+			// The adoption. Claiming the row and emptying its address are one
+			// statement in one transaction, so there is no window in which an
+			// account is linked and still carries what it was matched by.
 			_, err = tx.Exec(ctx, `
 				UPDATE customer_accounts
-				SET display_name = $2, email_verified_at = NOW(),
+				SET email = NULL, display_name = $2, email_verified_at = NOW(),
 				    oidc_issuer = $3, oidc_subject = $4, updated_at = NOW()
 				WHERE id = $1 AND oidc_issuer IS NULL AND oidc_subject IS NULL`,
 				accountID, displayName, issuer, subject)
@@ -673,11 +764,42 @@ func GetCustomerCosmeticsInventory(ctx context.Context, accountID string) (*Cust
 // GrantCosmeticLicense is the email-owned payment/manual fulfillment seam.
 // An external reference is idempotent; without one, each call intentionally
 // creates another independently assignable copy.
+// GrantCosmeticLicense fulfils against an email address, for the payment path
+// that only knows one.
+//
+// Retained, and deliberately thin. It resolves the address to an account and
+// hands over; every line of the actual fulfilment now lives in
+// GrantCosmeticLicenseToAccount, because an account that has been linked to an
+// Accounts identity no longer *has* an address to be found by.
+//
+// This entry point is for the legacy Stripe seam, where a person pays before
+// signing in and the receipt is the only identifier that exists. Once
+// purchasing moves to the Accounts app the buyer is known by id at the moment
+// of purchase, and nothing needs to call this.
 func GrantCosmeticLicense(ctx context.Context, rawEmail, cosmeticID, source, externalReference string) (*CosmeticLicense, bool, error) {
 	if Pool == nil {
 		return nil, false, ErrNoDatabase
 	}
 	account, err := GetOrCreateCustomerAccountByEmail(ctx, rawEmail)
+	if err != nil {
+		return nil, false, err
+	}
+	return GrantCosmeticLicenseToAccount(ctx, account.ID, cosmeticID, source, externalReference)
+}
+
+// GrantCosmeticLicenseToAccount is the fulfilment seam, keyed by the thing
+// that actually identifies a customer now.
+//
+// Splitting this out is what makes "stop storing email addresses" survive
+// contact with the shop. Fulfilment never needed an address — it needed an
+// account, and the address was only ever how one was found. An account id is
+// how one is found now, from a signed-in session or from an Accounts purchase
+// that already knows who bought.
+func GrantCosmeticLicenseToAccount(ctx context.Context, accountID, cosmeticID, source, externalReference string) (*CosmeticLicense, bool, error) {
+	if Pool == nil {
+		return nil, false, ErrNoDatabase
+	}
+	account, err := GetCustomerAccount(ctx, strings.TrimSpace(accountID))
 	if err != nil {
 		return nil, false, err
 	}

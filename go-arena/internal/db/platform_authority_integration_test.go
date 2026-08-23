@@ -893,7 +893,7 @@ func TestPostgresPlatformAuthorityBackfillsStableArenaAgentsWithoutTouchingLicen
 		t.Fatalf("LinkBotToCustomerAccount: %v", err)
 	}
 
-	activeLicense, _, err := GrantCosmeticLicense(ctx, account.Email, "skin-neon-grid", "manual", "platform-active")
+	activeLicense, _, err := GrantCosmeticLicenseToAccount(ctx, account.ID, "skin-neon-grid", "manual", "platform-active")
 	if err != nil {
 		t.Fatalf("GrantCosmeticLicense active: %v", err)
 	}
@@ -901,7 +901,7 @@ func TestPostgresPlatformAuthorityBackfillsStableArenaAgentsWithoutTouchingLicen
 		t.Fatalf("AssignCosmeticLicense active: %v", err)
 	}
 	for _, status := range []string{"refunded", "revoked", "chargeback", "expired"} {
-		license, _, err := GrantCosmeticLicense(ctx, account.Email, "attachment-orbital-halo", "manual", "platform-"+status)
+		license, _, err := GrantCosmeticLicenseToAccount(ctx, account.ID, "attachment-orbital-halo", "manual", "platform-"+status)
 		if err != nil {
 			t.Fatalf("GrantCosmeticLicense %s: %v", status, err)
 		}

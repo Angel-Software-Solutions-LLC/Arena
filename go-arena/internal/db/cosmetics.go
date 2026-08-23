@@ -404,7 +404,13 @@ func EnsureCosmeticsSchema(ctx context.Context) error {
 			WHERE external_reference IS NOT NULL AND external_reference <> ''`,
 		`CREATE TABLE IF NOT EXISTS customer_accounts (
 			id TEXT PRIMARY KEY,
-			email TEXT NOT NULL UNIQUE CHECK (email = LOWER(email)),
+			-- Nullable, and null for every account linked to an Accounts
+			-- identity. Arena stopped being the place a person's address
+			-- lives when Accounts became the identity provider; the column
+			-- survives only so a pre-cutover row can be matched once and
+			-- emptied. UNIQUE still holds, because Postgres does not consider
+			-- two nulls equal — any number of linked accounts coexist.
+			email TEXT UNIQUE CHECK (email = LOWER(email)),
 			display_name TEXT NOT NULL DEFAULT '',
 			email_verified_at TIMESTAMPTZ,
 			oidc_issuer TEXT,
@@ -416,6 +422,13 @@ func EnsureCosmeticsSchema(ctx context.Context) error {
 				(oidc_issuer IS NOT NULL AND oidc_subject IS NOT NULL)
 			)
 		)`,
+		// An existing deployment already has this table, so `CREATE TABLE IF
+		// NOT EXISTS` above changed nothing for it. Dropping NOT NULL is what
+		// lets the binder empty the column on the next sign-in; it is
+		// idempotent, and it only ever widens what the column accepts, so it
+		// is safe to run against a database that has already had it applied
+		// and against one still serving the previous build.
+		`ALTER TABLE customer_accounts ALTER COLUMN email DROP NOT NULL`,
 		`DO $$
 		BEGIN
 			IF NOT EXISTS (

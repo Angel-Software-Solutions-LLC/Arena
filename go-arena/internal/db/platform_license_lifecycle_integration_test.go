@@ -23,7 +23,7 @@ func TestPostgresPlatformLicenseTransitionIsRevisionedIdempotentAndTerminal(t *t
 	if _, err := LinkBotToCustomerAccount(ctx, account.ID, bot.ID); err != nil {
 		t.Fatalf("link bot: %v", err)
 	}
-	license, created, err := GrantCosmeticLicense(ctx, account.Email, "skin-neon-grid", "manual", "license-transition-copy")
+	license, created, err := GrantCosmeticLicenseToAccount(ctx, account.ID, "skin-neon-grid", "manual", "license-transition-copy")
 	if err != nil || !created {
 		t.Fatalf("grant license = (%+v, %v, %v)", license, created, err)
 	}
@@ -123,7 +123,7 @@ func TestPostgresPlatformLicenseAssignmentAndUnassignmentAreExactCommands(t *tes
 	if _, err := LinkBotToCustomerAccount(ctx, account.ID, bot.ID); err != nil {
 		t.Fatalf("link bot: %v", err)
 	}
-	license, created, err := GrantCosmeticLicense(ctx, account.Email, "skin-neon-grid", "manual", "exact-license-assignment-copy")
+	license, created, err := GrantCosmeticLicenseToAccount(ctx, account.ID, "skin-neon-grid", "manual", "exact-license-assignment-copy")
 	if err != nil || !created {
 		t.Fatalf("grant license = (%+v, %v, %v)", license, created, err)
 	}
@@ -215,7 +215,7 @@ func TestPostgresPlatformLicenseConcurrentTerminalTransitionsCommitOneWinner(t *
 	if err != nil {
 		t.Fatalf("create account: %v", err)
 	}
-	license, created, err := GrantCosmeticLicense(ctx, account.Email, "skin-neon-grid", "manual", "license-race-copy")
+	license, created, err := GrantCosmeticLicenseToAccount(ctx, account.ID, "skin-neon-grid", "manual", "license-race-copy")
 	if err != nil || !created {
 		t.Fatalf("grant license = (%+v, %v, %v)", license, created, err)
 	}
@@ -276,7 +276,7 @@ func TestPostgresPlatformLicenseEveryTerminalStatusIsAbsorbing(t *testing.T) {
 		status := status
 		t.Run(status, func(t *testing.T) {
 			reference := "terminal-state-" + status
-			license, created, err := GrantCosmeticLicense(ctx, account.Email, "skin-neon-grid", "manual", reference)
+			license, created, err := GrantCosmeticLicenseToAccount(ctx, account.ID, "skin-neon-grid", "manual", reference)
 			if err != nil || !created {
 				t.Fatalf("grant license = (%+v, %v, %v)", license, created, err)
 			}
@@ -287,7 +287,7 @@ func TestPostgresPlatformLicenseEveryTerminalStatusIsAbsorbing(t *testing.T) {
 			if err != nil || transitioned.Status != status {
 				t.Fatalf("transition %s = (%+v, %v)", status, transitioned, err)
 			}
-			replayed, created, err := GrantCosmeticLicense(ctx, account.Email, "skin-neon-grid", "manual", reference)
+			replayed, created, err := GrantCosmeticLicenseToAccount(ctx, account.ID, "skin-neon-grid", "manual", reference)
 			if err != nil || created || replayed.Status != status || replayed.Revision != transitioned.Revision {
 				t.Fatalf("grant replay after %s = (%+v, %v, %v)", status, replayed, created, err)
 			}
@@ -334,7 +334,7 @@ func TestPostgresPlatformLicenseHistoryIsBoundedAndIndexCompatible(t *testing.T)
 		FROM generate_series(1, 500) AS series`, account.ID); err != nil {
 		t.Fatalf("seed irrelevant license history: %v", err)
 	}
-	license, created, err := GrantCosmeticLicense(ctx, account.Email, "skin-neon-grid", "manual", "bounded-history-target")
+	license, created, err := GrantCosmeticLicenseToAccount(ctx, account.ID, "skin-neon-grid", "manual", "bounded-history-target")
 	if err != nil || !created {
 		t.Fatalf("grant target license = (%+v, %v, %v)", license, created, err)
 	}
@@ -401,7 +401,7 @@ func TestPostgresPlatformLicenseTransitionRollsBackOnHistoryFailure(t *testing.T
 	if _, err := LinkBotToCustomerAccount(ctx, account.ID, bot.ID); err != nil {
 		t.Fatalf("link bot: %v", err)
 	}
-	license, created, err := GrantCosmeticLicense(ctx, account.Email, "skin-neon-grid", "manual", "license-rollback-copy")
+	license, created, err := GrantCosmeticLicenseToAccount(ctx, account.ID, "skin-neon-grid", "manual", "license-rollback-copy")
 	if err != nil || !created {
 		t.Fatalf("grant license = (%+v, %v, %v)", license, created, err)
 	}
@@ -455,14 +455,14 @@ func TestPostgresPlatformLicenseLifecycleBackfillsTerminalStateAndRestarts(t *te
 	if _, err := LinkBotToCustomerAccount(ctx, account.ID, bot.ID); err != nil {
 		t.Fatalf("link backfill bot: %v", err)
 	}
-	assignedLicense, created, err := GrantCosmeticLicense(ctx, account.Email, "skin-neon-grid", "manual", "pre-w1b4-assigned")
+	assignedLicense, created, err := GrantCosmeticLicenseToAccount(ctx, account.ID, "skin-neon-grid", "manual", "pre-w1b4-assigned")
 	if err != nil || !created {
 		t.Fatalf("grant assigned backfill license = (%+v, %v, %v)", assignedLicense, created, err)
 	}
 	if _, err := AssignCosmeticLicense(ctx, account.ID, assignedLicense.ID, &bot.ID); err != nil {
 		t.Fatalf("assign backfill license: %v", err)
 	}
-	terminalAssignedLicense, created, err := GrantCosmeticLicense(ctx, account.Email, "attachment-orbital-halo", "manual", "pre-w1b4-terminal-assigned")
+	terminalAssignedLicense, created, err := GrantCosmeticLicenseToAccount(ctx, account.ID, "attachment-orbital-halo", "manual", "pre-w1b4-terminal-assigned")
 	if err != nil || !created {
 		t.Fatalf("grant terminal assigned backfill license = (%+v, %v, %v)", terminalAssignedLicense, created, err)
 	}
@@ -587,7 +587,7 @@ func TestPostgresPlatformLicenseLifecycleUpgradeSerializesConcurrentStartup(t *t
 	if err != nil {
 		t.Fatalf("create account: %v", err)
 	}
-	license, created, err := GrantCosmeticLicense(ctx, account.Email, "skin-neon-grid", "manual", "concurrent-upgrade-license")
+	license, created, err := GrantCosmeticLicenseToAccount(ctx, account.ID, "skin-neon-grid", "manual", "concurrent-upgrade-license")
 	if err != nil || !created {
 		t.Fatalf("grant legacy projection = (%+v, %v, %v)", license, created, err)
 	}
@@ -651,7 +651,7 @@ func TestPostgresPlatformLicenseTerminalPrecedenceAndSameStateNoOp(t *testing.T)
 	if err != nil {
 		t.Fatalf("create account: %v", err)
 	}
-	license, created, err := GrantCosmeticLicense(ctx, account.Email, "skin-neon-grid", "manual", "license-precedence-copy")
+	license, created, err := GrantCosmeticLicenseToAccount(ctx, account.ID, "skin-neon-grid", "manual", "license-precedence-copy")
 	if err != nil || !created {
 		t.Fatalf("grant license = (%+v, %v, %v)", license, created, err)
 	}
@@ -708,7 +708,7 @@ func TestPostgresPlatformExactAssignmentRejectsMoveButCompatibilityFacadeMoves(t
 			t.Fatalf("link bot %s: %v", botID, err)
 		}
 	}
-	license, created, err := GrantCosmeticLicense(ctx, account.Email, "skin-neon-grid", "manual", "license-move-copy")
+	license, created, err := GrantCosmeticLicenseToAccount(ctx, account.ID, "skin-neon-grid", "manual", "license-move-copy")
 	if err != nil || !created {
 		t.Fatalf("grant license = (%+v, %v, %v)", license, created, err)
 	}
@@ -743,7 +743,7 @@ func TestPostgresPlatformLicenseStorageGuardRejectsResurrectionAndDowngrade(t *t
 	if err != nil {
 		t.Fatalf("create account: %v", err)
 	}
-	license, created, err := GrantCosmeticLicense(ctx, account.Email, "skin-neon-grid", "manual", "license-guard-copy")
+	license, created, err := GrantCosmeticLicenseToAccount(ctx, account.ID, "skin-neon-grid", "manual", "license-guard-copy")
 	if err != nil || !created {
 		t.Fatalf("grant license = (%+v, %v, %v)", license, created, err)
 	}

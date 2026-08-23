@@ -99,18 +99,56 @@ func TestPostgresCustomerCosmeticsAccountOwnershipAndExclusiveAssignment(t *test
 	if account.ID != pendingAccountID || account.EmailVerifiedAt == nil {
 		t.Fatalf("verified account = %+v, pending account ID = %s", account, pendingAccountID)
 	}
-	if _, err := UpsertVerifiedCustomerAccount(ctx, "owner@example.com", "https://id.example", "attacker-subject", "Other"); !errors.Is(err, ErrCustomerIdentityConflict) {
-		t.Fatalf("second identity bind error = %v, want ErrCustomerIdentityConflict", err)
+	/*
+	 * A second identity presenting the same address must not end up holding
+	 * this account. It no longer ends up holding an *error* either, and that
+	 * change is deliberate rather than incidental.
+	 *
+	 * The old expectation was ErrCustomerIdentityConflict, and it was produced
+	 * by the UNIQUE index on the address: the insert carried one, the row
+	 * above already had it, and the unique violation surfaced as a conflict.
+	 * Linking now empties that column — that is the entire point of the change
+	 * — so by the time this call is made there is no stored address left for
+	 * anything to collide with. A guarantee that was a side effect of holding
+	 * the data cannot outlive the data.
+	 *
+	 * What matters is unchanged and is what is asserted instead: the intruder
+	 * does not get this account. Claiming an existing row still requires that
+	 * row to be unlinked, so the owner's bots, licenses and handle stay with
+	 * the owner, and the newcomer gets an empty account of its own. Accounts
+	 * is the authority on one-verified-address-per-identity now, which is
+	 * where that rule belongs.
+	 */
+	intruder, err := UpsertVerifiedCustomerAccount(ctx, "owner@example.com", "https://id.example", "attacker-subject", "Other")
+	if err != nil {
+		t.Fatalf("second identity bind error = %v, want a separate account", err)
+	}
+	if intruder.ID == account.ID {
+		t.Fatalf("second identity took over the owner's account %s", account.ID)
+	}
+	if intruder.Email != "" {
+		t.Fatalf("second identity stored an address: %q", intruder.Email)
 	}
 
-	idempotent, created, err := GrantCosmeticLicense(ctx, "owner@example.com", "skin-neon-grid", "stripe", "checkout-1")
+	/*
+	 * Fulfilment is keyed by account from here on, and these three assertions
+	 * are the reason the account-keyed seam had to exist.
+	 *
+	 * They used to be written against the address. That worked because the
+	 * address was a durable identifier: a late Stripe webhook naming it found
+	 * the same row every time. Linking empties the column, so the address
+	 * stops being able to find this account at all — see the test below, which
+	 * pins that consequence rather than leaving it to be discovered by a
+	 * webhook in production.
+	 */
+	idempotent, created, err := GrantCosmeticLicenseToAccount(ctx, account.ID, "skin-neon-grid", "stripe", "checkout-1")
 	if err != nil || created || idempotent.ID != firstLicense.ID {
 		t.Fatalf("idempotent grant = (%+v, %v, %v)", idempotent, created, err)
 	}
-	if _, _, err := GrantCosmeticLicense(ctx, "owner@example.com", "weapon-solar-flare", "stripe", "checkout-1"); !errors.Is(err, ErrCosmeticLicenseGrantConflict) {
+	if _, _, err := GrantCosmeticLicenseToAccount(ctx, account.ID, "weapon-solar-flare", "stripe", "checkout-1"); !errors.Is(err, ErrCosmeticLicenseGrantConflict) {
 		t.Fatalf("conflicting external reference error = %v", err)
 	}
-	if _, _, err := GrantCosmeticLicense(ctx, "owner@example.com", "weapon-solar-flare", "stripe", ""); !errors.Is(err, ErrCosmeticLicenseReferenceRequired) {
+	if _, _, err := GrantCosmeticLicenseToAccount(ctx, account.ID, "weapon-solar-flare", "stripe", ""); !errors.Is(err, ErrCosmeticLicenseReferenceRequired) {
 		t.Fatalf("provider grant without reference error = %v, want ErrCosmeticLicenseReferenceRequired", err)
 	}
 
@@ -147,7 +185,7 @@ func TestPostgresCustomerCosmeticsAccountOwnershipAndExclusiveAssignment(t *test
 	}
 
 	// Each purchase creates a stable, independently assignable copy.
-	secondLicense, created, err := GrantCosmeticLicense(ctx, "owner@example.com", "skin-neon-grid", "manual", "")
+	secondLicense, created, err := GrantCosmeticLicenseToAccount(ctx, account.ID, "skin-neon-grid", "manual", "")
 	if err != nil || !created || secondLicense.ID == firstLicense.ID {
 		t.Fatalf("second copy = (%+v, %v, %v)", secondLicense, created, err)
 	}
@@ -224,7 +262,7 @@ func TestPostgresCustomerCosmeticsAccountOwnershipAndExclusiveAssignment(t *test
 	}
 
 	for index, preservedStatus := range []string{"refunded", "chargeback"} {
-		license, _, err := GrantCosmeticLicense(ctx, account.Email, "attachment-orbital-halo", "manual",
+		license, _, err := GrantCosmeticLicenseToAccount(ctx, account.ID, "attachment-orbital-halo", "manual",
 			fmt.Sprintf("preserve-status-%d", index))
 		if err != nil {
 			t.Fatalf("grant %s license: %v", preservedStatus, err)
@@ -1252,12 +1290,12 @@ func TestPostgresLegacyBotEntitlementMigratesAndSurvivesBotDeletion(t *testing.T
 	if _, err := Pool.Exec(ctx, `DELETE FROM api_keys WHERE id = $1`, orphanBot.APIKeyID); err != nil {
 		t.Fatalf("delete orphan bot key: %v", err)
 	}
-	recovered, newlyClaimed, err := GrantCosmeticLicense(ctx, account.Email, "skin-neon-grid", "legacy-test", "legacy-orphan-order")
+	recovered, newlyClaimed, err := GrantCosmeticLicenseToAccount(ctx, account.ID, "skin-neon-grid", "legacy-test", "legacy-orphan-order")
 	if err != nil || !newlyClaimed || recovered.ID != orphanLicenseID ||
 		recovered.AccountID == nil || *recovered.AccountID != account.ID || recovered.LegacyBotID != nil || recovered.AssignedBotID != nil {
 		t.Fatalf("recover orphan legacy license = (%+v, %v, %v), want ID %s", recovered, newlyClaimed, err, orphanLicenseID)
 	}
-	replayed, newlyClaimed, err := GrantCosmeticLicense(ctx, account.Email, "skin-neon-grid", "legacy-test", "legacy-orphan-order")
+	replayed, newlyClaimed, err := GrantCosmeticLicenseToAccount(ctx, account.ID, "skin-neon-grid", "legacy-test", "legacy-orphan-order")
 	if err != nil || newlyClaimed || replayed.ID != orphanLicenseID {
 		t.Fatalf("idempotent orphan recovery = (%+v, %v, %v)", replayed, newlyClaimed, err)
 	}
@@ -1306,7 +1344,7 @@ func TestPostgresAccountRowIsFirstAssignmentLock(t *testing.T) {
 	if _, err := LinkBotToCustomerAccount(ctx, account.ID, bot.ID); err != nil {
 		t.Fatal(err)
 	}
-	license, _, err := GrantCosmeticLicense(ctx, account.Email, "skin-neon-grid", "manual", "lock-order")
+	license, _, err := GrantCosmeticLicenseToAccount(ctx, account.ID, "skin-neon-grid", "manual", "lock-order")
 	if err != nil {
 		t.Fatal(err)
 	}

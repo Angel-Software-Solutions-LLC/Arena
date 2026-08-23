@@ -416,12 +416,28 @@ type Config struct {
 	// customer_oidc.go): a visitor who returns at least once within any
 	// 30-day window never has to sign back in, while an abandoned or stolen
 	// cookie still lapses.
-	CustomerOIDCSessionTTL      int `envconfig:"ARENA_CUSTOMER_OIDC_SESSION_TTL_HOURS" default:"720"`
-	CustomerBotLinkRPM          int `envconfig:"ARENA_CUSTOMER_BOT_LINK_RPM" default:"10"`
-	CustomerBotLinkPerHour      int `envconfig:"ARENA_CUSTOMER_BOT_LINK_PER_HOUR" default:"10"`
-	CustomerAPIKeyMutationRPM   int `envconfig:"ARENA_CUSTOMER_API_KEY_MUTATION_RPM" default:"30"`
-	CustomerAPIKeyCreatePerHour int `envconfig:"ARENA_CUSTOMER_API_KEY_CREATE_PER_HOUR" default:"10"`
-	CustomerAPIKeyRevokePerHour int `envconfig:"ARENA_CUSTOMER_API_KEY_REVOKE_PER_HOUR" default:"20"`
+	CustomerOIDCSessionTTL int `envconfig:"ARENA_CUSTOMER_OIDC_SESSION_TTL_HOURS" default:"720"`
+
+	// CustomerLinkLegacyByEmail is the cutover switch for retiring stored
+	// email addresses.
+	//
+	// While it is on, sign-in asks Accounts for the `email` scope and uses a
+	// verified address, in memory only, to find the pre-cutover Arena account
+	// that signed up with it — so that person keeps their bots, their
+	// cosmetics and their handle. The address is never written; the row that
+	// is matched has its own address emptied by the same transaction.
+	//
+	// Turn it off once the straggler report is empty or accounted for. Arena
+	// then stops requesting the scope at all, and no sign-in carries an
+	// address anywhere, even transiently. That is the end state the owner
+	// asked for; this flag exists because you cannot get there in one step
+	// without stranding everybody who already had an account.
+	CustomerLinkLegacyByEmail   bool `envconfig:"ARENA_CUSTOMER_LINK_LEGACY_BY_EMAIL" default:"true"`
+	CustomerBotLinkRPM          int  `envconfig:"ARENA_CUSTOMER_BOT_LINK_RPM" default:"10"`
+	CustomerBotLinkPerHour      int  `envconfig:"ARENA_CUSTOMER_BOT_LINK_PER_HOUR" default:"10"`
+	CustomerAPIKeyMutationRPM   int  `envconfig:"ARENA_CUSTOMER_API_KEY_MUTATION_RPM" default:"30"`
+	CustomerAPIKeyCreatePerHour int  `envconfig:"ARENA_CUSTOMER_API_KEY_CREATE_PER_HOUR" default:"10"`
+	CustomerAPIKeyRevokePerHour int  `envconfig:"ARENA_CUSTOMER_API_KEY_REVOKE_PER_HOUR" default:"20"`
 
 	// Native customer email auth is an alternative to customer OIDC. It sends
 	// one-time passwordless links through the deployment's transactional SMTP

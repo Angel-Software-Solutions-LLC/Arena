@@ -121,7 +121,7 @@ func TestPostgresCosmeticSubscriptionLifecycleAndFutureSetSync(t *testing.T) {
 		t.Fatalf("future subscription sync = (%d, %v), want (1, nil)", created, err)
 	}
 
-	manual, manualCreated, err := GrantCosmeticLicense(ctx, account.Email, "skin-neon-grid", "manual", "manual-preserved-copy")
+	manual, manualCreated, err := GrantCosmeticLicenseToAccount(ctx, account.ID, "skin-neon-grid", "manual", "manual-preserved-copy")
 	if err != nil || !manualCreated {
 		t.Fatalf("create manual comparison license = (%+v, %v, %v)", manual, manualCreated, err)
 	}

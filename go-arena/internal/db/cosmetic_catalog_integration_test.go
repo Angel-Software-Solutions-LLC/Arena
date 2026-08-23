@@ -156,7 +156,7 @@ func TestPostgresInactiveCosmeticCategorySuspendsGrantEquipAndRendering(t *testi
 	if _, err := EquipCustomerCosmeticLicense(ctx, account.ID, bot.ID, license.ID); !errors.Is(err, ErrCosmeticInactive) {
 		t.Fatalf("account equip inactive category error = %v, want ErrCosmeticInactive", err)
 	}
-	replayed, replayCreated, err := GrantCosmeticLicense(ctx, "inactive-owner@example.com", item.ID, "manual", "inactive-license")
+	replayed, replayCreated, err := GrantCosmeticLicenseToAccount(ctx, account.ID, item.ID, "manual", "inactive-license")
 	if err != nil || replayCreated || replayed.ID != license.ID {
 		t.Fatalf("inactive category idempotent license replay = (%+v, %v, %v), want existing license", replayed, replayCreated, err)
 	}
