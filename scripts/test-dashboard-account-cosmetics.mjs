@@ -359,11 +359,11 @@ const disabledPendingHTML = cosmetics.renderPanel(snapshot, {catalog:{...catalog
 assert.doesNotMatch(disabledPendingHTML, /data-pack-checkout=/, 'checkout-disabled catalogs must not render purchase buttons');
 assert.deepEqual(
   JSON.parse(JSON.stringify(cosmetics.checkoutIntent(catalog, 'set-001-pack'))),
-  {ok:true,path:'/account/cosmetics/checkout',body:{pack_id:'set-001-pack',quantity:1}},
+  {ok:true,kind:'checkout',path:'/account/cosmetics/checkout',body:{pack_id:'set-001-pack',quantity:1}},
 );
 assert.deepEqual(
   JSON.parse(JSON.stringify(cosmetics.checkoutIntent(catalog, 'trail-ember-sparks-pack'))),
-  {ok:true,path:'/account/cosmetics/checkout',body:{pack_id:'trail-ember-sparks-pack',quantity:1}},
+  {ok:true,kind:'checkout',path:'/account/cosmetics/checkout',body:{pack_id:'trail-ember-sparks-pack',quantity:1}},
 );
 
 const membershipSnapshot = cosmetics.normalizeSnapshot({

@@ -56,6 +56,76 @@ later lost or revoked. If both the key and provider purchase reference are
 already unavailable, recovery requires an administrator; Arena does not invent
 an email owner.
 
+## Buying in the Angel account
+
+Purchasing moves out of Arena. Set `ARENA_ACCOUNTS_SHOP_URL` and the Shop and
+the Dashboard still show every cosmetic and still know what an account owns,
+but the Buy control hands off to the Angel account instead of opening a Stripe
+session here. Leave it empty and nothing above changes.
+
+**The setting is the gate as well as the destination.** While it is set,
+`POST /account/cosmetics/checkout`, the order-resume endpoint and the
+subscription checkout answer `409` with a `handoff_url`, before they read or
+write anything. A user interface that hands off while the API behind it still
+opens Stripe sessions is one stale browser tab away from taking money in the
+wrong place.
+
+**The billing portal is the one exception, deliberately.** A subscription
+started before the switch is live money in Arena's own Stripe account, and
+`POST /account/cosmetics/subscription/portal` is the only place its holder can
+pause or cancel it. Managing an existing subscription is not a sale, so it does
+not stop when sales do — the same line this repository already drew for a sales
+pause.
+
+**`checkout_enabled` and `purchase_handoff_url` are separate facts.** The
+catalog response turns the first off and publishes the second. A browser
+running a bundle from before the switch knows only the flag, reads false, and
+stops offering a checkout it can no longer complete; one running a current
+bundle reads the destination and sends the buyer there. Collapsing the two into
+a single truthy flag would have made the stale bundle open a session against an
+endpoint that now refuses.
+
+### Who owns what
+
+Accounts owns the **licence** — the record that somebody bought a thing and
+still holds it. Arena owns only the **assignment**: which bot wears which
+grant. Arena keeps no purchase records of its own after the switch.
+
+Arena materialises each grant into the per-item licences its equip and assign
+machinery needs, keyed by the grant id from the entitlements contract:
+
+| | |
+|---|---|
+| Licence `source` | `accounts` |
+| Licence `external_reference` | `accounts-grant:<grant id>:item:<item id>` |
+| Grant ledger | `customer_accounts_grants` / `customer_accounts_grant_licenses` |
+
+The ledger is what makes a purchase a **snapshot**: a grant already
+materialised is left alone, so a pack that gains an item next year does not
+retroactively appear in a wallet that bought it last year — exactly as a paid
+Stripe order does not.
+
+### Reading entitlements
+
+`GET` the endpoint advertised as `entitlements_endpoint` in the Accounts
+discovery document, with the access token from a sign-in and the `entitlements`
+scope. The scope is requested only when that endpoint exists, so nothing
+appears on a consent screen before it is used.
+
+Reconciliation acts on `status` and only on `status`. A grant marked `revoked`
+withdraws exactly the licences it produced; a grant that has simply **stopped
+being mentioned** does nothing at all, because a truncated or mis-scoped read
+would otherwise strip a paying customer's wallet. A SKU this Arena does not
+have is logged and skipped rather than failing the purchases beside it.
+
+**Arena holds no credential for the Accounts API.** It reads once, in the
+callback, with a token that is never written anywhere, and does not request
+`offline_access`. The cost is freshness: a pack bought a minute ago is not here
+until the next read, and the Dashboard says so and offers **Refresh
+purchases** — which is a sign-in, because that is the only way Arena gets a
+token. The push half of the contract (`purchase.granted` on the Accounts
+webhook outbox) is the long-term answer and is not built here.
+
 ## Customer registration and authentication
 
 Arena supports two independent ways to establish the same verified customer

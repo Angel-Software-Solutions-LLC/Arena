@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"arena-server/internal/accounts"
 	"arena-server/internal/config"
 	"arena-server/internal/db"
 	"arena-server/internal/platform"
@@ -76,7 +77,11 @@ type CustomerOIDCHandler struct {
 	// See config.CustomerLinkLegacyByEmail. False means no sign-in carries an
 	// address at any point, not even in memory.
 	linkLegacyByEmail bool
-	authority         platform.IdentityAuthority
+	// Where what-somebody-owns is read from, or nil while Accounts does not
+	// own commerce here yet. See customer_entitlements.go for why this is only
+	// ever used inside the callback.
+	entitlements *accounts.Client
+	authority    platform.IdentityAuthority
 
 	sessions map[string]*CustomerSession
 	states   map[string]customerOIDCTransaction
@@ -130,6 +135,20 @@ func newCustomerOIDCHandlerWithAuthority(authority platform.IdentityAuthority) *
 				if cfg.CustomerLinkLegacyByEmail {
 					scopes = append(scopes, "email")
 				}
+				/*
+				 * `entitlements` is asked for only when there is somewhere to
+				 * spend it. The endpoint is advertised in the discovery
+				 * document, so this configures itself: while the Accounts side
+				 * has not provisioned Arena's client, no scope is requested and
+				 * no read is attempted; the day it publishes the endpoint,
+				 * Arena starts asking. No flag day, and no consent screen
+				 * listing a permission that would go unused.
+				 */
+				h.entitlements = accounts.NewClient(entitlementsEndpoint(provider), nil)
+				if h.entitlements != nil {
+					scopes = append(scopes, "entitlements")
+					slog.Info("customer entitlements source configured", "endpoint", h.entitlements.Endpoint())
+				}
 				h.linkLegacyByEmail = cfg.CustomerLinkLegacyByEmail
 				h.oauth2Config = &oauth2.Config{
 					ClientID:     cfg.CustomerOIDCClientID,
@@ -146,6 +165,29 @@ func newCustomerOIDCHandlerWithAuthority(authority platform.IdentityAuthority) *
 	}
 	go h.cleanupLoop()
 	return h
+}
+
+// entitlementsEndpoint decides where entitlements are read from.
+//
+// The discovery document is the source, so Accounts moves its endpoint and
+// Arena follows without a deploy. The environment override wins because a
+// staging Accounts and the tests both need to point somewhere the discovery
+// document does not name.
+func entitlementsEndpoint(provider *oidc.Provider) string {
+	if override := strings.TrimSpace(config.C.AccountsEntitlementsURL); override != "" {
+		return override
+	}
+	if provider == nil {
+		return ""
+	}
+	var discovery struct {
+		EntitlementsEndpoint string `json:"entitlements_endpoint"`
+	}
+	if err := provider.Claims(&discovery); err != nil {
+		slog.Warn("could not read the accounts discovery document", "error", err)
+		return ""
+	}
+	return strings.TrimSpace(discovery.EntitlementsEndpoint)
 }
 
 func customerDashboardPath(r *http.Request) string {
@@ -330,6 +372,16 @@ func (h *CustomerOIDCHandler) CallbackHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 	h.establishCustomerSession(w, r, account, idToken.Subject)
+	/*
+	 * The one moment Arena holds a token it may read entitlements with. After
+	 * this line the token goes out of scope and is never written anywhere —
+	 * see customer_entitlements.go. The error is deliberately dropped: a
+	 * commerce service that is unreachable must not turn a good sign-in into a
+	 * failed one, and the failure is already logged where it happened.
+	 */
+	if _, syncErr := h.syncEntitlementsFromAccounts(ctx, account.ID, token.AccessToken); syncErr != nil {
+		_ = syncErr
+	}
 	// The account id, and not the address. A log line is a place an address
 	// outlives the database it was deleted from.
 	slog.Info("customer signed in with Angel Accounts", "account_id", account.ID)

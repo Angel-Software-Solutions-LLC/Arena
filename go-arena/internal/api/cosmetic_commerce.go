@@ -142,13 +142,59 @@ type cosmeticCheckoutBody struct {
 	Presentation CosmeticCheckoutPresentation `json:"presentation"`
 }
 
-// CheckoutConfig exposes only Stripe's intentionally public browser key and
-// presentation mode. Session creation remains authenticated and CSRF-protected.
+// accountsShopHandoff returns where buying happens, or "" while Arena still
+// sells for itself.
+//
+// One reading of one setting, used by the config document the shop reads and
+// by every checkout endpoint below, so the answer the browser is given and the
+// answer the server enforces cannot come apart.
+func accountsShopHandoff() string {
+	return strings.TrimSpace(config.C.AccountsShopURL)
+}
+
+// refuseWhenPurchasingMoved answers a checkout attempt that should have been a
+// handoff, and reports whether it did.
+//
+// 409 rather than 503: nothing is broken or temporarily away — this endpoint is
+// no longer where the act happens, and the reply says where it does. A client
+// that has not been reloaded since the switch gets a destination rather than a
+// dead end.
+func refuseWhenPurchasingMoved(w http.ResponseWriter) bool {
+	handoff := accountsShopHandoff()
+	if handoff == "" {
+		return false
+	}
+	setCustomerNoStore(w)
+	writeJSON(w, http.StatusConflict, map[string]any{
+		"error":       "purchases are completed in your Angel account",
+		"handoff_url": handoff,
+	})
+	return true
+}
+
+// CheckoutConfig tells the shop how buying works here.
+//
+// Two shapes. While Arena sells, it exposes Stripe's intentionally public
+// browser key and the presentation mode. Once ARENA_ACCOUNTS_SHOP_URL is set,
+// it says so instead and names the destination — and `enabled` goes false, so
+// a browser running the previous bundle stops offering a checkout it can no
+// longer complete rather than failing at the last step.
 func (h *CosmeticCommerceHandler) CheckoutConfig(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Cache-Control", "public, max-age=300")
+	if handoff := accountsShopHandoff(); handoff != "" {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"enabled":                 false,
+			"mode":                    "handoff",
+			"handoff_url":             handoff,
+			"default_presentation":    CosmeticCheckoutPresentationEmbedded,
+			"hosted_fallback_enabled": false,
+		})
+		return
+	}
 	enabled := h != nil && h.Enabled() && strings.TrimSpace(h.publishableKey) != ""
 	response := map[string]interface{}{
 		"enabled":                 enabled,
+		"mode":                    "stripe",
 		"default_presentation":    CosmeticCheckoutPresentationEmbedded,
 		"hosted_fallback_enabled": enabled,
 	}
@@ -159,6 +205,11 @@ func (h *CosmeticCommerceHandler) CheckoutConfig(w http.ResponseWriter, _ *http.
 }
 
 func (h *CosmeticCommerceHandler) Checkout(w http.ResponseWriter, r *http.Request) {
+	// Buying a pack. Refused before any state is read or written, so nothing
+	// here half-happens on the way to a handoff.
+	if refuseWhenPurchasingMoved(w) {
+		return
+	}
 	setCustomerNoStore(w)
 	if h == nil || !h.Enabled() || h.store == nil {
 		writeError(w, http.StatusServiceUnavailable, "cosmetic checkout is not available")
@@ -248,6 +299,12 @@ func (h *CosmeticCommerceHandler) markCheckoutFailed(ctx context.Context, order 
 // replays provider creation with the same order-derived idempotency key and the
 // presentation committed before the original provider call.
 func (h *CosmeticCommerceHandler) ResumeCheckout(w http.ResponseWriter, r *http.Request) {
+	// An order started before the switch finishes in the Accounts app too, so
+	// the receipt lands where the licence now lives. Refused before any state
+	// is read or written, so nothing here half-happens on the way to a handoff.
+	if refuseWhenPurchasingMoved(w) {
+		return
+	}
 	setCustomerNoStore(w)
 	if h == nil || !h.Enabled() || h.store == nil {
 		writeError(w, http.StatusServiceUnavailable, "cosmetic checkout is not available")

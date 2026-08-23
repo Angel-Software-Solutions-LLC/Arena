@@ -136,6 +136,9 @@ let accountOrdersError = '';
 let accountKeys = null;
 let accountKeysError = '';
 let accountKeyCreateBusy = false;
+// True while a "Refresh purchases" sign-in is in flight. See
+// refreshAccountEntitlements for why a refresh is a sign-in.
+let accountEntitlementsBusy = false;
 let accountBusyKeyID = '';
 let accountGeneratedKey = null;
 let accountSubscriptionState = {status:'idle',message:''};
@@ -323,6 +326,39 @@ async function startAccountLogin() {
       button.textContent = original || 'Sign in';
     }
   }
+}
+
+/**
+ * Read this account's purchases from Angel Accounts again.
+ *
+ * Which means: sign in again. Arena keeps no credential for the Accounts API
+ * -- it reads entitlements once, with the token from a sign-in, and never
+ * stores it (see go-arena/internal/api/customer_entitlements.go). So the only
+ * way to ask again is to get another token, and the way to get another token
+ * is the sign-in that is already one press.
+ *
+ * On a live Angel session the popup opens, completes, and closes without
+ * anything being typed, which is why this can honestly be labelled a refresh.
+ * If that session has lapsed it is an ordinary sign-in instead -- still the
+ * right outcome, and the person is told what happened by what they see.
+ */
+async function refreshAccountEntitlements() {
+  if (accountEntitlementsBusy) return;
+  if (!accountSession.oidc_login_enabled) return;
+  accountEntitlementsBusy = true;
+  renderAccountCosmetics();
+  try {
+    const {signInWithAccounts} = await import('../js/accounts-login.js?v=20260823a');
+    await signInWithAccounts({returnTo: accountReturnPath()});
+  } catch (error) {
+    accountViewError = error?.message || 'Could not reach Angel Accounts.';
+  } finally {
+    accountEntitlementsBusy = false;
+  }
+  // Whatever the popup reported. The server re-read the entitlements during
+  // the callback, so the snapshot behind this panel is what changed -- not
+  // anything the popup could have told us.
+  await refreshAccountCosmetics();
 }
 
 async function signOutAccount() {
@@ -542,6 +578,7 @@ function renderAccountCosmetics() {
     busyOrderID: accountBusyOrderID,
     orders: accountOrders,
     ordersError: accountOrdersError,
+    entitlementsBusy: accountEntitlementsBusy,
     subscriptionState: accountSubscriptionState,
   });
   renderAccountCosmeticsOutfitter();
@@ -1051,7 +1088,14 @@ async function openAccountSubscription() {
   const offer = accountSnapshot?.subscription_offer?.enabled
     ? accountSnapshot.subscription_offer
     : accountCatalog?.subscription_offer;
-  const intent = window.ArenaAccountCosmetics.subscriptionIntent(offer, accountSnapshot?.subscription);
+  const intent = window.ArenaAccountCosmetics.subscriptionIntent(
+    offer, accountSnapshot?.subscription, accountCatalog?.purchase_handoff_url);
+  // Subscribing and managing both live over there now, and both are one
+  // navigation rather than a request that returns a redirect.
+  if (intent.ok && intent.kind === 'handoff') {
+    navigateAccount(intent.url);
+    return;
+  }
   if (!intent.ok || accountSubscriptionState.status === 'pending') return;
   const operation = beginAccountCheckoutOperation();
   accountSubscriptionState = {status:'pending',message:''};
@@ -1138,6 +1182,16 @@ async function handleAccountPanelSubmit(event) {
 
 async function startCosmeticCheckout(packID) {
   const intent = window.ArenaAccountCosmetics.checkoutIntent(accountCatalog, packID);
+  /*
+   * Buying happens in the Angel account now. Leave before anything else runs:
+   * there is no order to reserve here, no Stripe script to load, and no
+   * pending state worth showing for a navigation that is about to replace
+   * this page anyway.
+   */
+  if (intent.ok && intent.kind === 'handoff') {
+    navigateAccount(intent.url);
+    return;
+  }
   if (!intent.ok) {
     accountCheckoutState = {
       status: intent.reason === 'checkout-disabled' ? 'disabled' : 'error',
@@ -1397,6 +1451,11 @@ function handleAccountPanelClick(event) {
   if (retryKeysButton) {
     accountKeysError = '';
     refreshAccountCosmetics();
+    return;
+  }
+  const entitlementsButton = event.target.closest('[data-entitlements-refresh]');
+  if (entitlementsButton) {
+    refreshAccountEntitlements();
     return;
   }
   const checkoutButton = event.target.closest('[data-pack-checkout]');

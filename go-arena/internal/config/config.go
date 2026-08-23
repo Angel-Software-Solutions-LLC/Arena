@@ -431,12 +431,37 @@ type Config struct {
 	// address anywhere, even transiently. That is the end state the owner
 	// asked for; this flag exists because you cannot get there in one step
 	// without stranding everybody who already had an account.
-	CustomerLinkLegacyByEmail   bool `envconfig:"ARENA_CUSTOMER_LINK_LEGACY_BY_EMAIL" default:"true"`
-	CustomerBotLinkRPM          int  `envconfig:"ARENA_CUSTOMER_BOT_LINK_RPM" default:"10"`
-	CustomerBotLinkPerHour      int  `envconfig:"ARENA_CUSTOMER_BOT_LINK_PER_HOUR" default:"10"`
-	CustomerAPIKeyMutationRPM   int  `envconfig:"ARENA_CUSTOMER_API_KEY_MUTATION_RPM" default:"30"`
-	CustomerAPIKeyCreatePerHour int  `envconfig:"ARENA_CUSTOMER_API_KEY_CREATE_PER_HOUR" default:"10"`
-	CustomerAPIKeyRevokePerHour int  `envconfig:"ARENA_CUSTOMER_API_KEY_REVOKE_PER_HOUR" default:"20"`
+	CustomerLinkLegacyByEmail bool `envconfig:"ARENA_CUSTOMER_LINK_LEGACY_BY_EMAIL" default:"true"`
+
+	// AccountsShopURL is where buying happens once Accounts owns commerce.
+	//
+	// Set it and Arena stops selling: the shop still shows every cosmetic and
+	// still knows what you own, but the buy control hands off to the Accounts
+	// app instead of opening a Stripe session here. Leave it empty and the
+	// existing flow is untouched, which makes this a switch the owner throws
+	// when the catalog on the other side is ready rather than a migration that
+	// has to land at the same instant.
+	//
+	// It is the gate as well as the destination. While it is set, Arena's own
+	// checkout endpoints refuse — a UI that hands off while the API behind it
+	// still opens Stripe sessions is one bug away from taking money in the
+	// wrong place.
+	AccountsShopURL string `envconfig:"ARENA_ACCOUNTS_SHOP_URL" default:""`
+
+	// AccountsEntitlementsURL overrides where Arena reads what somebody owns.
+	//
+	// Normally nothing sets this: the endpoint is advertised as
+	// `entitlements_endpoint` in the Accounts discovery document, and Arena
+	// takes it from there, so the two sides cannot drift. The override exists
+	// for a staging Accounts whose discovery points somewhere else, and for
+	// the tests, which need an endpoint that is not the internet.
+	AccountsEntitlementsURL string `envconfig:"ARENA_ACCOUNTS_ENTITLEMENTS_URL" default:""`
+
+	CustomerBotLinkRPM          int `envconfig:"ARENA_CUSTOMER_BOT_LINK_RPM" default:"10"`
+	CustomerBotLinkPerHour      int `envconfig:"ARENA_CUSTOMER_BOT_LINK_PER_HOUR" default:"10"`
+	CustomerAPIKeyMutationRPM   int `envconfig:"ARENA_CUSTOMER_API_KEY_MUTATION_RPM" default:"30"`
+	CustomerAPIKeyCreatePerHour int `envconfig:"ARENA_CUSTOMER_API_KEY_CREATE_PER_HOUR" default:"10"`
+	CustomerAPIKeyRevokePerHour int `envconfig:"ARENA_CUSTOMER_API_KEY_REVOKE_PER_HOUR" default:"20"`
 
 	// Native customer email auth is an alternative to customer OIDC. It sends
 	// one-time passwordless links through the deployment's transactional SMTP

@@ -94,6 +94,20 @@ export function dashboardPurchasePath(packID, pathname = window.location.pathnam
   return appPath('/?dash_open=1&dash_tab=cosmetics' + suffix, pathname);
 }
 
+/**
+ * Where buying goes, when it does not go through the Dashboard.
+ *
+ * The server sends an absolute https URL or nothing at all, and this refuses
+ * anything else. Not a defence against a hostile catalog -- it comes from
+ * Arena's own API -- but a floor under a misconfigured deployment: a Buy
+ * control that does nothing beats one that navigates somewhere unintended.
+ */
+export function purchaseHandoffURL(value) {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (!raw.startsWith('https://') || raw.length <= 'https://'.length) return '';
+  return /[\s"'<>]/.test(raw) ? '' : raw;
+}
+
 export function subscriptionDashboardPath(pathname = window.location.pathname) {
   return appPath('/?dash_open=1&dash_tab=cosmetics&dash_plan=all-access', pathname);
 }
@@ -176,6 +190,7 @@ export function initCosmeticsShop(root, options = {}) {
     packPrice: root.querySelector('[data-shop-pack-price]'),
     packCount: root.querySelector('[data-shop-pack-count]'),
     purchase: root.querySelector('[data-shop-purchase]'),
+    purchaseNote: root.querySelector('[data-shop-purchase-note]'),
     previewPack: root.querySelector('[data-shop-preview-pack]'),
     previewLabel: root.querySelector('[data-shop-preview-label]'),
     previewStatus: root.querySelector('[data-shop-preview-status]'),
@@ -194,6 +209,11 @@ export function initCosmeticsShop(root, options = {}) {
   const state = {
     catalog: {categories: [], packs: []},
     checkoutEnabled: false,
+    // Set when purchasing has moved to the Angel account. Kept apart from
+    // checkoutEnabled for the same reason the server keeps the two fields
+    // apart: "Arena will take your money" and "somewhere else will" are
+    // different facts, and only one of them is true at a time.
+    purchaseHandoff: '',
     subscriptionOffer: null,
     query: '',
     category: 'all',
@@ -241,8 +261,12 @@ export function initCosmeticsShop(root, options = {}) {
     const raw = state.subscriptionOffer && typeof state.subscriptionOffer === 'object'
       ? state.subscriptionOffer
       : {};
+    // All Access moves with everything else: once the handoff is set the card
+    // is offered again, pointing at the Angel account rather than at a
+    // Stripe session Arena would refuse to open.
+    const handoff = state.purchaseHandoff;
     const offer = {
-      enabled: raw.enabled === true,
+      enabled: raw.enabled === true || Boolean(handoff),
       price_cents: Number.isFinite(Number(raw.price_cents)) ? Number(raw.price_cents) : 1999,
       currency: raw.currency || 'USD',
       interval: String(raw.interval || 'month').trim().toLowerCase() || 'month',
@@ -253,7 +277,10 @@ export function initCosmeticsShop(root, options = {}) {
       elements.subscriptionPrice.textContent = `${formatPrice(offer)} / ${offer.interval}`;
     }
     if (elements.subscriptionAction) {
-      elements.subscriptionAction.href = subscriptionDashboardPath(pathname);
+      elements.subscriptionAction.href = handoff || subscriptionDashboardPath(pathname);
+      elements.subscriptionAction.textContent = handoff
+        ? 'Get All Access in your Angel account'
+        : 'View All Access in Dashboard';
       elements.subscriptionAction.hidden = !offer.enabled;
       elements.subscriptionAction.setAttribute('aria-disabled', String(!offer.enabled));
     }
@@ -476,16 +503,33 @@ export function initCosmeticsShop(root, options = {}) {
       items.forEach((item, index) => elements.itemList.appendChild(createItemButton(item, index)));
     }
 
+    const handoff = state.purchaseHandoff;
     if (elements.purchase) {
-      const saleReady = state.checkoutEnabled && pack.is_purchasable === true;
-      elements.purchase.href = saleReady ? dashboardPurchasePath(pack.id, pathname) : appPath('/?dash_open=1&dash_tab=cosmetics', pathname);
+      const saleReady = (state.checkoutEnabled || Boolean(handoff)) && pack.is_purchasable === true;
+      /*
+       * One press from the Shop either way. Without a handoff this opens the
+       * Dashboard on a one-pack purchase card; with one it leaves for the
+       * Angel account directly, because routing through the Dashboard first
+       * would be a second press that only re-asked the same question.
+       */
+      elements.purchase.href = !saleReady
+        ? appPath('/?dash_open=1&dash_tab=cosmetics', pathname)
+        : handoff || dashboardPurchasePath(pack.id, pathname);
       elements.purchase.hidden = !saleReady;
       elements.purchase.setAttribute('aria-disabled', String(!saleReady));
       const purchaseKind = isTrailPack(pack) ? 'trail' : isBodyFormPack(pack) ? 'skin' : 'pack';
       elements.purchase.textContent = pack.is_free
         ? 'Claim in Dashboard'
-        : `Buy ${purchaseKind} — ${formatPrice(pack)}`;
+        : `Buy ${purchaseKind} — ${formatPrice(pack)}${handoff ? ' in your Angel account' : ''}`;
       elements.purchase.dataset.shopPurchasePack = pack.id || '';
+    }
+    if (elements.purchaseNote) {
+      // The note beside the button has to describe the flow the button
+      // actually starts, or it becomes the thing people believe over the
+      // address bar. The Stripe sentence is only true while Arena sells.
+      elements.purchaseNote.textContent = handoff
+        ? 'Buying happens in your Angel account. Sign in to Arena afterwards, or press Refresh purchases in your Dashboard, to bring a new pack across.'
+        : 'Checkout opens in your Dashboard once you are signed in. Returning from checkout does not mark an order paid until Arena verifies the signed payment event.';
     }
   };
 
@@ -595,6 +639,7 @@ export function initCosmeticsShop(root, options = {}) {
         packs: Array.isArray(data.packs) ? data.packs.filter(pack => pack?.is_active !== false) : [],
       };
       state.checkoutEnabled = data.checkout_enabled === true;
+      state.purchaseHandoff = purchaseHandoffURL(data.purchase_handoff_url);
       state.subscriptionOffer = data.subscription_offer && typeof data.subscription_offer === 'object'
         ? data.subscription_offer
         : null;

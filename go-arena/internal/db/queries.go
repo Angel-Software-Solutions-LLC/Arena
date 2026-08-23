@@ -292,6 +292,10 @@ func EnsureCoreSchema(ctx context.Context) error {
 	if err := EnsureCustomerSessionsSchema(ctx); err != nil {
 		return fmt.Errorf("EnsureCoreSchema customer sessions: %w", err)
 	}
+	// Depends on customer_accounts and cosmetic_items from the schemas above.
+	if err := EnsureCustomerEntitlementsSchema(ctx); err != nil {
+		return fmt.Errorf("EnsureCoreSchema customer entitlements: %w", err)
+	}
 	if err := EnsureConsentSchema(ctx); err != nil {
 		return fmt.Errorf("EnsureCoreSchema consent: %w", err)
 	}

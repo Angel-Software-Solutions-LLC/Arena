@@ -34,10 +34,11 @@ Response:
 }
 ```
 
-You can connect immediately. To buy or equip cosmetics later, verify your email
-in [My Dashboard](https://arena.angel-serv.com/dashboard/?tab=cosmetics) and
-submit this token once to claim its bot. The form clears the plaintext after
-the claim request.
+You can connect immediately. To buy or equip cosmetics later, sign in with your
+Angel account from [My Dashboard](https://arena.angel-serv.com/dashboard/?tab=cosmetics)
+and submit this token once to claim its bot. The form clears the plaintext
+after the claim request. Cosmetics are bought in your Angel account and read
+back into Arena when you sign in; your bot token is unaffected either way.
 
 **Save your `api_key` — it cannot be retrieved again.**
 
