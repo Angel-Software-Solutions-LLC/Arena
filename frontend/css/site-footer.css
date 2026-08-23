@@ -1,0 +1,284 @@
+/*
+ * The shared footer, in Arena's colours.
+ *
+ * > "I want the footers to be uniform across all the sites — accounts has the
+ * > footer design I like (just make the color of the footer match the aesthetic
+ * > of the website), same footer across all the sites, different colors, we're
+ * > trying to get the sites to feel unified."
+ *
+ * So the anatomy, the order and the behaviour are fixed by
+ * `docs/build/footer-integration.md` on the Support repo, and every colour here
+ * is Arena's own. Uniformity is structural, not chromatic — importing the
+ * accounts palette would make the sites match and Arena look wrong.
+ *
+ * Three things this file is deliberate about, each one a bug that has already
+ * happened on a sibling site:
+ *
+ * **Every token has a literal fallback.** `var(--text-muted, #91a6bd)`, never
+ * bare `var(--text-muted)`. Arena defines its palette in two places —
+ * `css/arena.css` for the desktop and shop, `m/mobile.css` for the phone — and
+ * a fourth page that loads neither would render this footer with no colour at
+ * all. The fallbacks make the stylesheet self-contained wherever it is dropped.
+ *
+ * **The popover has a width, not `max-content`.** A menu sized to its longest
+ * document title changes width whenever the corpus does, and a long title makes
+ * it wider than the viewport it is anchored inside.
+ *
+ * **Hover opens the menu in CSS.** Not in JavaScript. A script that opens on
+ * `mouseenter` fights the click handler that toggles the same panel — the
+ * pointer arrives, JS opens it, the click then closes it, and the menu appears
+ * to be broken for the one interaction everybody tries first. `:hover` and
+ * `:focus-within` open it here; the click handler exists only for the phone,
+ * where there is no hover to open with.
+ */
+
+.site-footer {
+  border-top: 1px solid var(--border-color, rgba(126, 166, 207, 0.16));
+  background: var(--bg-secondary, #0c1825);
+  padding: 18px 20px;
+  font-family: var(--font-sans, 'Space Grotesk', sans-serif);
+}
+
+.site-footer__row {
+  max-width: 1440px;
+  margin: 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 18px;
+}
+
+.site-footer__copyright {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted, #91a6bd);
+}
+
+/* The spacer, so the right-hand group sits at the right edge and the row
+   still wraps sensibly on a narrow screen. */
+.site-footer__spacer {
+  flex: 1 1 12px;
+  min-width: 12px;
+}
+
+.site-footer__status {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-soft, #b9c8d8);
+  text-decoration: underline;
+}
+
+.site-footer__status:hover,
+.site-footer__status:focus-visible {
+  color: var(--accent-blue, #47d7ff);
+}
+
+.site-footer__legal {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+/* ------------------------------------------------------------- the trigger */
+
+.site-footer__menu {
+  position: relative;
+}
+
+.site-footer__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  background: none;
+  padding: 0;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-soft, #b9c8d8);
+  cursor: pointer;
+}
+
+.site-footer__trigger:hover,
+.site-footer__trigger:focus-visible {
+  color: var(--accent-blue, #47d7ff);
+}
+
+.site-footer__caret {
+  font-size: 9px;
+  line-height: 1;
+}
+
+/* ------------------------------------------------------- the desktop panel */
+
+.site-footer__panel {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  z-index: 40;
+  /* A width, not max-content. See the header. */
+  min-width: 250px;
+  max-width: min(320px, calc(100vw - 32px));
+  border: 1px solid var(--border-strong, rgba(126, 166, 207, 0.28));
+  border-radius: 12px;
+  background: var(--bg-card-strong, rgba(8, 14, 24, 0.92));
+  backdrop-filter: blur(8px);
+  box-shadow: var(--shadow-md, 0 16px 38px rgba(0, 0, 0, 0.28));
+  padding: 6px;
+  /* Closed by default, and opened by :hover/:focus-within below — never by a
+     script racing the click handler. `visibility` rather than `display` so the
+     fade has something to animate. */
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(4px);
+  transition: opacity 140ms ease, transform 140ms ease, visibility 0s linear 140ms;
+}
+
+.site-footer__menu:hover .site-footer__panel,
+.site-footer__menu:focus-within .site-footer__panel {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+  transition: opacity 140ms ease, transform 140ms ease, visibility 0s linear 0s;
+}
+
+.site-footer__item {
+  display: block;
+  padding: 7px 12px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: var(--text-soft, #b9c8d8);
+  text-decoration: none;
+}
+
+.site-footer__item:hover,
+.site-footer__item:focus-visible {
+  background: var(--bg-card, rgba(10, 18, 30, 0.78));
+  color: var(--accent-blue, #47d7ff);
+}
+
+.site-footer__footnote {
+  border-top: 1px solid var(--border-color, rgba(126, 166, 207, 0.16));
+  margin-top: 6px;
+  padding: 9px 12px 4px;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--text-muted, #91a6bd);
+}
+
+/* The phone's dialog furniture, hidden on a pointer. */
+.site-footer__scrim,
+.site-footer__close {
+  display: none;
+}
+
+/* --------------------------------------------------------- the phone sheet */
+
+/*
+ * Below the breakpoint the panel stops anchoring and presents centred over a
+ * dimmed ground.
+ *
+ * Anchoring is the bug rather than the sizing: the panel hangs `right: 0` from
+ * a trigger near the left of the footer, so 250px measured leftwards from
+ * there ends up mostly off a 390px screen. There is no corner of a phone a
+ * panel that size can hang from and stay on it.
+ *
+ * The second clause is a phone in landscape — 700-930px wide and still a
+ * phone. Together they miss every tablet: an iPad is >= 768px wide in portrait
+ * and >= 744px tall in landscape.
+ */
+@media (max-width: 767px), (max-height: 500px) {
+  .site-footer__menu:hover .site-footer__panel {
+    /* A tap registers as a hover on iOS. Without this the sheet opens on the
+       first tap and the click handler immediately closes it again. */
+    opacity: 0;
+    visibility: hidden;
+  }
+
+  .site-footer__panel {
+    position: fixed;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    z-index: 90;
+    min-width: 0;
+    max-width: none;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    backdrop-filter: none;
+    box-shadow: none;
+    padding: 24px 16px;
+    transform: none;
+  }
+
+  .site-footer__menu[data-open='true'] .site-footer__panel,
+  .site-footer__menu[data-open='true']:hover .site-footer__panel {
+    opacity: 1;
+    visibility: visible;
+    transition: opacity 160ms ease, visibility 0s linear 0s;
+  }
+
+  .site-footer__scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(3, 8, 14, 0.72);
+  }
+
+  .site-footer__sheet {
+    position: relative;
+    width: 100%;
+    max-width: 560px;
+    max-height: 82dvh;
+    overflow-y: auto;
+    border: 1px solid var(--border-strong, rgba(126, 166, 207, 0.28));
+    border-radius: 16px;
+    background: var(--bg-secondary, #0c1825);
+    box-shadow: var(--shadow-lg, 0 24px 80px rgba(0, 0, 0, 0.38));
+    padding: 18px 18px 14px;
+  }
+
+  .site-footer__sheet-title {
+    margin: 0 0 10px;
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--text-primary, #ecf4ff);
+  }
+
+  /* A thumb, not a pointer. */
+  .site-footer__item {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 0 12px;
+    border-radius: 10px;
+    font-size: 14px;
+  }
+
+  .site-footer__close {
+    display: flex;
+    width: 100%;
+    box-sizing: border-box;
+    height: 44px;
+    align-items: center;
+    justify-content: center;
+    margin-top: 12px;
+    border: 1px solid var(--border-strong, rgba(126, 166, 207, 0.28));
+    border-radius: 10px;
+    background: transparent;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-soft, #b9c8d8);
+    cursor: pointer;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .site-footer__panel {
+    transition: none;
+  }
+}
