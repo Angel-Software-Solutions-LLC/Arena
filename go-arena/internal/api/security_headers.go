@@ -17,7 +17,12 @@ const contentSecurityPolicy = "" +
 	"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
 	"font-src 'self' https://fonts.gstatic.com; " +
 	"img-src 'self' data: blob: https://*.stripe.com https://*.link.com; " +
-	"connect-src 'self' ws: wss: https://cdn.babylonjs.com https://api.stripe.com https://checkout.stripe.com https://link.com https://*.link.com; " +
+	// accounts.angel-serv.com is the legal corpus, which the shared footer
+	// fetches at runtime so publishing a document updates every site at once.
+	// Scoped to that one host: it is a read of public documents, answered with
+	// a wildcard and no credentials, and widening this to anything else would
+	// give the page a new place it may talk to for no reason.
+	"connect-src 'self' ws: wss: https://accounts.angel-serv.com https://cdn.babylonjs.com https://api.stripe.com https://checkout.stripe.com https://link.com https://*.link.com; " +
 	"worker-src 'self' blob:; " +
 	"frame-src 'self' https://checkout.stripe.com https://js.stripe.com https://*.js.stripe.com https://hooks.stripe.com https://link.com https://*.link.com; " +
 	"frame-ancestors 'self'; " +

@@ -424,6 +424,9 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 		ar.Handle("/*", noCacheStaticHandler(fileServerArena))
 	})
 
+	// --- Canonical legal documents ---
+	registerLegalRedirects(r)
+
 	// --- Static file serving ---
 	// Serve the frontend directory at the root path with no-cache for JS/CSS.
 	frontendDir := resolveFrontendDir()
@@ -431,6 +434,45 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 	r.Handle("/*", noCacheStaticHandler(fileServer))
 
 	return r
+}
+
+// accountsLegalBase is where the one copy of each shared document lives.
+const accountsLegalBase = "https://accounts.angel-serv.com/legal"
+
+// canonicalLegalRedirects maps Arena's own legal paths to the corpus.
+//
+// Only the documents the corpus actually covers. The Acceptable Use Policy
+// names Arena by name and carries a per-product clause for it; the Terms are
+// company-wide on their face. Both are better maintained in one place than in
+// a copy here that drifts.
+//
+// The Privacy Policy is deliberately absent from this table. Arena's local one
+// discloses processing the corpus does not mention at all — developer-lobby
+// chat content, bot source and configuration, hashed bot API keys, match
+// telemetry and leaderboard standings, and that spectating needs no account.
+// Redirecting it would delete those disclosures from the web rather than move
+// them, so it stays and says what it is. See docs/build/footer-integration.md
+// §4.2 on the Support repo, which is the rule this follows.
+var canonicalLegalRedirects = map[string]string{
+	"/legal/terms.html":          accountsLegalBase + "/terms",
+	"/legal/terms":               accountsLegalBase + "/terms",
+	"/legal/acceptable-use.html": accountsLegalBase + "/acceptable-use",
+	"/legal/acceptable-use":      accountsLegalBase + "/acceptable-use",
+}
+
+// registerLegalRedirects sends Arena's copies to the canonical documents.
+//
+// 301 rather than 302: the canonical URL is permanent and the old one is not
+// coming back. A temporary redirect leaves both in search indexes competing,
+// which is the duplicate-content version of the problem the shared corpus
+// exists to solve.
+func registerLegalRedirects(r chi.Router) {
+	for path, target := range canonicalLegalRedirects {
+		destination := target
+		r.Get(path, func(w http.ResponseWriter, req *http.Request) {
+			http.Redirect(w, req, destination, http.StatusMovedPermanently)
+		})
+	}
 }
 
 func registerCustomerCosmeticCommerceRoutes(account chi.Router, handler *CosmeticCommerceHandler) {

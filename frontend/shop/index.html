@@ -11,6 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="../css/arena.css?v=20260714g">
   <link rel="stylesheet" href="../css/shop.css?v=20260714g">
+  <link rel="stylesheet" href="../css/site-footer.css?v=20260823a">
   <link rel="stylesheet" href="../css/brand-lockup.css?v=20260714a">
   <link rel="modulepreload" href="../assets/vendor/babylon-runtime.5c31912818a4.min.js">
   <script defer src="../js/cosmetic-themes.js?v=20260713f"></script>
@@ -236,13 +237,18 @@
     </div>
   </main>
 
-  <footer class="shop-footer">
+  <!-- Arena's own links stay Arena's own, beside the shared row rather than
+       inside it: the Legal menu is the shared list and nothing else belongs
+       in it. -->
+  <div class="shop-footer">
     <span>Cosmetics are presentation-only.</span>
-    <nav aria-label="Footer navigation">
+    <nav aria-label="Shop navigation">
       <a href="../">Live Arena</a>
       <a href="../?dash_open=1">Dashboard</a>
       <a href="https://github.com/Angel-Software-Solutions-LLC/Arena" target="_blank" rel="noopener">Source</a>
     </nav>
-  </footer>
+  </div>
+  <footer data-site-footer></footer>
+  <script type="module" src="../js/site-footer.js?v=20260823a"></script>
 </body>
 </html>
