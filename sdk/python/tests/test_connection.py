@@ -145,3 +145,36 @@ async def test_slow_tick_handler_applies_backpressure_to_non_coalescible_message
 
     release_first_tick.set()
     await asyncio.wait_for(game_loop, timeout=2)
+
+
+@pytest.mark.asyncio
+async def test_tick_passes_top_level_fog_radius_to_agent():
+    class FogAwareBot(ArenaBot):
+        def __init__(self):
+            super().__init__("test-key")
+            self.safe_zone = None
+
+        async def on_tick(self, state, nearby, safe_zone):
+            self.safe_zone = safe_zone
+            return self.idle()
+
+    bot = FogAwareBot()
+    socket = FakeWebSocket([
+        {
+            "type": "tick",
+            "tick": 10,
+            "fog_radius": 7,
+            "your_state": {
+                "is_alive": True,
+                "position": [1, 1],
+                "fog_radius": 99,
+            },
+            "nearby_entities": [],
+        },
+        {"type": "kick", "reason": "test complete"},
+    ])
+    bot._ws = socket
+
+    await bot._game_loop()
+
+    assert bot.safe_zone["fog_radius"] == 7
