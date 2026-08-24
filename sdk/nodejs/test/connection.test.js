@@ -291,3 +291,51 @@ test('SDK fetches terrain on connect and refreshes active features at round star
     globalThis.fetch = originalFetch;
   }
 });
+
+async function reconnectDelaysForSessionDurations(sessionDurations) {
+  const originalNow = Date.now;
+  const originalSetTimeout = globalThis.setTimeout;
+  const delays = [];
+  let now = 0;
+  let session = 0;
+
+  class TimedSessionBot extends ArenaBot {
+    async connect() {}
+
+    async _waitForDisconnect() {
+      now += sessionDurations[session];
+      session += 1;
+    }
+  }
+
+  const bot = new TimedSessionBot('test-key');
+  Date.now = () => now;
+  globalThis.setTimeout = (resolve, delay) => {
+    delays.push(delay);
+    if (delays.length === sessionDurations.length) bot._running = false;
+    resolve();
+    return 0;
+  };
+
+  try {
+    await bot.run();
+  } finally {
+    Date.now = originalNow;
+    globalThis.setTimeout = originalSetTimeout;
+  }
+  return delays;
+}
+
+test('run escalates backoff across short accepted sessions', async () => {
+  assert.deepEqual(
+    await reconnectDelaysForSessionDurations([1_000, 1_000, 1_000]),
+    [1_000, 2_000, 4_000],
+  );
+});
+
+test('run resets accumulated backoff after a stable session', async () => {
+  assert.deepEqual(
+    await reconnectDelaysForSessionDurations([1_000, 1_000, 30_000]),
+    [1_000, 2_000, 1_000],
+  );
+});
