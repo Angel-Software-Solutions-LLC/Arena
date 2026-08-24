@@ -88,41 +88,151 @@ function setupExploreBrand() {
   });
 }
 
+const MOBILE_OVERLAY_SELECTOR = '.mobile-overlay';
+const MOBILE_FOCUSABLE_SELECTOR = [
+  'a[href]',
+  'button:not([disabled])',
+  'input:not([disabled])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  'iframe',
+  '[contenteditable="true"]',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',');
+
+let mobileBackgroundInertState = null;
+
+function visibleFocusable(root) {
+  if (!root) return [];
+  return Array.from(root.querySelectorAll(MOBILE_FOCUSABLE_SELECTOR)).filter((element) => {
+    if (element.closest('[inert], [hidden], [aria-hidden="true"]')) return false;
+    const style = window.getComputedStyle(element);
+    return style.display !== 'none' && style.visibility !== 'hidden' && element.getClientRects().length > 0;
+  });
+}
+
+function applyMobileBackgroundInert() {
+  if (!mobileBackgroundInertState) mobileBackgroundInertState = new Map();
+  Array.from(document.body.children).forEach((element) => {
+    if (element.matches(MOBILE_OVERLAY_SELECTOR)) return;
+    if (!mobileBackgroundInertState.has(element)) {
+      mobileBackgroundInertState.set(element, element.inert);
+    }
+    element.inert = true;
+  });
+}
+
+function restoreMobileBackgroundInert() {
+  if (!mobileBackgroundInertState) return;
+  mobileBackgroundInertState.forEach((wasInert, element) => {
+    if (element.isConnected) element.inert = wasInert;
+  });
+  mobileBackgroundInertState = null;
+}
+
 // Wires a single FAB <-> full-screen overlay pair: click toggles the
 // overlay's "open" class (chat-panel.js watches #chat-overlay for exactly
 // this), backdrop/close-button taps and Escape dismiss it, and opening one
 // overlay closes any other so the mobile viewport never stacks two.
 function setupMobileOverlay(overlayEl, fabEl, { onOpen, onClose } = {}) {
   if (!overlayEl || !fabEl) return null;
+  const panel = overlayEl.querySelector('.mobile-overlay-panel');
+  let returnFocus = null;
 
-  const close = () => {
+  overlayEl.inert = true;
+
+  const close = ({ restoreFocus = true, releaseBackground = true } = {}) => {
     if (!overlayEl.classList.contains('open')) return;
     overlayEl.classList.remove('open');
+    overlayEl.style.removeProperty('transition-property');
+    overlayEl.style.removeProperty('visibility');
     overlayEl.setAttribute('aria-hidden', 'true');
+    overlayEl.inert = true;
     fabEl.classList.remove('active');
     fabEl.setAttribute('aria-expanded', 'false');
     onClose?.();
+
+    if (releaseBackground && !document.querySelector(`${MOBILE_OVERLAY_SELECTOR}.open`)) {
+      restoreMobileBackgroundInert();
+    }
+
+    const target = returnFocus;
+    returnFocus = null;
+    if (restoreFocus && target?.isConnected) {
+      requestAnimationFrame(() => {
+        if (!document.querySelector(`${MOBILE_OVERLAY_SELECTOR}.open`) && target.isConnected) {
+          target.focus();
+        }
+      });
+    }
   };
 
   const open = () => {
-    document.querySelectorAll('.mobile-overlay.open').forEach((other) => {
-      if (other !== overlayEl) other._mobileOverlayClose?.();
+    if (overlayEl.classList.contains('open')) return;
+    const activeElement = document.activeElement;
+    returnFocus = activeElement instanceof HTMLElement && !activeElement.closest(MOBILE_OVERLAY_SELECTOR)
+      ? activeElement
+      : fabEl;
+
+    applyMobileBackgroundInert();
+    document.querySelectorAll(`${MOBILE_OVERLAY_SELECTOR}.open`).forEach((other) => {
+      if (other !== overlayEl) {
+        other._mobileOverlayClose?.({ restoreFocus: false, releaseBackground: false });
+      }
     });
+    overlayEl.inert = false;
+    // The CSS visibility transition otherwise keeps the newly opened panel
+    // unfocusable through its first frame, even though opacity is animating.
+    overlayEl.style.transitionProperty = 'opacity';
+    overlayEl.style.visibility = 'visible';
     overlayEl.classList.add('open');
     overlayEl.setAttribute('aria-hidden', 'false');
     fabEl.classList.add('active');
     fabEl.setAttribute('aria-expanded', 'true');
     onOpen?.();
+
+    requestAnimationFrame(() => {
+      overlayEl.style.removeProperty('transition-property');
+      if (!overlayEl.classList.contains('open')) return;
+      const focusable = visibleFocusable(panel);
+      const closeButton = overlayEl.querySelector('.mobile-overlay-close');
+      const target = focusable.includes(closeButton) ? closeButton : focusable[0];
+      target?.focus();
+    });
+  };
+
+  const trapFocus = (event) => {
+    if (event.key !== 'Tab' || !overlayEl.classList.contains('open')) return;
+    const focusable = visibleFocusable(panel);
+    if (focusable.length === 0) {
+      event.preventDefault();
+      return;
+    }
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const activeElement = document.activeElement;
+    if (!panel?.contains(activeElement)) {
+      event.preventDefault();
+      first.focus();
+    } else if (event.shiftKey && activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
   };
 
   overlayEl._mobileOverlayClose = close;
   overlayEl.querySelectorAll('[data-mobile-overlay-close]').forEach((btn) => {
-    btn.addEventListener('click', close);
+    btn.addEventListener('click', () => close());
   });
   fabEl.addEventListener('click', () => {
     if (overlayEl.classList.contains('open')) close();
     else open();
   });
+  document.addEventListener('keydown', trapFocus);
 
   return { open, close };
 }
