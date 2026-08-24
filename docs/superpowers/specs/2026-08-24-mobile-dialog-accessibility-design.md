@@ -20,11 +20,21 @@ remains interactive despite each overlay declaring `aria-modal="true"`.
 - Every closed `.mobile-overlay` is inert, including at initial page load.
 - Opening an overlay closes any other mobile overlay without briefly releasing
   the modal background state.
-- The open overlay is not inert. Every direct body child outside the mobile
-  overlay set is inert for the lifetime of the modal interaction.
+- The open overlay is not inert. Every ordinary direct body child outside the
+  mobile overlay set, including one appended later, is inert for the lifetime
+  of the modal interaction.
 - Background elements restore the inert state they had before the first mobile
   overlay opened; the controller must not blindly make previously inert
   elements interactive.
+- A direct-body native `dialog` or
+  `[role="alertdialog"][aria-modal="true"]` is identified as a modal root and
+  never owned as mobile background, including before it opens or while it is
+  hidden. When the native dialog is open or the alertdialog is visible, it is
+  the higher-priority active modal. Tab is contained by that priority root,
+  and a capture-phase snapshot makes the bubble-phase mobile Escape handler
+  yield even when the priority modal dismisses itself earlier in the same
+  dispatch. After it closes, the mobile overlay resumes its own focus trap and
+  lifecycle.
 - On open, focus moves on the next animation frame to the overlay's close
   button, falling back to the first visible focusable control in its panel.
 - Tab and Shift+Tab wrap between the first and last visible enabled controls in
@@ -42,20 +52,22 @@ remains interactive despite each overlay declaring `aria-modal="true"`.
 ## Implementation shape
 
 Keep the behavior in `frontend/m/mobile.js`. Add a small visible-focusable
-query, shared background-inert state, and option-aware internal close handling
-to `setupMobileOverlay`. Do not introduce a dependency or duplicate this
+query, shared background-inert state with direct-child observation,
+higher-priority modal detection, and option-aware internal close handling to
+`setupMobileOverlay`. Do not introduce a dependency or duplicate this
 mobile-only controller into the desktop shell.
 
 Because the frontend is served directly, publish the changed module as
-`mobile.js?v=20260824a` from `frontend/m/index.html` and update the existing
+`mobile.js?v=20260824b` from `frontend/m/index.html` and update the existing
 static delivery assertion.
 
 ## Verification
 
 A focused Playwright regression must load the real `/m/` shell and prove the
 initial inert state, open focus placement, background isolation, forward and
-reverse focus wrapping, overlay switching, Escape close, state restoration,
-and focus restoration. Record its failure against the current controller
+reverse focus wrapping, late-child ownership, priority-modal interaction,
+overlay switching, Escape close, state restoration, and focus restoration.
+Record its failure against the current controller
 before editing production code. Then run the focused browser spec across the
 configured viewports, the existing cosmetics/static-delivery check, JavaScript
 syntax checks, the Go repository gate, and `git diff --check`.

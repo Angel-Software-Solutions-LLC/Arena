@@ -27,7 +27,7 @@ assert.doesNotMatch(appSource, /initCosmeticsPanel|cosmetics-panel\.js/,
   'the live Arena must not retain the replaced embedded catalog');
 
 assert.match(desktopHTML, /js\/app\.js\?v=20260810e/);
-assert.match(mobileHTML, /mobile\.js\?v=20260824a/);
+assert.match(mobileHTML, /mobile\.js\?v=20260824b/);
 assert.match(desktopHTML, /css\/embedded-checkout\.css\?v=20260713a/);
 assert.match(desktopHTML, /js\/embedded-checkout\.js\?v=20260823b/);
 assert.match(shopHTML, /cosmetics-shop\.js\?v=20260823b/);

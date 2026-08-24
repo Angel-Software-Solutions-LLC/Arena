@@ -89,6 +89,8 @@ function setupExploreBrand() {
 }
 
 const MOBILE_OVERLAY_SELECTOR = '.mobile-overlay';
+const PRIORITY_MODAL_ROOT_SELECTOR = 'dialog, [role="alertdialog"][aria-modal="true"]';
+const ACTIVE_PRIORITY_MODAL_SELECTOR = 'dialog[open], [role="alertdialog"][aria-modal="true"]';
 const MOBILE_FOCUSABLE_SELECTOR = [
   'a[href]',
   'button:not([disabled])',
@@ -101,29 +103,76 @@ const MOBILE_FOCUSABLE_SELECTOR = [
 ].join(',');
 
 let mobileBackgroundInertState = null;
+let mobileBackgroundObserver = null;
+
+function isVisible(element) {
+  if (!element || element.hidden || element.getAttribute('aria-hidden') === 'true') return false;
+  const style = window.getComputedStyle(element);
+  return style.display !== 'none' && style.visibility !== 'hidden' && element.getClientRects().length > 0;
+}
 
 function visibleFocusable(root) {
   if (!root) return [];
   return Array.from(root.querySelectorAll(MOBILE_FOCUSABLE_SELECTOR)).filter((element) => {
     if (element.closest('[inert], [hidden], [aria-hidden="true"]')) return false;
-    const style = window.getComputedStyle(element);
-    return style.display !== 'none' && style.visibility !== 'hidden' && element.getClientRects().length > 0;
+    return isVisible(element);
   });
 }
 
-function applyMobileBackgroundInert() {
-  if (!mobileBackgroundInertState) mobileBackgroundInertState = new Map();
-  Array.from(document.body.children).forEach((element) => {
-    if (element.matches(MOBILE_OVERLAY_SELECTOR)) return;
-    if (!mobileBackgroundInertState.has(element)) {
-      mobileBackgroundInertState.set(element, element.inert);
+function isPriorityModalRoot(element) {
+  return element?.matches?.(PRIORITY_MODAL_ROOT_SELECTOR);
+}
+
+function isActivePriorityModalRoot(element) {
+  return element?.matches?.(ACTIVE_PRIORITY_MODAL_SELECTOR) && isVisible(element);
+}
+
+function activePriorityModal() {
+  const activeRoot = document.activeElement?.closest?.(ACTIVE_PRIORITY_MODAL_SELECTOR);
+  if (activeRoot?.parentElement === document.body && isActivePriorityModalRoot(activeRoot)) return activeRoot;
+  const roots = Array.from(document.body.children).filter(isActivePriorityModalRoot);
+  return roots[roots.length - 1] || null;
+}
+
+function syncMobileBackgroundElement(element) {
+  if (!mobileBackgroundInertState || element.parentElement !== document.body ||
+      element.matches(MOBILE_OVERLAY_SELECTOR)) return;
+  if (isPriorityModalRoot(element)) {
+    if (mobileBackgroundInertState.has(element)) {
+      element.inert = mobileBackgroundInertState.get(element);
+      mobileBackgroundInertState.delete(element);
     }
-    element.inert = true;
-  });
+    return;
+  }
+  if (!mobileBackgroundInertState.has(element)) {
+    mobileBackgroundInertState.set(element, element.inert);
+  }
+  element.inert = true;
+}
+
+function applyMobileBackgroundInert() {
+  if (!mobileBackgroundInertState) {
+    mobileBackgroundInertState = new Map();
+    mobileBackgroundObserver = new MutationObserver((records) => {
+      const changedRoots = new Set();
+      records.forEach((record) => {
+        record.addedNodes.forEach((node) => {
+          if (node.nodeType === Node.ELEMENT_NODE && node.parentElement === document.body) {
+            changedRoots.add(node);
+          }
+        });
+      });
+      changedRoots.forEach(syncMobileBackgroundElement);
+    });
+    mobileBackgroundObserver.observe(document.body, { childList: true });
+  }
+  Array.from(document.body.children).forEach(syncMobileBackgroundElement);
 }
 
 function restoreMobileBackgroundInert() {
   if (!mobileBackgroundInertState) return;
+  mobileBackgroundObserver?.disconnect();
+  mobileBackgroundObserver = null;
   mobileBackgroundInertState.forEach((wasInert, element) => {
     if (element.isConnected) element.inert = wasInert;
   });
@@ -203,7 +252,8 @@ function setupMobileOverlay(overlayEl, fabEl, { onOpen, onClose } = {}) {
 
   const trapFocus = (event) => {
     if (event.key !== 'Tab' || !overlayEl.classList.contains('open')) return;
-    const focusable = visibleFocusable(panel);
+    const focusRoot = activePriorityModal() || panel;
+    const focusable = visibleFocusable(focusRoot);
     if (focusable.length === 0) {
       event.preventDefault();
       return;
@@ -212,7 +262,7 @@ function setupMobileOverlay(overlayEl, fabEl, { onOpen, onClose } = {}) {
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
     const activeElement = document.activeElement;
-    if (!panel?.contains(activeElement)) {
+    if (!focusRoot?.contains(activeElement)) {
       event.preventDefault();
       first.focus();
     } else if (event.shiftKey && activeElement === first) {
@@ -294,8 +344,12 @@ function setupChatAndDashboard() {
     else if (overlayId === 'shop-overlay') shopOverlay?.close();
   };
 
+  const priorityEscapeEvents = new WeakSet();
   document.addEventListener('keydown', (event) => {
-    if (event.key !== 'Escape') return;
+    if (event.key === 'Escape' && activePriorityModal()) priorityEscapeEvents.add(event);
+  }, { capture: true });
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || priorityEscapeEvents.has(event)) return;
     document.querySelectorAll('.mobile-overlay.open').forEach((overlay) => {
       overlay._mobileOverlayClose?.();
     });

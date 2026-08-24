@@ -15,6 +15,9 @@
 - Preserve the current overlay DOM, styles, lazy iframe behavior, and public `window.ArenaOpen*` / `window.ArenaCloseOverlay` hooks.
 - Preserve pre-existing inert state when restoring background elements.
 - Never leave more than one `.mobile-overlay.open`.
+- Keep ordinary direct-body additions inert during a mobile interaction, while
+  yielding focus and Escape ownership to an open native dialog or visible
+  modal alertdialog.
 - Do not change dependencies or lockfiles.
 - Do not touch the concurrent Accounts/OIDC session's files or contracts.
 - Follow strict TDD and record the focused browser failure before production edits.
@@ -84,6 +87,30 @@
   git add frontend/m/mobile.js frontend/m/index.html scripts/test-cosmetics-launch-ui.mjs tests/browser/specs/mobile-overlay-accessibility.spec.mjs
   git commit -m "fix: make mobile overlays keyboard accessible"
   ```
+
+### Review Fix 1: Maintain dynamic modal ownership
+
+**Files:**
+
+- Modify: `tests/browser/specs/mobile-overlay-accessibility.spec.mjs`
+- Modify: `frontend/m/mobile.js`
+- Modify: `frontend/m/index.html`
+- Modify: `scripts/test-cosmetics-launch-ui.mjs`
+- Modify: `docs/superpowers/specs/2026-08-24-mobile-dialog-accessibility-design.md`
+- Modify: `docs/superpowers/plans/2026-08-24-mobile-dialog-accessibility.md`
+
+- [ ] Extend the focused browser regression to append ordinary direct-body
+  controls after Chat opens and prove their prior inert states are restored.
+- [ ] Exercise the real lazily-created service-status alertdialog and a native
+  dialog as always-exempt modal roots, with open/visible state determining
+  which root actively owns focus.
+- [ ] Observe direct-body additions and relevant priority-root visibility
+  changes only while a mobile overlay owns the background.
+- [ ] Trap Tab inside the active priority modal, snapshot it in capture phase
+  so bubble-phase mobile Escape handling yields despite listener order, then
+  resume the underlying mobile focus lifecycle.
+- [ ] Publish `mobile.js?v=20260824b`, run the focused browser matrix, syntax
+  checks, static delivery check, and `git diff --check`.
 
 ### Task 2: Verify and review the completed change
 
