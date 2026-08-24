@@ -2,6 +2,7 @@ import WebSocket from 'ws';
 import { distance, directionToward, directionAway } from './helpers.js';
 
 const CONNECT_HANDSHAKE_TIMEOUT_MS = 15_000;
+const RECONNECT_BACKOFF_RESET_MS = 30_000;
 
 function serverConnectionError(message) {
   const error = new Error(message?.message || 'Arena connection rejected');
@@ -562,12 +563,16 @@ export default class ArenaBot {
     this._running = true;
     let delay = 1000;
     while (this._running) {
+      let connectedAt = null;
       try {
         await this.connect();
-        delay = 1000;
+        connectedAt = Date.now();
         await this._waitForDisconnect();
       } catch { /* connection failed */ }
       if (!this._running) break;
+      if (connectedAt !== null && Date.now() - connectedAt >= RECONNECT_BACKOFF_RESET_MS) {
+        delay = 1000;
+      }
       const maintenanceDelay = Math.max(0, this._maintenanceRetryUntil - Date.now());
       const waitFor = Math.max(delay, maintenanceDelay);
       console.log(`[ArenaBot] Reconnecting in ${Math.ceil(waitFor / 1000)}s...`);
