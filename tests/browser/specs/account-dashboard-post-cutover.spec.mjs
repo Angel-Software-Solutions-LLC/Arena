@@ -48,7 +48,7 @@ async function installDashboardRoutes(page, requested) {
   });
 }
 
-test('a verified Angel account without an email opens Dashboard account controls', async ({ page }) => {
+test('a verified Angel account without an email opens Dashboard account controls', { tag: '@phone-only' }, async ({ page }) => {
   const requested = new Set();
   await installDashboardRoutes(page, requested);
 
