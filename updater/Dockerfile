@@ -19,7 +19,7 @@ COPY --from=docker-cli /usr/local/libexec/docker/cli-plugins/docker-compose /usr
 WORKDIR /app
 # server.mjs imports ./compose.mjs at runtime -- both must be present in the
 # image, or the sidecar crash-loops on startup with ERR_MODULE_NOT_FOUND.
-COPY server.mjs compose.mjs manifest.mjs demobots.mjs ./
+COPY server.mjs compose.mjs manifest.mjs demobots.mjs download.mjs ./
 
 EXPOSE 8090
 CMD ["node", "server.mjs"]

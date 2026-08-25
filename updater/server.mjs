@@ -18,12 +18,9 @@
 import { createServer } from "node:http";
 import { timingSafeEqual, randomUUID, createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, mkdir, readdir, stat } from "node:fs/promises";
-import { createWriteStream } from "node:fs";
+import { mkdtemp, rm, readdir, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pipeline } from "node:stream/promises";
-import { Readable } from "node:stream";
 import { promisify } from "node:util";
 import {
   listReleaseFiles,
@@ -44,6 +41,7 @@ import {
   demobotsState,
   startDemobotsUpdate
 } from "./demobots.mjs";
+import { downloadTarballToFile } from "./download.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -83,6 +81,7 @@ const EXCLUDED_PATHS = ["/.git", "/.env"];
 // in named volumes), so the ownership-restore pass may chown every top-level
 // entry back to the operator with nothing to exempt.
 const OWNERSHIP_EXEMPT_NAMES = new Set();
+const GITHUB_TARBALL_TIMEOUT_MS = 120_000;
 const TAR_TIMEOUT_MS = 2 * 60 * 1000;
 const RSYNC_TIMEOUT_MS = 2 * 60 * 1000;
 const DOCKER_INSPECT_TIMEOUT_MS = 30 * 1000;
@@ -734,19 +733,12 @@ async function downloadTarball(commitSha, githubToken, destinationPath) {
   if (githubToken !== "") {
     headers.authorization = `token ${githubToken}`;
   }
-  const response = await fetch(url, { headers, redirect: "follow" });
-
-  if (!response.ok || response.body === null) {
-    // Truncated and never includes the token (which only ever goes out in the
-    // request's own Authorization header, never echoed back by GitHub) -- but
-    // this text is otherwise unsanitized and does eventually reach the admin
-    // browser via versionAdmin.ts, so keep it short on principle.
-    const text = await response.text().catch(() => "");
-    throw new Error(`GitHub tarball download failed: HTTP ${response.status} ${text.slice(0, 200)}`);
-  }
-
-  await mkdir(tmpdir(), { recursive: true });
-  await pipeline(Readable.fromWeb(response.body), createWriteStream(destinationPath));
+  await downloadTarballToFile({
+    url,
+    headers,
+    destinationPath,
+    timeoutMs: GITHUB_TARBALL_TIMEOUT_MS
+  });
 }
 
 /**
