@@ -34,9 +34,21 @@ export default defineConfig({
     },
   },
   projects: [
-    { name: 'phone-375', use: { viewport: { width: 375, height: 812 } } },
-    { name: 'tablet-768', use: { viewport: { width: 768, height: 900 } } },
-    { name: 'desktop-1440', use: { viewport: { width: 1440, height: 900 } } },
+    {
+      name: 'phone-375',
+      grepInvert: /@desktop-only/,
+      use: { viewport: { width: 375, height: 812 } },
+    },
+    {
+      name: 'tablet-768',
+      grepInvert: /@(phone|desktop)-only/,
+      use: { viewport: { width: 768, height: 900 } },
+    },
+    {
+      name: 'desktop-1440',
+      grepInvert: /@phone-only/,
+      use: { viewport: { width: 1440, height: 900 } },
+    },
   ],
   webServer: {
     command: 'node fixture-server.mjs',

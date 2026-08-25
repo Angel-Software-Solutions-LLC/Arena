@@ -137,7 +137,7 @@ test.describe('the shared footer', () => {
    * decision somebody made rather than something that quietly comes back.
    */
   for (const path of ['/', '/m/']) {
-    test(`is deliberately absent from the app shell at ${path}`, async ({ page }) => {
+    test(`is deliberately absent from the app shell at ${path}`, { tag: '@phone-only' }, async ({ page }) => {
       await stubCorpus(page);
       await page.goto(path);
       await expect(page.locator('.site-footer__row')).toHaveCount(0);
