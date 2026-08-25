@@ -82,10 +82,10 @@ const liveState = (tick, keyframe) => ({
 // renderer. It has its own entry point and cache tags, so a bundle or import
 // regression can land on one and not the other.
 for (const variant of [
-  { name: 'desktop', path: '/?arena-test=1' },
-  { name: 'mobile', path: '/m/?arena-test=1' },
+  { name: 'desktop', path: '/?arena-test=1', tag: '@desktop-only' },
+  { name: 'mobile', path: '/m/?arena-test=1', tag: '@phone-only' },
 ]) {
-test(`the world still paints after a non-integer hourglass rebuild (${variant.name})`, async ({ page }, testInfo) => {
+test(`the world still paints after a non-integer hourglass rebuild (${variant.name})`, { tag: variant.tag }, async ({ page }, testInfo) => {
   test.setTimeout(180_000);
   let spectatorSocket = null;
 
