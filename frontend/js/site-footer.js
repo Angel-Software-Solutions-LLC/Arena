@@ -32,8 +32,9 @@
  * @module site-footer
  */
 
+import { ACCOUNTS_ORIGIN } from './accounts.js?v=20260825a';
+
 /** Where the corpus lives, and where a reader is sent to read one. */
-const ACCOUNTS_ORIGIN = 'https://accounts.angel-serv.com';
 const LEGAL_INDEX_URL = `${ACCOUNTS_ORIGIN}/api/legal/documents`;
 const STATUS_URL = `${ACCOUNTS_ORIGIN}/status`;
 

@@ -110,6 +110,11 @@ function removeKey(key) {
 }
 function renderSavedKeys() {
   const keys = getSavedKeys();
+  // The API key panel is folded away by default so it stops being a question
+  // asked of everybody signing in. Somebody who already has a key in this tab
+  // has answered it: open it for them rather than making them find it.
+  const details = document.getElementById('botKeyDetails');
+  if (details && keys.length) details.open = true;
   document.getElementById('savedKeysList').innerHTML = keys.length ? '<div style="font-size:11px;color:var(--text2);margin-bottom:6px">Keys in this tab:</div>' +
     keys.map(k => `<div class="saved-key" onclick="loginWithKey('${esc(k.key)}')"><span class="name">${esc(k.label||k.name||'Bot')}</span><span class="prefix">${esc(k.key.slice(0,12))}...</span><button class="sm danger" onclick="event.stopPropagation();removeKey('${esc(k.key)}')" style="font-size:9px;padding:1px 5px">x</button></div>`).join('') : '';
 }
@@ -233,23 +238,6 @@ function accountReturnPath() {
   return location.pathname + location.search;
 }
 
-function safeCustomerEmailRedirectPath(raw) {
-  const fallback = accountReturnPath();
-  if (typeof raw !== 'string') return fallback;
-  const candidate = raw.trim();
-  if (!candidate.startsWith('/') || candidate.startsWith('//') || candidate.includes('\\')) return fallback;
-  try {
-    const parsed = new URL(candidate, location.origin);
-    const path = parsed.pathname;
-    const dashboardPath = path === '/dashboard' || path.startsWith('/dashboard/') ||
-      path === '/arena/dashboard' || path.startsWith('/arena/dashboard/');
-    if (parsed.origin !== location.origin || parsed.hash || !dashboardPath) return fallback;
-    return path + parsed.search;
-  } catch (error) {
-    return fallback;
-  }
-}
-
 function navigateAccount(url) {
   if (window.top !== window.self) window.top.location.assign(url);
   else location.assign(url);
@@ -282,11 +270,11 @@ function notifyOtherTabsSignedIn() {
 }
 
 // The counterpart to notifyOtherTabsSignedIn(): keeps THIS dashboard in sync
-// when sign-in (or sign-out) happens somewhere else -- another tab finishing
-// a magic-link email, or this same drawer's own confirm step above. Skips
-// its own first callback (startSessionSync always fires once immediately
-// with the current session, which initializeAccountMode() already just
-// fetched) and only reacts to an actual account change after that.
+// when sign-in (or sign-out) happens somewhere else -- the Accounts popup
+// completing on the top-level page, or another tab of this site. Skips its
+// own first callback (startSessionSync always fires once immediately with the
+// current session, which initializeAccountMode() already just fetched) and
+// only reacts to an actual account change after that.
 function watchAccountSessionAcrossTabs() {
   import('../js/account-session.js?v=20260714a').then(({startSessionSync}) => {
     let first = true;
@@ -300,7 +288,7 @@ function watchAccountSessionAcrossTabs() {
 async function startAccountLogin() {
   const button = document.getElementById('accountSignInButton');
   if (!accountSession.oidc_login_enabled) {
-    document.getElementById('loginError').textContent = 'Angel Accounts sign-in is not configured on this Arena.';
+    document.getElementById('loginError').textContent = 'Angel Accounts sign-in is not configured on this Arena yet.';
     return;
   }
   // Consent first: the popup is a new window, and asking for agreement inside
@@ -1592,6 +1580,28 @@ async function initializeAccountMode() {
       csrf_token: payload.csrf_token || payload.account?.csrf_token || '',
     };
     updateAccountLoginUI();
+    /*
+     * Signed out is a state this has to draw, not a failure.
+     *
+     * It used to fall straight through to #app on any readable session
+     * document, authenticated or not -- which left a signed-out visitor
+     * looking at a panel with every account tab hidden and no way to sign in,
+     * after a flash of the sign-in screen on its way past. The sign-in screen
+     * IS the dashboard until there is a session.
+     *
+     * Unless a bot key is already connected in this tab. That is its own way
+     * in, it is not an account, and a session re-read (another tab signing
+     * out, the slow poll) must not throw it away.
+     */
+    if (accountSession.authenticated !== true) {
+      if (!apiKey) {
+        document.getElementById('login').style.display='flex';
+        document.getElementById('app').style.display='none';
+        renderSavedKeys();
+      }
+      updatePrivateAuthUI();
+      return false;
+    }
     document.getElementById('login').style.display='none';
     document.getElementById('app').style.display='block';
     apiKey = '';

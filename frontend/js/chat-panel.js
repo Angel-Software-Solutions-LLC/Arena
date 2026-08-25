@@ -14,8 +14,8 @@
  */
 
 import { apiPath, wsURL } from './paths.js?v=20260710a';
-import { startSessionSync } from './account-session.js?v=20260714a';
 import { openProfilePopup } from './profile-popup.js?v=20260714a';
+import { startSignIn, watchSignInState } from './sign-in.js?v=20260825a';
 
 const OVERLAY_ID = 'chat-overlay';
 // Discord-style grouping: consecutive messages from the same sender within
@@ -182,17 +182,6 @@ async function fetchChatConfig() {
   }
 }
 
-/** Sends a click to whichever page's Dashboard entry point actually exists. */
-function openDashboard() {
-  const desktopButton = document.querySelector('.onboarding-rail[data-overlay-open="dashboard-overlay"]');
-  if (desktopButton) {
-    desktopButton.click();
-    return;
-  }
-  const mobileButton = document.getElementById('fab-dashboard');
-  if (mobileButton) mobileButton.click();
-}
-
 /**
  * Resolves the DOM chat-panel.js drives, either by reusing pre-built markup
  * (mobile's full-screen sheet) or, if none exists, building a floating
@@ -300,7 +289,8 @@ function buildWatermark(listEl) {
   watermark.innerHTML = '<button type="button" class="chat-watermark-btn">Sign in to chat</button>';
   shell.appendChild(watermark);
 
-  watermark.querySelector('.chat-watermark-btn').addEventListener('click', openDashboard);
+  // The press is wired up by initChatPanel, which owns the status line this
+  // needs to report into.
   return watermark;
 }
 
@@ -543,11 +533,31 @@ function initChatPanel(cfg) {
   });
   observer.observe(overlay, { attributes: true, attributeFilter: ['class'] });
 
+  /*
+   * "Sign in to chat" signs you in to chat.
+   *
+   * It used to press the Dashboard control on whichever page this panel was
+   * mounted to, which opened a drawer, which asked which way you wanted to
+   * sign in -- three screens to reach the one thing the button named. Now it
+   * opens the Accounts window itself, and the panel behind it stays exactly
+   * where it was, mid-conversation.
+   *
+   * The one press that cannot open a window is a press on an Arena with no
+   * customer OIDC configured. That says so on the status line, which is where
+   * this panel's reader is already looking, rather than opening nothing.
+   */
+  watermark.querySelector('.chat-watermark-btn').addEventListener('click', async () => {
+    const result = await startSignIn();
+    if (result.status === 'unconfigured') setStatus(result.message, 'warn');
+  });
+
   // Both the dashboard (in its own iframe) and this panel post to the same
   // customer session cookie, so a sign-in on either side shows up on the
-  // other via startSessionSync -- reconnecting an already-open socket picks
-  // up the new identity, since the server resolves it once at WS upgrade.
-  startSessionSync(() => {
+  // other via the shared session watch -- reconnecting an already-open socket
+  // picks up the new identity, since the server resolves it once at WS
+  // upgrade. Sharing sign-in.js's watch rather than starting a second one
+  // also means the sign-in press above already knows the answer it needs.
+  watchSignInState(() => {
     if (started) {
       socket.disconnect();
       setStatus('Connecting...', 'warn');

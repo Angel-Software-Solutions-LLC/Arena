@@ -8,6 +8,7 @@
 <link rel="stylesheet" href="./cosmetics-preview.css?v=20260713a">
 <script src="../js/embedded-checkout.js?v=20260823b"></script>
 <script type="module" src="../js/consent-gate.js?v=20260714a"></script>
+<script type="module" src="../js/accounts.js?v=20260825a"></script>
 <link rel="stylesheet" href="./dashboard.css?v=20260823b">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -43,22 +44,31 @@ if (window.self !== window.top) {
   <div class="error" id="loginError"></div>
   <div class="login-shell">
     <section class="login-choice primary">
-      <div class="choice-kicker">Recommended</div>
       <h2>Sign in</h2>
-      <p>One click. Arena opens an Angel Accounts window, you sign in there, and it closes itself — Arena never sees your password, and no longer keeps your email address.</p>
+      <p>One press. Arena opens an Angel Accounts window, you sign in there, and it closes itself — Arena never sees your password, and no longer keeps your email address.</p>
       <div class="account-email-setup" id="accountEmailSetup" role="status">Checking sign-in...</div>
       <button class="account-sign-in" id="accountSignInButton" type="button" hidden disabled>Sign in with Angel Accounts</button>
+      <p class="login-register">No Angel account yet? <a data-accounts-register>Create one</a> — the same account works across every Angel product.</p>
       <div class="login-privacy">One cosmetic license can be used by one bot at a time. Linking a key never makes that key the owner.</div>
     </section>
-    <section class="login-choice secondary">
-      <div class="choice-kicker">Bot performance</div>
-      <h2>Open with an API key</h2>
-      <p>Keep using a bot key for stats, comparisons, and live performance tools. This does not control purchase ownership. The key is kept only for this browser tab.</p>
-      <input type="password" id="apiKeyInput" placeholder="arena_..." autofocus>
-      <input id="keyLabel" placeholder="Local label (optional)">
-      <button onclick="doLogin()">Connect bot</button>
-      <div class="saved-keys" id="savedKeysList"></div>
-    </section>
+    <!--
+      Bot operators still need this, and it is still here — but it is no longer
+      a fork in the road. It used to sit beside the account panel as an equal
+      choice, which made every person signing in answer a question that has
+      only ever had one answer for them. Folded away, it costs a press to the
+      few who want it and none to everybody else, and it opens itself for
+      anybody who already has a key in this tab.
+    -->
+    <details class="login-secondary" id="botKeyDetails">
+      <summary>Bot operator? Open with an API key instead</summary>
+      <div class="login-secondary-body">
+        <p>Keep using a bot key for stats, comparisons, and live performance tools. This does not control purchase ownership, and the key is kept only for this browser tab.</p>
+        <input type="password" id="apiKeyInput" placeholder="arena_...">
+        <input id="keyLabel" placeholder="Local label (optional)">
+        <button type="button" onclick="doLogin()">Connect bot</button>
+        <div class="saved-keys" id="savedKeysList"></div>
+      </div>
+    </details>
   </div>
   <div style="margin-top:16px;font-size:11px;color:var(--text2)">
     <a href="../">Back to Arena</a> &nbsp;|&nbsp; Don't have a key? <a href="../#keygen">Generate one</a>

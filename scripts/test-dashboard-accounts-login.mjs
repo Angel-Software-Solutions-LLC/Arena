@@ -47,6 +47,15 @@ assert.doesNotMatch(dashboard, /account\/email\/start|account\/email\/verify/, '
 
 assert.match(dashboard, /id="accountSignInButton"/, 'there is a sign-in control');
 assert.match(dashboard, /Sign in with Angel Accounts/, 'and it names where it takes you');
+// The legal gate is not a step in the flow -- it is shown once, ever, before
+// anything opens. Asking for agreement inside a window somebody did not expect
+// is how a consent gate gets clicked through.
+const handler = dashboard.slice(dashboard.indexOf('async function startAccountLogin'));
+assert.ok(
+  handler.indexOf('ensureConsent') < handler.indexOf('signInWithAccounts'),
+  'consent is settled before the window opens, not inside it',
+);
+assert.match(handler, /if \(!accepted\) return;/, 'and declining opens nothing');
 assert.match(
   dashboard,
   /signInWithAccounts\(\{returnTo: accountReturnPath\(\)\}\)/,

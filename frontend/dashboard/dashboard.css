@@ -434,7 +434,12 @@ tr:hover td{background:rgba(71,215,255,.035)}
   .tabs-toolbar{justify-content:flex-start}
   .tabs-toolbar select{min-width:0;width:100%}
 }
-.login-shell{width:min(820px,100%);display:grid;grid-template-columns:minmax(0,1.1fr) minmax(280px,.9fr);gap:16px;align-items:stretch}
+/*
+  One column, because there is one way in. The shell used to be a two-up grid
+  of equal-weight choices; the account panel now owns the width and the API
+  key path sits under it, folded, as the exception it always was.
+*/
+.login-shell{width:min(560px,100%);display:flex;flex-direction:column;gap:14px}
 .login-choice{
   display:flex;
   flex-direction:column;
@@ -448,27 +453,40 @@ tr:hover td{background:rgba(71,215,255,.035)}
 .login-choice.primary{background:radial-gradient(circle at top right,rgba(71,215,255,.14),transparent 34%),linear-gradient(180deg,rgba(14,25,38,.96),rgba(9,16,25,.88))}
 .login-choice h2{font-size:17px;letter-spacing:-.03em}
 .login-choice p{max-width:none!important;text-align:left!important}
-.login-choice .choice-kicker,.cosmetic-kicker{
+.cosmetic-kicker{
   color:#47d7ff;
   font:600 10px/1.2 'IBM Plex Mono',monospace;
   letter-spacing:.13em;
   text-transform:uppercase;
 }
 .login-choice .account-sign-in{width:100%}
-.account-email-form{display:grid;gap:10px;margin-top:auto}
-.account-email-form[hidden],.account-auth-divider[hidden],.account-email-setup[hidden]{display:none}
-.account-email-form label{display:grid;gap:5px;color:#a9b8c9;font:600 9px/1.3 'IBM Plex Mono',monospace;letter-spacing:.08em;text-transform:uppercase}
-.account-email-form input{width:100%!important;margin:0!important;min-height:44px;font-size:16px!important}
-.account-email-form button{width:100%;min-height:44px}
+.account-email-setup[hidden]{display:none}
 .account-email-status,.account-email-setup{min-height:16px;color:#91a6bd;font:500 10px/1.5 'IBM Plex Mono',monospace}
 .account-email-status.is-success{color:#58e58f}.account-email-status.is-error{color:#ff9a92}
-.account-email-confirm{display:grid;gap:10px;padding:14px;border:1px solid rgba(71,215,255,.22);border-radius:16px;background:rgba(71,215,255,.06)}
-.account-email-confirm[hidden]{display:none}.account-email-confirm h3{margin:0;color:#ecf4ff;font-size:15px}.account-email-confirm p{margin:0!important}
-.account-email-confirm button{width:100%;min-height:44px}
-.account-auth-divider{display:flex;align-items:center;gap:8px;color:#61768d;font:600 9px/1 'IBM Plex Mono',monospace;text-transform:uppercase}
-.account-auth-divider::before,.account-auth-divider::after{content:'';height:1px;flex:1;background:rgba(126,166,207,.14)}
-.login-choice.secondary input{width:100%!important;margin:0!important}
-.login-choice.secondary button{align-self:flex-start}
+.login-register{font:400 11px/1.6 'IBM Plex Mono',monospace;color:#91a6bd;max-width:none!important;text-align:left!important}
+.login-register a{color:#47d7ff;text-decoration:none;border-bottom:1px solid rgba(71,215,255,.35)}
+.login-register a:hover{border-bottom-color:#47d7ff}
+.login-secondary{
+  border:1px solid rgba(126,166,207,.14);
+  border-radius:20px;
+  background:rgba(9,16,25,.6);
+}
+.login-secondary>summary{
+  cursor:pointer;
+  padding:14px 20px;
+  color:#91a6bd;
+  font:600 11px/1.3 'IBM Plex Mono',monospace;
+  letter-spacing:.04em;
+  list-style:none;
+}
+.login-secondary>summary::-webkit-details-marker{display:none}
+.login-secondary>summary::before{content:'+ ';color:#47d7ff}
+.login-secondary[open]>summary::before{content:'\2212 '}
+.login-secondary>summary:hover{color:#ecf4ff}
+.login-secondary-body{display:flex;flex-direction:column;gap:10px;padding:0 20px 20px}
+.login-secondary-body p{max-width:none!important;text-align:left!important}
+.login-secondary-body input{width:100%!important;margin:0!important}
+.login-secondary-body button{align-self:flex-start}
 .login-privacy{font:400 10px/1.55 'IBM Plex Mono',monospace;color:#91a6bd}
 .account-toolbar-identity{display:none;align-items:center;gap:8px;color:#91a6bd;font:500 10px/1 'IBM Plex Mono',monospace}
 .account-toolbar-identity.visible{display:inline-flex}
@@ -639,6 +657,6 @@ button:disabled,input:disabled,select:disabled{cursor:not-allowed;opacity:.5;tra
 .profile-bot-card{padding:10px 12px;border:1px solid rgba(126,166,207,.12);border-radius:14px;background:rgba(255,255,255,.025)}
 .profile-bot-card strong{display:block;margin-bottom:6px;color:#ecf4ff;font-size:12px}
 :is(.tbtn,.cosmetic-shop-buy,.all-access-plan button,.account-key-manager button,.account-key-manager input,.account-profile-form button,.account-profile-form input,.account-profile-form textarea,.profile-color-swatch):focus-visible{outline:2px solid #7ee4ff;outline-offset:3px}
-@media (max-width:760px){.login-shell{grid-template-columns:1fr}.all-access-plan{grid-template-columns:minmax(0,1fr)}.all-access-offer{justify-items:start;min-width:0;text-align:left}.account-key-form,.account-generated-key-field,.account-key-row{grid-template-columns:minmax(0,1fr)}.account-key-meta{justify-content:flex-start}.account-key-row button{justify-self:start}.cosmetic-account-summary{align-items:flex-start;flex-direction:column}.linked-bot-list li{align-items:flex-start;flex-wrap:wrap}.linked-bot-actions{flex-wrap:wrap}.cosmetic-license-grid{grid-template-columns:minmax(0,1fr)}.cosmetic-license-actions select{flex-basis:100%;min-width:0;width:100%}.cosmetic-shop-pack{grid-template-columns:68px minmax(0,1fr)}.cosmetic-shop-swatch{width:68px}.cosmetic-shop-offer{grid-column:1/-1;grid-template-columns:1fr auto;align-items:center;justify-items:start;width:100%}.cosmetic-shop-offer .cosmetic-shop-buy{justify-self:end}}
+@media (max-width:760px){.all-access-plan{grid-template-columns:minmax(0,1fr)}.all-access-offer{justify-items:start;min-width:0;text-align:left}.account-key-form,.account-generated-key-field,.account-key-row{grid-template-columns:minmax(0,1fr)}.account-key-meta{justify-content:flex-start}.account-key-row button{justify-self:start}.cosmetic-account-summary{align-items:flex-start;flex-direction:column}.linked-bot-list li{align-items:flex-start;flex-wrap:wrap}.linked-bot-actions{flex-wrap:wrap}.cosmetic-license-grid{grid-template-columns:minmax(0,1fr)}.cosmetic-license-actions select{flex-basis:100%;min-width:0;width:100%}.cosmetic-shop-pack{grid-template-columns:68px minmax(0,1fr)}.cosmetic-shop-swatch{width:68px}.cosmetic-shop-offer{grid-column:1/-1;grid-template-columns:1fr auto;align-items:center;justify-items:start;width:100%}.cosmetic-shop-offer .cosmetic-shop-buy{justify-self:end}}
 @media (pointer:coarse){.cosmetic-shop button,.all-access-plan button,.account-key-manager button,.tbtn{min-height:44px}.account-key-manager input{font-size:16px}.account-profile-form button{min-height:44px}.account-profile-form input[type=text],.account-profile-form textarea{font-size:16px}}
 @media (prefers-reduced-motion:reduce){.cosmetic-shop *,.all-access-plan *,.account-key-manager *{scroll-behavior:auto!important;transition-duration:.01ms!important}}

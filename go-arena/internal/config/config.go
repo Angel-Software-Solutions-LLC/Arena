@@ -463,17 +463,6 @@ type Config struct {
 	CustomerAPIKeyCreatePerHour int `envconfig:"ARENA_CUSTOMER_API_KEY_CREATE_PER_HOUR" default:"10"`
 	CustomerAPIKeyRevokePerHour int `envconfig:"ARENA_CUSTOMER_API_KEY_REVOKE_PER_HOUR" default:"20"`
 
-	// Native customer email auth is an alternative to customer OIDC. It sends
-	// one-time passwordless links through the deployment's transactional SMTP
-	// service and reuses the same customer session/CSRF boundary as OIDC.
-	SMTPHost          string `envconfig:"ARENA_SMTP_HOST" default:""`
-	SMTPPort          int    `envconfig:"ARENA_SMTP_PORT" default:"465"`
-	SMTPTLSMode       string `envconfig:"ARENA_SMTP_TLS_MODE" default:"implicit"`
-	SMTPTLSServerName string `envconfig:"ARENA_SMTP_TLS_SERVER_NAME" default:""`
-	SMTPUsername      string `envconfig:"ARENA_SMTP_USERNAME" default:""`
-	SMTPPassword      string `envconfig:"ARENA_SMTP_PASSWORD" default:""`
-	SMTPFrom          string `envconfig:"ARENA_SMTP_FROM" default:""`
-
 	// Cosmetics checkout is disabled by default. Enabling it requires the
 	// verified customer auth provider, durable database state, and a complete
 	// Stripe configuration; ValidateCosmeticsCheckoutConfig enforces that

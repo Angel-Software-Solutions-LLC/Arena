@@ -11,9 +11,10 @@
  *    origin's localStorage -- including a parent page and its same-origin
  *    iframe -- but never back to the writer itself, so this cannot loop.
  *  - startSessionSync() also polls on a slow interval as a fallback for
- *    session changes this module did not itself trigger (e.g. a magic-link
- *    email opened in a different tab, or an OIDC redirect completing inside
- *    the dashboard iframe without going through notifySessionChanged()).
+ *    session changes this module did not itself trigger (e.g. a sign-in
+ *    completed in a different tab, a session expiring, or an OIDC redirect
+ *    completing inside the dashboard iframe without going through
+ *    notifySessionChanged()).
  * @module account-session
  */
 
