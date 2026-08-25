@@ -67,8 +67,9 @@ For local experiments, `ARENA_DB_OPTIONAL=true` can let the server run in a degr
   strings are invalid. The composite keeps a bcrypt prefix for old readers and
   appends a versioned digest for fast current authentication. Legacy bcrypt
   rows remain valid and migrate to the composite after successful use.
-- Public generation does not require an account. A later verified-email
-  Dashboard session can claim the existing bot by submitting its token once to
+- Public generation does not require an account. A later signed-in Dashboard
+  session -- established through Angel Accounts, the only customer sign-in
+  Arena has -- can claim the existing bot by submitting its token once to
   `POST /api/v1/account/bots`; the form clears that proof after the request.
 - The Dashboard may also create account-owned keys directly. Durable account
   links and cosmetics survive key rotation or revocation.
@@ -88,9 +89,11 @@ Bots interact with the arena through a small loop:
 5. Receive `tick` messages.
 6. Send an `action` for the current tick.
 
-Account registration is a separate, optional commerce path: after verifying an
-email, the owner proves the existing token once to claim that bot before
-purchasing, assigning, or equipping cosmetics.
+Account registration is a separate, optional commerce path: after signing in
+with Angel Accounts, the owner proves the existing token once to claim that bot
+before purchasing, assigning, or equipping cosmetics. Signing in is one press
+of any sign-in control and opens the Accounts flow directly; Arena holds no
+customer password and sends no sign-in mail.
 
 The complete public reference is in [BOT-GUIDE.md](../BOT-GUIDE.md) and the machine-readable endpoint `GET /api/v1/bot-setup`.
 

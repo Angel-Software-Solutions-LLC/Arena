@@ -6,6 +6,7 @@ import {
   MOBILE_SAFE_VIEWPORT_REGIONS,
   observeArenaSafeViewport,
 } from '../js/safe-viewport.js?v=20260718b';
+import { isSignedOut, signInAvailability, startSignIn, watchSignInState } from '../js/sign-in.js?v=20260825a';
 
 /**
  * Mobile spectator shell — full-viewport 3D stage, floating top bar,
@@ -92,7 +93,7 @@ function setupExploreBrand() {
 // overlay's "open" class (chat-panel.js watches #chat-overlay for exactly
 // this), backdrop/close-button taps and Escape dismiss it, and opening one
 // overlay closes any other so the mobile viewport never stacks two.
-function setupMobileOverlay(overlayEl, fabEl, { onOpen, onClose } = {}) {
+function setupMobileOverlay(overlayEl, fabEl, { onOpen, onClose, interceptPress } = {}) {
   if (!overlayEl || !fabEl) return null;
 
   const close = () => {
@@ -120,8 +121,15 @@ function setupMobileOverlay(overlayEl, fabEl, { onOpen, onClose } = {}) {
     btn.addEventListener('click', close);
   });
   fabEl.addEventListener('click', () => {
-    if (overlayEl.classList.contains('open')) close();
-    else open();
+    if (overlayEl.classList.contains('open')) {
+      close();
+      return;
+    }
+    // A press may mean something else before it means "open this" -- see the
+    // Dashboard FAB below, where a signed-out press opens the Accounts window
+    // first. The intercept opens the overlay itself when it is done.
+    if (interceptPress?.(open)) return;
+    open();
   });
 
   return { open, close };
@@ -132,10 +140,11 @@ function setupMobileOverlay(overlayEl, fabEl, { onOpen, onClose } = {}) {
 // overlays, which are otherwise identical lazy-iframe drawers. Returns the
 // {open, close} handle so callers can drive it from elsewhere (see the
 // window.ArenaOpen*/ArenaCloseOverlay hooks below).
-function setupLazyFrameOverlay(overlayId, fabId) {
+function setupLazyFrameOverlay(overlayId, fabId, { interceptPress } = {}) {
   const overlay = document.getElementById(overlayId);
   const frame = overlay?.querySelector('iframe[data-src]');
   return setupMobileOverlay(overlay, document.getElementById(fabId), {
+    interceptPress,
     onOpen: () => {
       if (frame && !frame.getAttribute('src')) {
         frame.setAttribute('src', appPath(frame.dataset.src));
@@ -144,11 +153,32 @@ function setupLazyFrameOverlay(overlayId, fabId) {
   });
 }
 
+/*
+ * The mobile half of app.js's openDashboardFromPress, and for the same
+ * reason: the Dashboard drawer is how somebody signs in here too, and it used
+ * to open on a screen asking which of two ways they wanted. A signed-out
+ * press starts the Accounts window itself; the drawer opens after it, whatever
+ * the window did, so nothing about the press can dead-end.
+ *
+ * Returns false -- "not handled, open normally" -- whenever the session is
+ * still unknown or sign-in is not configured on this Arena, because a window
+ * opened after a fetch is a window the browser blocks.
+ */
+function interceptDashboardPressForSignIn(open) {
+  if (!isSignedOut() || signInAvailability() !== 'available') return false;
+  startSignIn().finally(open);
+  return true;
+}
+
 // Chat FAB opens #chat-overlay, whose markup/ids match ../js/chat-panel.js
 // exactly (that module is unmodified and self-wires on DOMContentLoaded).
 function setupChatAndDashboard() {
+  // Read the session now, so a later press already knows what it means.
+  watchSignInState();
   setupMobileOverlay(document.getElementById('chat-overlay'), document.getElementById('fab-chat'));
-  const dashboardOverlay = setupLazyFrameOverlay('dashboard-overlay', 'fab-dashboard');
+  const dashboardOverlay = setupLazyFrameOverlay('dashboard-overlay', 'fab-dashboard', {
+    interceptPress: interceptDashboardPressForSignIn,
+  });
   const shopOverlay = setupLazyFrameOverlay('shop-overlay', 'fab-shop');
 
   // Mirrors app.js's openDashboardOverlay/window.ArenaOpen*/ArenaCloseOverlay

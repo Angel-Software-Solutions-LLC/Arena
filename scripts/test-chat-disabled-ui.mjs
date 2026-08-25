@@ -37,8 +37,11 @@ const css = readFileSync(new URL('../frontend/css/chat.css', import.meta.url), '
 assert.match(css, /\.chat-bubble\.is-disabled::after[\s\S]*\.fab-chat\.is-disabled::after/, 'disabled chat launchers need the visual strike');
 source = source
   .replace("import { apiPath, wsURL } from './paths.js?v=20260710a';", "const apiPath = (path) => path; const wsURL = (path) => path;")
-  .replace("import { startSessionSync } from './account-session.js?v=20260714a';", 'const startSessionSync = () => {};')
-  .replace("import { openProfilePopup } from './profile-popup.js?v=20260714a';", 'const openProfilePopup = () => {};');
+  .replace("import { openProfilePopup } from './profile-popup.js?v=20260714a';", 'const openProfilePopup = () => {};')
+  .replace(
+    "import { startSignIn, watchSignInState } from './sign-in.js?v=20260825a';",
+    'const startSignIn = async () => ({status: \'closed\'}); const watchSignInState = () => {};',
+  );
 
 const { setChatAvailability } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 assert.equal(typeof setChatAvailability, 'function', 'chat-panel must expose its availability transition for regression coverage');

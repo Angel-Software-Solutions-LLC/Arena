@@ -128,85 +128,66 @@ webhook outbox) is the long-term answer and is not built here.
 
 ## Customer registration and authentication
 
-Arena supports two independent ways to establish the same verified customer
-session: native passwordless email links or a dedicated customer OIDC client.
-Neither can authorize Admin routes. Both produce the same distinct HttpOnly,
-Secure, SameSite=Lax customer cookie and the same CSRF token for mutations.
+Arena has exactly one way for a customer to sign in: a dedicated Angel Accounts
+OIDC client. Arena holds no customer password and sends no sign-in mail — the
+native passwordless email flow that used to sit beside OIDC here was retired,
+and its remaining code, config keys, and SMTP settings were removed. Signing in
+cannot authorize Admin routes. It produces a distinct HttpOnly, Secure,
+SameSite=Lax customer cookie and a CSRF token for mutations.
 
-### Native passwordless email registration
+### One press, one flow
 
-The Dashboard can create or sign into an account by emailing a one-time link.
-Arena generates 32 random bytes, stores only the SHA-256 digest in PostgreSQL,
-expires it after 15 minutes, replaces an older unused token only after a
-per-email cooldown, and atomically consumes it once. The bearer token is in the
-URL fragment, which is not sent in the HTTP request; the Dashboard removes it
-from browser history and waits for the customer to click **Continue to Arena**
-before a same-origin POST verifies it. A mail scanner or preview that merely
-fetches or renders the link therefore cannot consume it. Request responses are
-generic and do not disclose whether an account already exists.
+Every sign-in affordance in the frontend — the Dashboard control, the chat
+panel's "Sign in to chat", the Dashboard drawer opened by a signed-out visitor
+— starts this flow directly, in a popup on the Accounts origin (see
+`frontend/js/sign-in.js`). There is no Arena screen in between offering a
+choice of methods, because there is no second method. The one-time legal
+consent gate still runs before the first attempt.
 
-Angel-serv runs Stalwart for transactional mail. Provision a dedicated regular
-user `hello@angel-serv.com`, then give Arena a high-entropy credential used
-only by this transactional sender; do not reuse a recovery, admin, or personal
-mailbox credential. Configure the production container with:
+An Arena with this block unset is a supported state and the one the checked-in
+config ships: the login route answers 503 and the frontend says "Angel Accounts
+sign-in is not configured on this Arena yet" rather than opening nothing.
 
-```dotenv
-ARENA_CUSTOMER_EMAIL_AUTH_ENABLED=true
-ARENA_CUSTOMER_EMAIL_SIGN_IN_URL=https://arena.angel-serv.com/dashboard/
-ARENA_CUSTOMER_EMAIL_TOKEN_TTL_MINUTES=15
-ARENA_CUSTOMER_EMAIL_SEND_COOLDOWN_SECONDS=60
-ARENA_CUSTOMER_EMAIL_SEND_RPM=5
-ARENA_CUSTOMER_OIDC_SESSION_TTL_HOURS=24
-ARENA_SMTP_HOST=100.71.171.28
-ARENA_SMTP_PORT=465
-ARENA_SMTP_TLS_MODE=implicit
-ARENA_SMTP_TLS_SERVER_NAME=mail.angel-serv.com
-ARENA_SMTP_USERNAME=hello@angel-serv.com
-ARENA_SMTP_PASSWORD=replace-with-send-only-app-password
-ARENA_SMTP_FROM=Arena <hello@angel-serv.com>
-```
+The API key path (`Open with an API key`) is unchanged and still reaches bot
+stats and performance tools, but it is a folded-away secondary control on the
+signed-out Dashboard rather than an equal choice presented to everybody.
 
-Arena sends a multipart text/HTML message with one branded call to action, a
-copyable fallback URL, an explicit expiry, and security guidance. The subject,
-From identity, Message-ID domain, and Reply-To remain stable. Template quality
-does not replace sender authentication: after any mail-server or DNS change,
-inspect a received message and require SPF, at least one aligned DKIM signature,
-and DMARC to pass before treating deliverability as healthy.
-
-The private submission address is deliberately separate from the TLS server
-name. Arena verifies the `mail.angel-serv.com` certificate with TLS 1.2 or
-newer and never uses `InsecureSkipVerify` or public port 25. The production
-`.env` is rendered by `nimbus-infra/roles/arena/templates/.env.j2`; add these
-nonsecret settings there and keep the app password in the role's encrypted
-vault variable so an Ansible run cannot erase the integration.
-
-### Dedicated customer OIDC
-
-OIDC remains supported for deployments that already have a public customer
-identity provider. It requires a non-empty `email_verified=true` claim,
-browser-bound state, nonce, and PKCE. Never reuse the Admin client or open the
-shared staff Authentik instance to public enrollment.
-
-Configure a dedicated customer OIDC application:
+### Configuration
 
 ```dotenv
 ARENA_CUSTOMER_OIDC_ENABLED=true
-ARENA_CUSTOMER_OIDC_ISSUER=https://YOUR_IDP/application/o/arena-customer/
-ARENA_CUSTOMER_OIDC_CLIENT_ID=arena-customer
+ARENA_CUSTOMER_OIDC_ISSUER=https://accounts.angel-serv.com
+ARENA_CUSTOMER_OIDC_CLIENT_ID=arena
 ARENA_CUSTOMER_OIDC_CLIENT_SECRET=replace-me
-ARENA_CUSTOMER_OIDC_REDIRECT_URI=https://YOUR_ARENA_HOST/account/callback
-ARENA_CUSTOMER_OIDC_SESSION_TTL_HOURS=24
+ARENA_CUSTOMER_OIDC_REDIRECT_URI=https://arena.angel-serv.com/account/callback
+ARENA_CUSTOMER_OIDC_SESSION_TTL_HOURS=720
 ARENA_CUSTOMER_BOT_LINK_RPM=10
 ```
 
-For an `/arena`-prefixed deployment, register
-`https://YOUR_ARENA_HOST/arena/account/callback` instead. The provider must put
-the verified email claim in the ID token. A typed email address is never treated
-as proof of ownership.
+Registering the client is a live step nobody can do from this repository: the
+Arena client must exist in the Accounts console with that exact redirect URI.
+The provider matches it literally, and a mismatch fails after the person has
+already signed in. For an `/arena`-prefixed deployment, register
+`https://YOUR_ARENA_HOST/arena/account/callback` instead.
 
-Customer sessions are currently process-local, so a server restart asks the
-customer to sign in again. Accounts, bot links, licenses, assignments, and
-purchase history remain in PostgreSQL.
+The flow requires a non-empty `email_verified=true` claim in the ID token, and
+uses browser-bound state, nonce, and PKCE. A typed email address is never
+treated as proof of ownership. Never reuse the Admin client or open the shared
+staff Authentik instance to public enrollment.
+
+Customer sessions are durable across a server restart (`customer_sessions`,
+with a write-through cache) and renew on a sliding window, so a visitor who
+returns within any TTL-length window stays signed in. Accounts, bot links,
+licenses, assignments, and purchase history remain in PostgreSQL.
+
+### Getting an Angel account
+
+Every affordance inviting a visitor to make one points at
+`https://accounts.angel-serv.com/register?product=arena`. The `product`
+parameter is inert on the Accounts side today and is carried anyway: it is a
+fixed cross-product URL contract, and the side that will consume it cannot be
+changed retroactively for links already shared. The origin is defined once, in
+`frontend/js/accounts.js`, and imported everywhere else.
 
 ## Fair-play boundary
 

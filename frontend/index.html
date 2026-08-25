@@ -20,6 +20,7 @@
   <!-- service-status.js is NOT loaded here: app.js and site-shell.js import
        it (unversioned), and a second versioned URL would create a separate
        module instance with its own banner controller racing the first. -->
+  <script type="module" src="js/accounts.js?v=20260825a"></script>
   <script type="module" src="js/content-blocks.js?v=20260714f"></script>
   <script type="module" src="js/app.js?v=20260810e"></script>
   <script type="module" src="js/site-shell.js?v=20260810c"></script>
@@ -1627,7 +1628,7 @@ wss://arena.angel-serv.com/ws/spectator
                     <p class="keygen-panel-copy">Arena generates the token; arbitrary tokens you make yourself will not authenticate. The plaintext is shown once and is never persisted in browser storage.</p>
                     <button type="button" class="btn btn-gold keygen-btn">Generate API token</button>
                     <div class="keygen-result" aria-live="polite"></div>
-                    <p class="keygen-panel-copy">Later, sign in to your Angel account and link the bot in <a href="#" data-overlay-open="dashboard-overlay" data-dashboard-tab="cosmetics">My Dashboard</a> to purchase and equip cosmetics.</p>
+                    <p class="keygen-panel-copy">Later, sign in to your Angel account and link the bot in <a href="#" data-overlay-open="dashboard-overlay" data-dashboard-tab="cosmetics">My Dashboard</a> to purchase and equip cosmetics. No Angel account yet? <a data-accounts-register>Create one</a>.</p>
                   </div>
                 </div>
               </div>
@@ -1650,7 +1651,11 @@ wss://arena.angel-serv.com/ws/spectator
                     </div>
                     <button type="button" class="btn btn-gold" data-overlay-open="shop-overlay">Open Cosmetic Shop</button>
                   </div>
-                  <a class="btn btn-secondary" href="#" data-overlay-open="dashboard-overlay" data-dashboard-tab="cosmetics">Manage owned cosmetics</a>
+                  <div class="cosmetics-account-actions">
+                    <button type="button" class="btn btn-secondary" data-arena-signin>Sign in with Angel Accounts</button>
+                    <a class="btn btn-secondary" href="#" data-overlay-open="dashboard-overlay" data-dashboard-tab="cosmetics">Manage owned cosmetics</a>
+                  </div>
+                  <p class="cosmetics-account-register">No Angel account yet? <a data-accounts-register>Create one</a> — the same account works across every Angel product.</p>
                 </div>
               </section>
 
