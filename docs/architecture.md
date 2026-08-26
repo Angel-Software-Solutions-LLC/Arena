@@ -73,7 +73,8 @@ For local experiments, `ARENA_DB_OPTIONAL=true` can let the server run in a degr
   `POST /api/v1/account/bots`; the form clears that proof after the request.
 - The Dashboard may also create account-owned keys directly. Durable account
   links and cosmetics survive key rotation or revocation.
-- Admin APIs require an admin token, a database-issued admin token, or configured OIDC/SSO.
+- Admin APIs require an admin token, a database-issued admin token, configured OIDC/SSO, or an Angel Accounts customer sign-in whose verified ID token carries the platform-administrator claim (`staff: true`, with `staff_role` recorded for audit).
+- The Accounts claim is read only from the validated ID token, is decided on presence rather than truthiness, and is never persisted; see `go-arena/internal/api/platform_admin.go`. Administrator authority is orthogonal to entitlements, which are checked exactly as before.
 - Bot input is schema validated before it affects game state.
 - WebSocket and HTTP paths have size and rate controls.
 - Production deployments should terminate TLS at a reverse proxy and pass only the needed routes to the server.
