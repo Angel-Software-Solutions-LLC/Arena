@@ -180,6 +180,26 @@ func MakeAdminAuthMiddleware(handler *AdminHandler) func(http.Handler) http.Hand
 // MakeAdminAuthMiddlewareWithOIDC is like MakeAdminAuthMiddleware but also
 // accepts OIDC session cookies when oidcHandler is non-nil.
 func MakeAdminAuthMiddlewareWithOIDC(handler *AdminHandler, oidcHandler *OIDCHandler) func(http.Handler) http.Handler {
+	return MakeAdminAuthMiddlewareWithPlatformAdmins(handler, oidcHandler, nil)
+}
+
+/*
+ * MakeAdminAuthMiddlewareWithPlatformAdmins is MakeAdminAuthMiddlewareWithOIDC
+ * plus the one thing the customer cookie is now allowed to say.
+ *
+ * That cookie used to be refused here unconditionally, and the reason still
+ * holds for every session that does not carry the Angel Accounts
+ * platform-administrator claim: a customer session means "signed in", not
+ * "trusted". What changed is that Accounts now states, inside a token Arena
+ * verifies, which identities administer the platform — so the refusal narrows
+ * from "this cookie" to "this cookie without that claim". A session that never
+ * carried it, or whose grant has lapsed, is exactly as unwelcome as before;
+ * TestCustomerCookieNeverAuthorizesAdmin still holds.
+ *
+ * The existing ways in are untouched and additive. Nothing here consults an
+ * address, an allowlist, or a stored flag.
+ */
+func MakeAdminAuthMiddlewareWithPlatformAdmins(handler *AdminHandler, oidcHandler *OIDCHandler, customerHandler *CustomerOIDCHandler) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			cfg := &config.C
@@ -198,7 +218,26 @@ func MakeAdminAuthMiddlewareWithOIDC(handler *AdminHandler, oidcHandler *OIDCHan
 				}
 			}
 
+			// Check an Angel Accounts sign-in that carries the verified
+			// platform-administrator claim.
+			principal, authorized, denyReason := customerHandler.platformAdminPrincipal(r)
+			if authorized {
+				next.ServeHTTP(w, r.WithContext(withAdminPrincipal(r.Context(), principal)))
+				return
+			}
+
 			token := r.Header.Get("X-Admin-Token")
+			/*
+			 * An administrator's mutation that failed the same-origin or CSRF
+			 * check is answered with what actually went wrong — but only when
+			 * there is no token to fall back on. A client presenting a token
+			 * asked to be authenticated by that token; it must reach the token
+			 * paths below exactly as it did before this cookie was consulted.
+			 */
+			if denyReason != "" && token == "" {
+				writeError(w, http.StatusForbidden, denyReason)
+				return
+			}
 			if token == "" {
 				// If OIDC is enabled but no token and no session, return 401
 				// with a hint to use SSO login.

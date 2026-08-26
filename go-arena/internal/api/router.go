@@ -299,7 +299,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 			// guesses skip the limiter entirely, since the auth middleware
 			// returns without calling next on every rejection path.
 			admin.Use(security.RateLimitMiddleware(config.C.AdminRateLimitRPM))
-			admin.Use(MakeAdminAuthMiddlewareWithOIDC(adminHandler, oidcHandler))
+			admin.Use(MakeAdminAuthMiddlewareWithPlatformAdmins(adminHandler, oidcHandler, customerOIDCHandler))
 			adminHandler.Routes(admin)
 			registerCosmeticsAdminRoutes(admin, cosmeticsHandler)
 			admin.Get("/cosmetics/orders", commerceHandler.AdminOrders)
@@ -407,7 +407,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 				// rate limiting must wrap OUTSIDE auth or failed-auth guesses
 				// bypass it entirely.
 				admin.Use(security.RateLimitMiddleware(config.C.AdminRateLimitRPM))
-				admin.Use(MakeAdminAuthMiddlewareWithOIDC(adminHandler, oidcHandler))
+				admin.Use(MakeAdminAuthMiddlewareWithPlatformAdmins(adminHandler, oidcHandler, customerOIDCHandler))
 				adminHandler.Routes(admin)
 				registerCosmeticsAdminRoutes(admin, cosmeticsHandler)
 				admin.Get("/cosmetics/orders", commerceHandler.AdminOrders)

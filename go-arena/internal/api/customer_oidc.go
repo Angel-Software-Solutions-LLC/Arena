@@ -55,6 +55,12 @@ type CustomerSession struct {
 	CSRFToken       string
 	CreatedAt       time.Time
 	ExpiresAt       time.Time
+	// platformAdmin is the Angel Accounts administrator claim from the
+	// sign-in that created this session, or nil for the overwhelming
+	// majority of sessions. It is memory-only: nothing writes it to
+	// customer_sessions, so a restart, a second replica, or simply waiting
+	// it out all resolve to "not an administrator". See platform_admin.go.
+	platformAdmin *platformAdminGrant
 }
 
 type customerOIDCTransaction struct {
@@ -371,7 +377,13 @@ func (h *CustomerOIDCHandler) CallbackHandler(w http.ResponseWriter, r *http.Req
 		http.Error(w, "unable to verify customer account", http.StatusInternalServerError)
 		return
 	}
-	h.establishCustomerSession(w, r, account, idToken.Subject)
+	/*
+	 * Whether this person administers the platform, read from the token the
+	 * verifier has just accepted and from nowhere else. See platform_admin.go
+	 * for the presence rule and for why the answer is not written down.
+	 */
+	platformAdmin := platformAdminFromIDToken(idToken)
+	h.establishCustomerSession(w, r, account, idToken.Subject, platformAdmin)
 	/*
 	 * The one moment Arena holds a token it may read entitlements with. After
 	 * this line the token goes out of scope and is never written anywhere —
@@ -385,6 +397,13 @@ func (h *CustomerOIDCHandler) CallbackHandler(w http.ResponseWriter, r *http.Req
 	// The account id, and not the address. A log line is a place an address
 	// outlives the database it was deleted from.
 	slog.Info("customer signed in with Angel Accounts", "account_id", account.ID)
+	if platformAdmin.Present {
+		// Worth its own line: this is the sign-in that can reach the admin
+		// panel, and an operator asking "who administered this" needs to be
+		// able to find it.
+		slog.Info("customer sign-in carries platform administrator authority",
+			"account_id", account.ID, "staff_role", platformAdmin.Role)
+	}
 	/*
 	 * A popup finishes on a page of Arena's own, which tells the window that
 	 * opened it and closes itself. The session cookie is already set by the
@@ -412,10 +431,11 @@ func customerAccountAPIPath(r *http.Request, suffix string) string {
 	return "/api/v1/account" + suffix
 }
 
-func (h *CustomerOIDCHandler) establishCustomerSession(w http.ResponseWriter, r *http.Request, account *db.CustomerAccount, subject string) *CustomerSession {
+func (h *CustomerOIDCHandler) establishCustomerSession(w http.ResponseWriter, r *http.Request, account *db.CustomerAccount, subject string, admin verifiedPlatformAdmin) *CustomerSession {
 	ttl := customerSessionTTL()
 	now := time.Now().UTC()
 	sessionID := generateToken(32)
+	expires := now.Add(ttl)
 	session := &CustomerSession{
 		AccountID:       account.ID,
 		Email:           account.Email,
@@ -424,7 +444,8 @@ func (h *CustomerOIDCHandler) establishCustomerSession(w http.ResponseWriter, r 
 		EmailVerifiedAt: account.EmailVerifiedAt,
 		CSRFToken:       generateToken(32),
 		CreatedAt:       now,
-		ExpiresAt:       now.Add(ttl),
+		ExpiresAt:       expires,
+		platformAdmin:   newPlatformAdminGrant(admin, now, expires),
 	}
 	h.mu.Lock()
 	h.sessions[sessionID] = session
@@ -596,9 +617,19 @@ func (h *CustomerOIDCHandler) SessionInfoHandler(w http.ResponseWriter, r *http.
 		})
 		return
 	}
+	/*
+	 * Whether this session administers the platform is reported so the site
+	 * can offer an entry point to somebody who has one, and is recomputed on
+	 * every read rather than remembered anywhere. It is a description of the
+	 * session, never the thing that grants authority — the admin routes ask
+	 * the same question themselves.
+	 */
+	platformAdminRole, isPlatformAdmin := session.platformAdminAt(time.Now())
 	writeJSON(w, http.StatusOK, map[string]any{
 		"authenticated":       true,
 		"login_enabled":       oidcEnabled,
+		"platform_admin":      isPlatformAdmin,
+		"platform_admin_role": platformAdminRole,
 		"oidc_login_enabled":  oidcEnabled,
 		"email_login_enabled": false,
 		"account": map[string]any{
