@@ -78,8 +78,68 @@ assert.doesNotMatch(
 /* ------------------------------------------------------------ the window */
 
 assert.match(login, /window\.open\(/, 'a popup is opened');
-assert.match(login, /width=\$\{POPUP_WIDTH\}/, 'at a fixed size');
+
+// The cross-product window contract. Every Angel product opens Accounts at
+// 600 x 800, so `/connect` has one layout target wherever it is reached from;
+// Arena's old 520 x 680 made that page scroll. Both numbers are clamped to the
+// screen's work area, because a window larger than the work area is cropped by
+// the OS -- which is the same scrolling arriving from the other end.
+assert.match(login, /const POPUP_WIDTH = 600;/, 'the contract width');
+assert.match(login, /const POPUP_HEIGHT = 800;/, 'the contract height');
+assert.match(login, /const POPUP_SCREEN_MARGIN = 80;/, 'and the allowance for the browser chrome outside the viewport');
+assert.match(
+  login,
+  /Math\.min\(POPUP_WIDTH, availWidth - POPUP_SCREEN_MARGIN\)/,
+  'width never exceeds what the screen can show',
+);
+assert.match(
+  login,
+  /Math\.min\(POPUP_HEIGHT, availHeight - POPUP_SCREEN_MARGIN\)/,
+  'and neither does height',
+);
+assert.match(login, /width=\$\{width\},height=\$\{height\}/, 'and those are the numbers the window opens at');
 assert.match(login, /left=\$\{left\},top=\$\{top\}/, 'centred on the window it came from');
+assert.match(
+  login,
+  /\(openerHeight - height\) \/ 2\)/,
+  'centred on both axes, not biased upward as it used to be',
+);
+
+/* --------------------------------- and the size, against actual screens */
+
+// Reading the clamp off the source proves it was written, not that it is
+// right. This runs it: the number that matters is the one a small laptop
+// gets, and no pattern match can tell you that.
+const sizerSource = login
+  .replace(/^import .*$/gm, '')
+  .replace(/notifySessionChanged\(\);/g, '');
+const {popupSize} = await import(
+  `data:text/javascript;base64,${Buffer.from(sizerSource).toString('base64')}`
+);
+
+const onScreen = (availWidth, availHeight) => {
+  globalThis.screen = {availWidth, availHeight, width: availWidth, height: availHeight};
+  return popupSize();
+};
+
+assert.deepEqual(onScreen(2560, 1440), {width: 600, height: 800},
+  'a desktop gets the contract size exactly');
+assert.deepEqual(onScreen(1920, 1080), {width: 600, height: 800},
+  'and so does an ordinary laptop');
+assert.deepEqual(onScreen(1366, 768), {width: 600, height: 688},
+  'a short laptop gets a window that fits its work area, not one the OS crops');
+assert.deepEqual(onScreen(640, 900), {width: 560, height: 800},
+  'and a narrow screen is clamped on the other axis');
+// The old size is what this contract replaced; on any screen with room, the
+// window must be bigger than it was.
+const roomy = onScreen(1920, 1080);
+assert.ok(roomy.width > 520 && roomy.height > 680,
+  'the window is larger than the 520 x 680 that made /connect scroll');
+
+globalThis.screen = {availWidth: 0, availHeight: 0, width: 0, height: 0};
+assert.deepEqual(popupSize(), {width: 600, height: 800},
+  'a browser that reports no screen at all still gets the contract size');
+delete globalThis.screen;
 assert.match(login, /popup=1/, 'and the server is told this is a popup so it lands on the right page');
 
 assert.match(

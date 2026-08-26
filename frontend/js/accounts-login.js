@@ -44,9 +44,31 @@ import { notifySessionChanged } from './account-session.js?v=20260823a';
 /** The message `dashboard/signed-in.js` sends. Kept in step with that file. */
 const SIGNED_IN_MESSAGE = 'arena:accounts-signed-in';
 
-/** Big enough for a passkey prompt and a consent screen without scrolling. */
-const POPUP_WIDTH = 520;
-const POPUP_HEIGHT = 680;
+/**
+ * The size of the window, fixed by cross-product contract.
+ *
+ * 600 x 800 is what every Angel product that signs somebody in through
+ * Accounts opens, so `/connect` renders the same wherever it is reached from
+ * and Accounts has one target to lay out against. Arena opened 520 x 680
+ * before this, which was too small: `/connect` scrolled.
+ *
+ * Both are a ceiling, not a promise. A laptop whose work area cannot spare
+ * that much gets a window that fits it instead -- see `popupSize`.
+ */
+const POPUP_WIDTH = 600;
+const POPUP_HEIGHT = 800;
+
+/**
+ * Room left around the window inside the screen's work area.
+ *
+ * `availWidth`/`availHeight` describe space the OS will let a window occupy,
+ * but the numbers passed to `window.open` size the *viewport* -- the browser
+ * adds its own title bar, address bar and borders outside them. Asking for
+ * the whole work area therefore produces a window taller than the work area,
+ * with its bottom edge under the taskbar. This is the allowance for that
+ * chrome.
+ */
+const POPUP_SCREEN_MARGIN = 80;
 
 /**
  * How long to keep watching a popup that was opened but never reported back.
@@ -59,19 +81,44 @@ const WATCH_TIMEOUT_MS = 5 * 60 * 1000;
 const CLOSE_POLL_MS = 400;
 
 /**
+ * The contract size, clamped to what this screen can actually show.
+ *
+ * A window bigger than the work area does not get the space it asked for --
+ * it gets cropped by the OS, which is the scrolling this contract exists to
+ * remove, reintroduced from the other end. So the ceiling above is a minimum
+ * against the room available rather than a fixed number.
+ *
+ * Exported so the contract can be tested against a screen rather than read
+ * off the source: what matters is the number this returns on a small laptop,
+ * which no amount of pattern-matching the file can tell you.
+ *
+ * @returns {{width: number, height: number}}
+ */
+export function popupSize() {
+  const availWidth = screen.availWidth || screen.width || POPUP_WIDTH + POPUP_SCREEN_MARGIN;
+  const availHeight = screen.availHeight || screen.height || POPUP_HEIGHT + POPUP_SCREEN_MARGIN;
+  return {
+    width: Math.round(Math.min(POPUP_WIDTH, availWidth - POPUP_SCREEN_MARGIN)),
+    height: Math.round(Math.min(POPUP_HEIGHT, availHeight - POPUP_SCREEN_MARGIN)),
+  };
+}
+
+/**
  * Centre the popup on the screen the browser window is actually on.
  *
- * `screenX`/`availWidth` rather than `screen.width`, so a second monitor puts
- * the window in front of the person instead of on their primary display.
+ * `screenX`/`screenY` rather than assuming the primary display, so a second
+ * monitor puts the window in front of the person instead of somewhere they
+ * have to go looking for it.
  */
 function popupFeatures() {
+  const { width, height } = popupSize();
   const dualLeft = window.screenLeft ?? window.screenX ?? 0;
   const dualTop = window.screenTop ?? window.screenY ?? 0;
-  const width = window.innerWidth || document.documentElement.clientWidth || screen.width;
-  const height = window.innerHeight || document.documentElement.clientHeight || screen.height;
-  const left = Math.max(0, Math.round(dualLeft + (width - POPUP_WIDTH) / 2));
-  const top = Math.max(0, Math.round(dualTop + (height - POPUP_HEIGHT) / 2.4));
-  return `popup=yes,width=${POPUP_WIDTH},height=${POPUP_HEIGHT},left=${left},top=${top},` +
+  const openerWidth = window.innerWidth || document.documentElement.clientWidth || screen.width;
+  const openerHeight = window.innerHeight || document.documentElement.clientHeight || screen.height;
+  const left = Math.max(0, Math.round(dualLeft + (openerWidth - width) / 2));
+  const top = Math.max(0, Math.round(dualTop + (openerHeight - height) / 2));
+  return `popup=yes,width=${width},height=${height},left=${left},top=${top},` +
     'menubar=no,toolbar=no,location=yes,status=no,resizable=yes,scrollbars=yes';
 }
 
