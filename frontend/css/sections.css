@@ -2611,6 +2611,19 @@ body.no-fx-killFeedGlow .killfeed-entry.killfeed-new::before {
 .cosmetics-account-cta strong { color: var(--text-primary); }
 .cosmetics-account-cta span { color: var(--text-soft); font-size: 0.84rem; }
 
+.cosmetics-account-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.cosmetics-account-register {
+  color: var(--text-soft);
+  font-size: 0.84rem;
+}
+
+.cosmetics-account-register a { color: var(--accent-blue); }
+
 .cosmetics-auth input {
   width: 100%;
   min-width: 0;
@@ -2842,6 +2855,7 @@ body.no-fx-killFeedGlow .killfeed-entry.killfeed-new::before {
   .cosmetics-intro { flex-direction: column; }
   .cosmetics-auth { grid-template-columns: 1fr; }
   .cosmetics-auth .btn { width: 100%; }
+  .cosmetics-account-actions .btn { width: 100%; }
   .cosmetics-browser { grid-template-columns: 1fr; }
   .cosmetic-pack { grid-template-columns: 68px minmax(0, 1fr); gap: 12px; }
   .cosmetic-pack-swatch { width: 68px; }

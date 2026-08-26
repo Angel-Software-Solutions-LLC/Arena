@@ -19,6 +19,7 @@ const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf
 
 const css = read('frontend/css/site-footer.css');
 const js = read('frontend/js/site-footer.js');
+const accountsModule = read('frontend/js/accounts.js');
 /*
  * Where the shared footer goes, and where it deliberately does not.
  *
@@ -83,7 +84,12 @@ assert.match(js, /site-footer__footnote">\$\{COMPANY_FOOTNOTE\}/, 'and it is ren
 
 /* --------------------------------------------- the list, and its fallback */
 
-assert.match(js, /const ACCOUNTS_ORIGIN = 'https:\/\/accounts\.angel-serv\.com'/, 'the corpus lives on accounts');
+// One origin for the whole frontend, defined once in js/accounts.js and
+// imported here. A literal written out again in this file would be a second
+// source of truth for where Angel Accounts lives.
+assert.match(js, /import \{ ACCOUNTS_ORIGIN \} from '\.\/accounts\.js/, 'the origin is imported, not restated');
+assert.doesNotMatch(js, /'https:\/\/accounts\.angel-serv\.com'/, 'and the literal does not reappear here');
+assert.match(accountsModule, /export const ACCOUNTS_ORIGIN = 'https:\/\/accounts\.angel-serv\.com'/, 'the corpus lives on accounts');
 assert.match(js, /const LEGAL_INDEX_URL = `\$\{ACCOUNTS_ORIGIN\}\/api\/legal\/documents`/, 'the menu is fetched from the corpus index');
 assert.match(js, /fetch\(LEGAL_INDEX_URL/, 'at runtime, on every page load');
 assert.match(js, /\$\{ACCOUNTS_ORIGIN\}\/legal\/\$\{encodeURIComponent\(slug\)\}/, 'documents link to canonical URLs');
