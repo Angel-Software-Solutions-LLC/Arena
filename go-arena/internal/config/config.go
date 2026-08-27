@@ -395,17 +395,28 @@ type Config struct {
 	WeaponAutoBalanceMinEffect         float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MIN_EFFECT" default:"0.05"`
 	WeaponAutoBalanceMaxEvidenceRounds int     `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MAX_EVIDENCE_ROUNDS" default:"48"`
 
-	// OIDC / SSO (opt-in)
-	OIDCEnabled      bool   `envconfig:"ARENA_OIDC_ENABLED" default:"false"`
-	OIDCIssuer       string `envconfig:"ARENA_OIDC_ISSUER" default:""`
-	OIDCClientID     string `envconfig:"ARENA_OIDC_CLIENT_ID" default:""`
-	OIDCClientSecret string `envconfig:"ARENA_OIDC_CLIENT_SECRET" default:""`
-	OIDCRedirectURI  string `envconfig:"ARENA_OIDC_REDIRECT_URI" default:""`
-	OIDCSessionTTL   int    `envconfig:"ARENA_OIDC_SESSION_TTL_HOURS" default:"8"`
-	OIDCAdminEmails  string `envconfig:"ARENA_OIDC_ADMIN_EMAILS" default:""`
+	// OIDCSessionTTL is all that remains of Arena's own admin SSO application.
+	//
+	// That application — its issuer, its client credentials, its
+	// arena_admin_session cookie and the ARENA_OIDC_ADMIN_EMAILS allowlist
+	// that admitted people to it — is retired. The support-desk role in Angel
+	// Accounts is the single source of HUMAN admin authority, so a second
+	// list of addresses maintained by hand in Arena's environment was a
+	// second answer to a question that must have exactly one, and the only
+	// one nothing revoked. ARENA_ADMIN_TOKEN, database-issued admin tokens
+	// and the loopback bypass are untouched: they authenticate machines, not
+	// people, and they are the break-glass path if Accounts is unreachable.
+	//
+	// The variable keeps its name because it still does the same job it
+	// always did: it bounds how long one sign-in's administrator answer is
+	// trusted for. See platformAdminGrantTTL in
+	// internal/api/platform_admin.go.
+	OIDCSessionTTL int `envconfig:"ARENA_OIDC_SESSION_TTL_HOURS" default:"8"`
 
-	// Customer OIDC is deliberately a separate client/application from admin
-	// SSO. A public customer login must never mint an admin-authorized session.
+	// Customer OIDC is the one sign-in Arena has. What used to make it
+	// dangerous — that a public customer login must never mint an
+	// admin-authorized session — is now decided per sign-in by the verified
+	// platform-administrator claim, and by nothing else.
 	CustomerOIDCEnabled      bool   `envconfig:"ARENA_CUSTOMER_OIDC_ENABLED" default:"false"`
 	CustomerOIDCIssuer       string `envconfig:"ARENA_CUSTOMER_OIDC_ISSUER" default:""`
 	CustomerOIDCClientID     string `envconfig:"ARENA_CUSTOMER_OIDC_CLIENT_ID" default:""`
@@ -924,7 +935,8 @@ func warnInsecureDefaults() {
 		} else {
 			slog.Warn("SECURITY: ARENA_ADMIN_TOKEN is not set and " +
 				"ARENA_ADMIN_LOCALHOST_BYPASS is disabled — the admin API cannot " +
-				"be authenticated at all unless OIDC or a DB-issued token is configured")
+				"be authenticated at all unless a DB-issued admin token exists or " +
+				"an Angel Accounts support-desk sign-in is configured")
 		}
 	}
 }

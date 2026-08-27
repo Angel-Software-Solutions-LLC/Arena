@@ -29,7 +29,8 @@ Security fixes target the current `main` branch unless a maintainer announces a 
 ## Authentication And Access Control
 
 - Bot API keys are high-entropy server-issued values stored as rollback-safe composite credentials with short lookup prefixes. Each credential keeps a bcrypt prefix for older server versions and appends a versioned digest for fast current authentication. Legacy bcrypt rows remain valid and migrate to the composite after successful use; plaintext keys are shown once and cannot be recovered.
-- Admin APIs require `X-Admin-Token`, a database-issued admin token, or an OIDC/SSO session cookie when configured.
+- Admin APIs admit a human only through the support-desk role in Angel Accounts: a customer sign-in whose verified ID token carries the platform-administrator claim. That authority is never persisted, lapses on `ARENA_OIDC_SESSION_TTL_HOURS`, and is re-read at the next sign-in, so withdrawing the desk role revokes it. Arena's own admin SSO application and its `ARENA_OIDC_ADMIN_EMAILS` allowlist are retired.
+- Machines authenticate separately and unchanged: `X-Admin-Token` carrying `ARENA_ADMIN_TOKEN` or a database-issued admin token. These are also the break-glass path if Angel Accounts is unreachable; there is no separate emergency human login.
 - `ARENA_ADMIN_LOCALHOST_BYPASS` defaults to `true` for local development. Set it to `false` if a reverse proxy or container network could make untrusted traffic appear to originate from loopback.
 - Set `ARENA_ADMIN_TOKEN` to a strong random value in every deployment.
 

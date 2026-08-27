@@ -2,8 +2,10 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -28,6 +30,17 @@ import (
 // this often never has to sign in again, while a cookie that is stolen and
 // never used by its real owner still expires.
 const customerSessionSlideFraction = 0.5
+
+// generateToken creates a cryptographically random hex token. It backs every
+// unguessable value a sign-in produces: the OAuth state, the browser-binding
+// cookie, the PKCE verifier, the nonce, the session id, and the CSRF token.
+func generateToken(bytes int) string {
+	b := make([]byte, bytes)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand failed: " + err.Error())
+	}
+	return hex.EncodeToString(b)
+}
 
 func hashSessionToken(token string) []byte {
 	sum := sha256.Sum256([]byte(token))
@@ -219,6 +232,25 @@ func setCustomerNoStore(w http.ResponseWriter) {
 	w.Header().Set("Pragma", "no-cache")
 }
 
+// customerReturnToPrefixes is the closed set of places a completed sign-in is
+// allowed to land. Everything here is an app of Arena's own that a signed-in
+// browser reaches with this cookie: the Dashboard, and — since the support
+// desk in Angel Accounts became the only human way into administration — the
+// Admin Panel, which an administrator now signs into exactly as a customer.
+var customerReturnToPrefixes = []string{
+	"/dashboard", "/arena/dashboard",
+	"/admin", "/arena/admin",
+}
+
+func customerReturnToIsAllowed(path string) bool {
+	for _, prefix := range customerReturnToPrefixes {
+		if path == prefix || strings.HasPrefix(path, prefix+"/") {
+			return true
+		}
+	}
+	return false
+}
+
 func safeCustomerReturnTo(r *http.Request) string {
 	raw := strings.TrimSpace(r.URL.Query().Get("return_to"))
 	if raw == "" || len(raw) > 2048 || strings.Contains(raw, "\\") || strings.HasPrefix(raw, "//") {
@@ -228,8 +260,7 @@ func safeCustomerReturnTo(r *http.Request) string {
 	if err != nil || parsed.IsAbs() || parsed.Host != "" {
 		return customerDashboardPath(r)
 	}
-	if parsed.Path != "/dashboard" && !strings.HasPrefix(parsed.Path, "/dashboard/") &&
-		parsed.Path != "/arena/dashboard" && !strings.HasPrefix(parsed.Path, "/arena/dashboard/") {
+	if !customerReturnToIsAllowed(parsed.Path) {
 		return customerDashboardPath(r)
 	}
 	return raw

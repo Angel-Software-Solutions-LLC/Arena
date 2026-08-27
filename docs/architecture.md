@@ -73,8 +73,38 @@ For local experiments, `ARENA_DB_OPTIONAL=true` can let the server run in a degr
   `POST /api/v1/account/bots`; the form clears that proof after the request.
 - The Dashboard may also create account-owned keys directly. Durable account
   links and cosmetics survive key rotation or revocation.
-- Admin APIs require an admin token, a database-issued admin token, configured OIDC/SSO, or an Angel Accounts customer sign-in whose verified ID token carries the platform-administrator claim (`staff: true`, with `staff_role` recorded for audit).
-- The Accounts claim is read only from the validated ID token, is decided on presence rather than truthiness, and is never persisted; see `go-arena/internal/api/platform_admin.go`. Administrator authority is orthogonal to entitlements, which are checked exactly as before.
+- Admin APIs separate people from machines, and admit each on its own terms.
+- **Humans:** the support-desk role in Angel Accounts is the single source of
+  human admin authority. An administrator signs in at Accounts like any other
+  customer; the platform-administrator claim (`staff: true`, with `staff_role`
+  recorded for audit) on that verified sign-in is what opens the Admin Panel
+  and the admin API. The claim is read only from the validated ID token,
+  decided on presence rather than truthiness, and never persisted; see
+  `go-arena/internal/api/platform_admin.go`. Authority lapses on
+  `ARENA_OIDC_SESSION_TTL_HOURS` and is re-read at the next sign-in, so
+  withdrawing the desk role in Accounts revokes it with nothing to clean up in
+  Arena. Because the panel acts on the ordinary `arena_customer_session`
+  cookie, its mutations are held to the same same-origin and CSRF checks as
+  every other customer mutation.
+- **Retired:** Arena's own admin SSO application — its issuer and client
+  credentials, its `arena_admin_session` cookie, the `/admin/login`,
+  `/admin/callback` and `/admin/logout` routes, and the
+  `ARENA_OIDC_ADMIN_EMAILS` allowlist that admitted people to it. Two places
+  deciding who administers the platform is one too many, and the allowlist was
+  the one nothing revoked when somebody left the desk. Those variables are
+  ignored if still set. `ARENA_OIDC_SESSION_TTL_HOURS` survives and now means
+  only the grant window above.
+- **Machines:** `ARENA_ADMIN_TOKEN`, database-issued admin tokens presented as
+  `X-Admin-Token`, and the `ARENA_ADMIN_LOCALHOST_BYPASS` loopback path are
+  unchanged. They authenticate automation, not identities, so nothing about
+  the desk claim applies to them.
+- **Break-glass:** if Angel Accounts is unreachable, those machine paths are
+  the way in — an operator on the host uses the loopback bypass, or a holder of
+  `ARENA_ADMIN_TOKEN` or a database-issued token uses `X-Admin-Token`. That is
+  deliberate: there is no second emergency human login to keep in sync, and
+  inventing one would recreate exactly the second source of truth this change
+  removed.
+- Administrator authority is orthogonal to entitlements, which are checked exactly as before.
 - Bot input is schema validated before it affects game state.
 - WebSocket and HTTP paths have size and rate controls.
 - Production deployments should terminate TLS at a reverse proxy and pass only the needed routes to the server.

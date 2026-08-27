@@ -175,6 +175,7 @@ jobs:
           node scripts/test-key-generator.mjs
           node scripts/test-admin-cosmetics-ui.mjs
           node scripts/test-admin-broadcast-ui.mjs
+          node scripts/test-admin-desk-sign-in.mjs
           node scripts/test-public-paths.mjs
           node scripts/test-repository-links.mjs
           node scripts/test-spectator-client.mjs

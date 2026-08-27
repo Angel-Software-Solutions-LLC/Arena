@@ -170,22 +170,17 @@ func adminPrincipalFromContext(ctx context.Context) string {
 }
 
 // MakeAdminAuthMiddleware creates an admin auth middleware that checks both the
-// env var token and any dynamically created tokens via the handler.
-// If an OIDCHandler is provided and OIDC is enabled, valid session cookies are
-// also accepted.
+// env var token and any dynamically created tokens via the handler. These are
+// the machine paths; a human administrator arrives through
+// MakeAdminAuthMiddlewareWithPlatformAdmins.
 func MakeAdminAuthMiddleware(handler *AdminHandler) func(http.Handler) http.Handler {
-	return MakeAdminAuthMiddlewareWithOIDC(handler, nil)
-}
-
-// MakeAdminAuthMiddlewareWithOIDC is like MakeAdminAuthMiddleware but also
-// accepts OIDC session cookies when oidcHandler is non-nil.
-func MakeAdminAuthMiddlewareWithOIDC(handler *AdminHandler, oidcHandler *OIDCHandler) func(http.Handler) http.Handler {
-	return MakeAdminAuthMiddlewareWithPlatformAdmins(handler, oidcHandler, nil)
+	return MakeAdminAuthMiddlewareWithPlatformAdmins(handler, nil)
 }
 
 /*
- * MakeAdminAuthMiddlewareWithPlatformAdmins is MakeAdminAuthMiddlewareWithOIDC
- * plus the one thing the customer cookie is now allowed to say.
+ * MakeAdminAuthMiddlewareWithPlatformAdmins is the whole admin guard: the
+ * machine credentials, plus the one thing the customer cookie is allowed to
+ * say.
  *
  * That cookie used to be refused here unconditionally, and the reason still
  * holds for every session that does not carry the Angel Accounts
@@ -196,10 +191,20 @@ func MakeAdminAuthMiddlewareWithOIDC(handler *AdminHandler, oidcHandler *OIDCHan
  * carried it, or whose grant has lapsed, is exactly as unwelcome as before;
  * TestCustomerCookieNeverAuthorizesAdmin still holds.
  *
- * The existing ways in are untouched and additive. Nothing here consults an
- * address, an allowlist, or a stored flag.
+ * There used to be a third way in: an Arena-operated admin SSO application
+ * with its own arena_admin_session cookie, admitted by an email allowlist
+ * (ARENA_OIDC_ADMIN_EMAILS). It is retired. Two places deciding who
+ * administers the platform is one too many, and the second one was a list of
+ * addresses maintained by hand in Arena's environment — nothing revoked it
+ * when somebody left the desk. The support-desk role in Accounts is now the
+ * single source of HUMAN admin authority.
+ *
+ * What is deliberately NOT retired is everything below that authenticates a
+ * machine: ARENA_ADMIN_TOKEN, database-issued admin tokens, and the loopback
+ * bypass. Those are automation credentials, not identities, and they are also
+ * the break-glass path if Accounts is unreachable.
  */
-func MakeAdminAuthMiddlewareWithPlatformAdmins(handler *AdminHandler, oidcHandler *OIDCHandler, customerHandler *CustomerOIDCHandler) func(http.Handler) http.Handler {
+func MakeAdminAuthMiddlewareWithPlatformAdmins(handler *AdminHandler, customerHandler *CustomerOIDCHandler) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			cfg := &config.C
@@ -210,16 +215,8 @@ func MakeAdminAuthMiddlewareWithPlatformAdmins(handler *AdminHandler, oidcHandle
 				return
 			}
 
-			// Check OIDC session cookie.
-			if oidcHandler != nil {
-				if session := oidcHandler.GetSession(r); session != nil {
-					next.ServeHTTP(w, r.WithContext(withAdminPrincipal(r.Context(), "oidc:"+session.Email)))
-					return
-				}
-			}
-
 			// Check an Angel Accounts sign-in that carries the verified
-			// platform-administrator claim.
+			// platform-administrator claim. This is the only human path.
 			principal, authorized, denyReason := customerHandler.platformAdminPrincipal(r)
 			if authorized {
 				next.ServeHTTP(w, r.WithContext(withAdminPrincipal(r.Context(), principal)))
@@ -239,10 +236,11 @@ func MakeAdminAuthMiddlewareWithPlatformAdmins(handler *AdminHandler, oidcHandle
 				return
 			}
 			if token == "" {
-				// If OIDC is enabled but no token and no session, return 401
-				// with a hint to use SSO login.
-				if oidcHandler != nil {
-					writeError(w, http.StatusUnauthorized, "not authenticated — use SSO login or provide X-Admin-Token")
+				// No credential of any kind. Where a human can sign in, say
+				// so; otherwise the only answer is the machine header.
+				if customerAccountAuthEnabled(customerHandler) {
+					writeError(w, http.StatusUnauthorized,
+						"not authenticated — sign in with Angel Accounts or provide X-Admin-Token")
 					return
 				}
 				writeError(w, http.StatusUnauthorized, "missing X-Admin-Token header")

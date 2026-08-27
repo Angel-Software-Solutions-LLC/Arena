@@ -4,6 +4,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -75,9 +76,10 @@ type platformAdminGrant struct {
 // customer_entitlements.go) — so instead of stretching one answer across a
 // month, the grant simply lapses and the next sign-in re-reads it.
 //
-// The window is the one Arena already uses for an administrator session,
-// ARENA_OIDC_SESSION_TTL_HOURS. When the grant lapses the person stays signed
-// in as a customer; only the admin authority goes.
+// The window is ARENA_OIDC_SESSION_TTL_HOURS, which is now what that variable
+// is for: it used to bound an Arena-operated admin SSO session as well, and
+// that flow is retired. When the grant lapses the person stays signed in as a
+// customer; only the admin authority goes.
 func platformAdminGrantTTL() time.Duration {
 	ttl := time.Duration(config.C.OIDCSessionTTL) * time.Hour
 	if ttl <= 0 {
@@ -174,10 +176,11 @@ func (s *CustomerSession) platformAdminAt(now time.Time) (string, bool) {
  *
  * Mutations are held to the same same-origin and CSRF checks that
  * MakeCustomerAuthMiddleware applies, because this is the customer cookie and
- * a browser attaches it to everything on its own. That is strictly stronger
- * than what the admin SSO cookie is held to, and deliberately so: the admin
- * cookie is only ever sent to the admin app, and this one is sent from every
- * ordinary page of the site.
+ * a browser attaches it to everything on its own. The retired admin SSO cookie
+ * was held to less, and could afford to be: it was only ever sent to the admin
+ * app. This one is sent from every ordinary page of the site, so the panel
+ * sends the session's CSRF token with each mutation (see
+ * AdminSessionInfoHandler) and a request that does not is refused.
  */
 func (h *CustomerOIDCHandler) platformAdminPrincipal(r *http.Request) (principal string, authorized bool, denyReason string) {
 	if h == nil {
@@ -209,4 +212,92 @@ func (h *CustomerOIDCHandler) platformAdminPrincipal(r *http.Request) (principal
 		principal += ":" + role
 	}
 	return principal, true, ""
+}
+
+/*
+ * adminPanelPath returns the Admin Panel a request belongs to, honoring
+ * whichever prefix it arrived on. The router mirrors /admin/* under
+ * /arena/admin/* for prefixed deployments, so a hardcoded "/admin/" sends an
+ * /arena/-mounted visitor to the wrong app.
+ */
+func adminPanelPath(r *http.Request) string {
+	if strings.HasPrefix(r.URL.Path, "/arena/") {
+		return "/arena/admin/"
+	}
+	return "/admin/"
+}
+
+/*
+ * AdminSessionInfoHandler is what the Admin Panel reads before it draws
+ * anything, and it is now answered entirely by the Angel Accounts desk claim.
+ *
+ * The panel used to ask this of an Arena-operated admin SSO application with
+ * its own cookie and its own email allowlist. Both are retired: a human
+ * administrator signs in at Accounts like any other customer, and the desk
+ * role on that sign-in is what this reports. Nothing here is authority — the
+ * admin routes ask platformAdminPrincipal the same question for themselves —
+ * it only tells the browser whether to draw the panel or the sign-in button.
+ *
+ * csrf_token is handed over because the panel's own mutations travel on the
+ * customer cookie and are held to the CSRF check in platformAdminPrincipal.
+ * It is the same token /api/v1/account/session already returns to the same
+ * browser, and it is only ever returned to a request that already carries the
+ * session it belongs to.
+ */
+func (h *CustomerOIDCHandler) AdminSessionInfoHandler(w http.ResponseWriter, r *http.Request) {
+	setCustomerNoStore(w)
+	loginEnabled := customerAccountAuthEnabled(h)
+	unauthenticated := func() {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"authenticated": false,
+			"login_enabled": loginEnabled,
+			"login_url":     customerAPIDashboardPath(r, "/login") + "?return_to=" + url.QueryEscape(adminPanelPath(r)),
+		})
+	}
+	if h == nil {
+		unauthenticated()
+		return
+	}
+	session := h.GetSession(r)
+	if session == nil {
+		unauthenticated()
+		return
+	}
+	h.refreshSessionCookie(w, r, session)
+	role, isAdmin := session.platformAdminAt(time.Now())
+	if !isAdmin {
+		/*
+		 * Signed in, but not at the support desk. This is reported as "not
+		 * authenticated" on purpose: as far as the Admin Panel is concerned
+		 * that is the whole truth, and the panel has nothing else to offer a
+		 * customer. Signing out first is not required — signing in again once
+		 * the desk role exists re-reads the claim.
+		 */
+		unauthenticated()
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"authenticated": true,
+		"login_enabled": loginEnabled,
+		// Named for audit, exactly as the principal is. Nothing branches on it.
+		"role": role,
+		"name": session.Name,
+		// The account id, never an address — the same rule the sign-in log
+		// line and the admin principal follow.
+		"account_id": session.AccountID,
+		"csrf_token": session.CSRFToken,
+		"expires_at": session.ExpiresAt,
+		"logout_url": customerAPIDashboardPath(r, "/logout"),
+	})
+}
+
+// AdminSessionUnavailableHandler answers the Admin Panel's bootstrap when
+// there is no customer sign-in configured at all. The panel then has only the
+// machine paths to offer, which is the honest answer.
+func AdminSessionUnavailableHandler(w http.ResponseWriter, _ *http.Request) {
+	setCustomerNoStore(w)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"authenticated": false,
+		"login_enabled": false,
+	})
 }
