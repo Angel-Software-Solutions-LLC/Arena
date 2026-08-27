@@ -1212,7 +1212,8 @@ tr:hover td{background:rgba(88,166,255,0.07)}
   <button onclick="doLogin()">Authenticate</button>
   <div id="ssoSection" style="display:none;margin-top:8px">
     <div style="color:var(--text2);font-size:11px;margin-bottom:6px">— or —</div>
-    <button onclick="window.location.href=ssoLoginUrl()" style="background:var(--accent);color:#fff;border-color:var(--accent);padding:8px 24px">SSO Login</button>
+    <button onclick="startDeskSignIn()" style="background:var(--accent);color:#fff;border-color:var(--accent);padding:8px 24px">Sign in with Angel Accounts</button>
+    <div style="color:var(--text2);font-size:10px;margin-top:6px">Requires a support-desk role on your account.</div>
   </div>
   <div class="error" id="loginError"></div>
 </div>
@@ -1299,7 +1300,7 @@ tr:hover td{background:rgba(88,166,255,0.07)}
         <span id="botsCount">0 bots</span>
         <span id="sessionTimer">0:00</span>
         <span id="ssoUser" style="display:none;color:var(--green);font-size:11px"></span>
-        <button id="ssoLogoutBtn" onclick="window.location.href=ssoLogoutUrl()" style="display:none;font-size:10px;padding:2px 8px">Logout</button>
+        <button id="ssoLogoutBtn" onclick="deskSignOut()" style="display:none;font-size:10px;padding:2px 8px">Sign out</button>
         <label style="font-size:10px;cursor:pointer"><input type="checkbox" id="soundToggle" style="margin-right:3px" onchange="localStorage.setItem('arena_sound',this.checked)">Sound</label>
         <div class="admin-utility-actions">
           <button onclick="shareTab()" title="Copy link to current tab">Share</button>
@@ -2460,8 +2461,27 @@ const kfWeapons = {};
 const kfKillers = {};
 const kfDeaths = {};
 
+/*
+ * How a human reaches this panel.
+ *
+ * Arena used to run its own admin SSO application: a separate login, a
+ * separate arena_admin_session cookie, and an allowlist of addresses in the
+ * server's environment. That is retired. An administrator now signs in at
+ * Angel Accounts exactly as a customer does, and the support-desk role on that
+ * sign-in is what opens this panel — so the browser is carrying the ordinary
+ * arena_customer_session cookie, which it sends to every page of the site.
+ *
+ * That is why deskCsrfToken exists. A cookie a browser attaches on its own
+ * cannot be the whole of a mutation's authorization, so the server holds admin
+ * mutations made on this cookie to a CSRF token, and hands this panel the
+ * session's token when it says the panel may be drawn. Reads do not need it.
+ *
+ * The X-Admin-Token path below is untouched and unrelated: it is how a machine
+ * authenticates, and how a human gets in if Accounts is unreachable.
+ */
 let ssoEnabled = false;
 let ssoSession = null;
+let deskCsrfToken = '';
 
 // ========== API ==========
 const API_BASE = getAPIBase();
@@ -2478,16 +2498,45 @@ function getPublicAPIBase() {
   return '/api/v1';
 }
 
-function ssoLoginUrl() {
+// Where this panel lives, so a sign-in can be asked to return to it. The
+// server accepts only its own apps as a return target.
+function adminPanelPath() {
   const p = location.pathname;
-  if (p.startsWith('/arena/')) return '/arena/admin/login';
-  return '/admin/login';
+  if (p.startsWith('/arena/')) return '/arena/admin/';
+  return '/admin/';
 }
 
-function ssoLogoutUrl() {
-  const p = location.pathname;
-  if (p.startsWith('/arena/')) return '/arena/admin/logout';
-  return '/admin/logout';
+// The Accounts sign-in. The bootstrap read below supplies this; the fallback
+// is only for the case where it could not be reached at all.
+function deskLoginUrl() {
+  if (ssoSession && ssoSession.login_url) return ssoSession.login_url;
+  return getPublicAPIBase() + '/dashboard/login?return_to=' + encodeURIComponent(adminPanelPath());
+}
+
+function startDeskSignIn() {
+  window.location.href = deskLoginUrl();
+}
+
+/*
+ * Signing out is a mutation on the customer session, so it is a POST carrying
+ * the CSRF token — and it signs the person out of the whole site, not just
+ * this panel, because there is only one session now.
+ */
+async function deskSignOut() {
+  const url = (ssoSession && ssoSession.logout_url) || (getPublicAPIBase() + '/dashboard/logout');
+  try {
+    await fetch(url, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {'X-CSRF-Token': deskCsrfToken, 'Content-Type': 'application/json'},
+    });
+  } catch (e) {
+    // Nothing useful to do; reloading still lands on the sign-in screen, and
+    // the session either went or the next bootstrap read will say it did not.
+  }
+  ssoSession = null;
+  deskCsrfToken = '';
+  window.location.reload();
 }
 
 function getSessionUrl() {
@@ -2497,9 +2546,14 @@ function getSessionUrl() {
 }
 
 async function api(path, opts={}) {
+  const headers = {'X-Admin-Token': token, 'Content-Type':'application/json'};
+  // Only a desk session needs this, and only on mutations. Sending it on a
+  // read is harmless and keeps the call site from having to know the method.
+  if (deskCsrfToken) headers['X-CSRF-Token'] = deskCsrfToken;
   const res = await fetch(API_BASE + path, {
     ...opts,
-    headers: {'X-Admin-Token': token, 'Content-Type':'application/json', ...(opts.headers||{})}
+    credentials: 'same-origin',
+    headers: {...headers, ...(opts.headers||{})}
   });
   if (res.status === 401 || res.status === 403) { logout(); throw new Error('unauthorized'); }
   if (res.status === 429) {
@@ -2543,6 +2597,10 @@ async function testAuth() {
 function logout() {
   token = '';
   localStorage.removeItem('arena_admin_token');
+  // Only forgets what this tab was using. The Accounts session itself is
+  // ended by deskSignOut(); a lapsed or refused desk grant lands here too.
+  ssoSession = null;
+  deskCsrfToken = '';
   stopSSE();
   sseLastEventId = 0;
   if (overviewInterval) clearInterval(overviewInterval);
@@ -2553,14 +2611,20 @@ function logout() {
   stopDebugAuto();
   document.getElementById('app').style.display = 'none';
   document.getElementById('login').style.display = 'flex';
+  // A desk grant that lapsed or was refused mid-session lands here, and the
+  // panel may have gone straight in at boot without ever drawing the sign-in.
+  // Put the way back in on screen wherever there is one.
+  if (ssoEnabled) document.getElementById('ssoSection').style.display = '';
 }
 
 function showApp() {
   document.getElementById('login').style.display = 'none';
   document.getElementById('app').style.display = 'grid';
-  // Show SSO user info if logged in via OIDC
+  // Name whoever the desk claim says is here, and their role if Accounts
+  // named one. Never an address: the server does not send one.
   if (ssoSession && ssoSession.authenticated) {
-    document.getElementById('ssoUser').textContent = '🔑 ' + (ssoSession.name || ssoSession.email);
+    const who = ssoSession.name || ssoSession.account_id || 'signed in';
+    document.getElementById('ssoUser').textContent = '🔑 ' + who + (ssoSession.role ? ' (' + ssoSession.role + ')' : '');
     document.getElementById('ssoUser').style.display = '';
     document.getElementById('ssoLogoutBtn').style.display = '';
   }
@@ -2658,6 +2722,7 @@ async function startFetchSSE(url, controller) {
     const streamUrl = new URL(url, location.origin);
     if (sseLastEventId > 0) streamUrl.searchParams.set('since_id', String(sseLastEventId));
     const res = await fetch(streamUrl, {
+      credentials: 'same-origin',
       headers: {'X-Admin-Token': token, 'Accept': 'text/event-stream'},
       signal: controller.signal,
     });
@@ -7414,26 +7479,31 @@ async function banSpectatorIP(ip, index) {
 // Load tab from URL parameter
 const urlTab = new URLSearchParams(window.location.search).get('tab');
 
-// Check SSO session first, then fall back to token auth
+// Ask the server what this browser's Angel Accounts sign-in is worth here,
+// then fall back to token auth.
 (async function init() {
   try {
-    const res = await fetch(getSessionUrl());
+    const res = await fetch(getSessionUrl(), {credentials: 'same-origin', cache: 'no-store'});
     if (res.ok) {
       const data = await res.json();
       if (data.authenticated) {
         ssoEnabled = true;
         ssoSession = data;
+        deskCsrfToken = data.csrf_token || '';
         showApp();
         return;
       }
-      // SSO endpoint exists but not authenticated — show SSO button
+      // Signing in is possible but this browser is not a desk administrator
+      // (signed out, signed in as an ordinary customer, or the grant window
+      // has closed) — offer the sign-in.
       if (data.login_enabled !== false) {
         ssoEnabled = true;
+        ssoSession = data;
         document.getElementById('ssoSection').style.display = '';
       }
     }
   } catch(e) {
-    // SSO endpoint not available (OIDC disabled) — hide SSO button
+    // No customer sign-in configured on this deployment — token auth only.
   }
 
   // Fall back to token auth

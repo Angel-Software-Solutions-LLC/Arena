@@ -18,7 +18,7 @@ import (
 // TestAdminRateLimitAppliesToFailedAuthRequests guards against the admin
 // route composition regressing to auth-then-rate-limit ordering. chi's
 // Use() wraps in registration order (first = outermost), and every
-// rejection branch in MakeAdminAuthMiddlewareWithOIDC returns without
+// rejection branch in MakeAdminAuthMiddlewareWithPlatformAdmins returns without
 // calling next — so if the auth middleware is registered before the rate
 // limiter, every failed X-Admin-Token guess skips the limiter entirely and
 // brute-forcing the token is unthrottled. This mirrors router.go's actual
@@ -59,7 +59,7 @@ func TestAdminRateLimitAppliesToFailedAuthRequests(t *testing.T) {
 	r.Route("/probe", func(admin chi.Router) {
 		// Same order as router.go's fixed /admin mounts: rate limit first.
 		admin.Use(security.RateLimitMiddleware(rpm))
-		admin.Use(MakeAdminAuthMiddlewareWithOIDC(nil, nil))
+		admin.Use(MakeAdminAuthMiddlewareWithPlatformAdmins(nil, nil))
 		admin.Get("/", func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		})

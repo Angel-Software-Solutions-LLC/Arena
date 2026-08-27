@@ -981,7 +981,6 @@ func TestCosmeticCommerceOrderHistoryIsScopedAndBounded(t *testing.T) {
 func TestCosmeticCommerceRoutesExistAtRootAndArenaPrefixes(t *testing.T) {
 	previous := config.C
 	t.Cleanup(func() { config.C = previous })
-	config.C.OIDCEnabled = false
 	config.C.CustomerOIDCEnabled = false
 	config.C.AdminLocalhostBypass = false
 	config.C.AdminToken = ""

@@ -257,9 +257,8 @@ func TestCustomerCookieNeverAuthorizesAdmin(t *testing.T) {
 	config.C.AdminLocalhostBypass = false
 	config.C.AdminToken = "admin-secret"
 
-	adminOIDC := &OIDCHandler{sessions: make(map[string]*OIDCSession)}
 	called := false
-	protected := MakeAdminAuthMiddlewareWithOIDC(nil, adminOIDC)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+	protected := MakeAdminAuthMiddlewareWithPlatformAdmins(nil, nil)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		called = true
 	}))
 	req := httptest.NewRequest(http.MethodGet, "https://arena.example/api/v1/admin/status", nil)
@@ -276,7 +275,6 @@ func TestCustomerCookieNeverAuthorizesAdmin(t *testing.T) {
 func TestCustomerDashboardAuthRoutesExistWhenLoginDisabled(t *testing.T) {
 	previous := config.C
 	t.Cleanup(func() { config.C = previous })
-	config.C.OIDCEnabled = false
 	config.C.CustomerOIDCEnabled = false
 	router := NewRouter(game.NewGameEngine())
 

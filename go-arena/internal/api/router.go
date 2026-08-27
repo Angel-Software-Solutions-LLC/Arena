@@ -113,8 +113,8 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 	commerceHandler := NewCosmeticCommerceHandler(engine)
 	accountKeysHandler := NewAccountKeysHandler(engine)
 
-	// Initialise OIDC handler (nil if disabled/misconfigured).
-	oidcHandler := NewOIDCHandler()
+	// Angel Accounts is the only sign-in Arena has, for customers and for
+	// administrators alike (nil if disabled/misconfigured).
 	customerOIDCHandler := newCustomerOIDCHandlerWithAuthority(platformAuthority)
 	checkoutReady := commerceHandler.Enabled() && customerAccountAuthEnabled(customerOIDCHandler) && security.RedisClient != nil
 	commerceHandler.checkoutEnabled = checkoutReady
@@ -158,21 +158,21 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 	}
 	adminHandler.ChatHub = chatHub
 
-	// --- OIDC routes (mounted OUTSIDE admin auth — these handle pre-auth flow) ---
-	if oidcHandler != nil {
-		// Rate-limited per IP so an attacker can't grow the in-memory CSRF
-		// state/session maps unbounded by hammering /admin/login before the
-		// 5-minute cleanup loop runs.
-		oidcEntry := security.RateLimitMiddleware(config.C.AdminRateLimitRPM)
-		r.With(oidcEntry).Get("/admin/login", oidcHandler.LoginHandler)
-		r.With(oidcEntry).Get("/admin/callback", oidcHandler.CallbackHandler)
-		r.Get("/admin/logout", oidcHandler.LogoutHandler)
-		r.Get("/api/v1/admin/session", oidcHandler.SessionInfoHandler)
-		// Mirror under /arena prefix
-		r.With(oidcEntry).Get("/arena/admin/login", oidcHandler.LoginHandler)
-		r.With(oidcEntry).Get("/arena/admin/callback", oidcHandler.CallbackHandler)
-		r.Get("/arena/admin/logout", oidcHandler.LogoutHandler)
-		r.Get("/arena/api/v1/admin/session", oidcHandler.SessionInfoHandler)
+	/*
+	 * --- Sign-in routes (mounted OUTSIDE admin auth — these handle pre-auth
+	 * flow) ---
+	 *
+	 * There is no /admin/login, /admin/callback or /admin/logout any more.
+	 * The Arena-operated admin SSO application those served, and the
+	 * ARENA_OIDC_ADMIN_EMAILS allowlist that admitted people to it, are
+	 * retired: a human administrator signs in at Angel Accounts like any
+	 * other customer and is admitted by the support-desk role on that
+	 * sign-in. /api/v1/admin/session stays, because the Admin Panel reads it
+	 * to decide what to draw — it now reports that desk claim.
+	 */
+	if customerOIDCHandler != nil {
+		r.Get("/api/v1/admin/session", customerOIDCHandler.AdminSessionInfoHandler)
+		r.Get("/arena/api/v1/admin/session", customerOIDCHandler.AdminSessionInfoHandler)
 	} else {
 		r.Get("/api/v1/admin/session", AdminSessionUnavailableHandler)
 		r.Get("/arena/api/v1/admin/session", AdminSessionUnavailableHandler)
@@ -299,7 +299,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 			// guesses skip the limiter entirely, since the auth middleware
 			// returns without calling next on every rejection path.
 			admin.Use(security.RateLimitMiddleware(config.C.AdminRateLimitRPM))
-			admin.Use(MakeAdminAuthMiddlewareWithPlatformAdmins(adminHandler, oidcHandler, customerOIDCHandler))
+			admin.Use(MakeAdminAuthMiddlewareWithPlatformAdmins(adminHandler, customerOIDCHandler))
 			adminHandler.Routes(admin)
 			registerCosmeticsAdminRoutes(admin, cosmeticsHandler)
 			admin.Get("/cosmetics/orders", commerceHandler.AdminOrders)
@@ -407,7 +407,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 				// rate limiting must wrap OUTSIDE auth or failed-auth guesses
 				// bypass it entirely.
 				admin.Use(security.RateLimitMiddleware(config.C.AdminRateLimitRPM))
-				admin.Use(MakeAdminAuthMiddlewareWithPlatformAdmins(adminHandler, oidcHandler, customerOIDCHandler))
+				admin.Use(MakeAdminAuthMiddlewareWithPlatformAdmins(adminHandler, customerOIDCHandler))
 				adminHandler.Routes(admin)
 				registerCosmeticsAdminRoutes(admin, cosmeticsHandler)
 				admin.Get("/cosmetics/orders", commerceHandler.AdminOrders)

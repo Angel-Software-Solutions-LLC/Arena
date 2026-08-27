@@ -216,7 +216,7 @@ func signInThroughAngel(t *testing.T, handler *CustomerOIDCHandler, accounts *an
 func callAdminRoute(t *testing.T, handler *CustomerOIDCHandler, cookie *http.Cookie, method string, decorate func(*http.Request)) (int, string) {
 	t.Helper()
 	principal := ""
-	guarded := MakeAdminAuthMiddlewareWithPlatformAdmins(nil, &OIDCHandler{sessions: map[string]*OIDCSession{}}, handler)(
+	guarded := MakeAdminAuthMiddlewareWithPlatformAdmins(nil, handler)(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			principal = adminPrincipalFromContext(r.Context())
 			w.WriteHeader(http.StatusNoContent)
