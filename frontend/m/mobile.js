@@ -669,20 +669,53 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   function renderLobbyRoster(state) {
     const players = state.players || [];
-    const html = players.length === 0
-      ? '<p class="panel-empty">No bots connected yet.</p>'
-      : players.map((p) => `
-        <div class="p-row" style="cursor:default">
-          <span class="p-dot" style="background:${esc(p.avatar_color || '#fff')};color:${esc(p.avatar_color || '#fff')}"></span>
-          <span class="p-main">
-            <span class="p-name">${esc(p.name)}</span>
-            <span class="p-sub">${esc(p.weapon || '?')}</span>
-          </span>
-          <span class="p-kills">Ready</span>
-        </div>`).join('');
-    if (html !== rosterCache) {
-      ui.panelPlayers.innerHTML = html;
-      rosterCache = html;
+    const cacheKey = players.length === 0
+      ? 'empty'
+      : players.map((p) => `${p.name}|${p.weapon}|${p.avatar_color}`).join('\n');
+    if (cacheKey !== rosterCache) {
+      ui.panelPlayers.textContent = '';
+      if (players.length === 0) {
+        const empty = document.createElement('p');
+        empty.className = 'panel-empty';
+        empty.textContent = 'No bots connected yet.';
+        ui.panelPlayers.appendChild(empty);
+      } else {
+        players.forEach((p) => {
+          const row = document.createElement('div');
+          row.className = 'p-row';
+          row.style.cursor = 'default';
+          
+          const dot = document.createElement('span');
+          dot.className = 'p-dot';
+          const color = p.avatar_color || '#fff';
+          dot.style.background = color;
+          dot.style.color = color;
+          row.appendChild(dot);
+          
+          const main = document.createElement('span');
+          main.className = 'p-main';
+          
+          const name = document.createElement('span');
+          name.className = 'p-name';
+          name.textContent = p.name;
+          main.appendChild(name);
+          
+          const sub = document.createElement('span');
+          sub.className = 'p-sub';
+          sub.textContent = p.weapon || '?';
+          main.appendChild(sub);
+          
+          row.appendChild(main);
+          
+          const kills = document.createElement('span');
+          kills.className = 'p-kills';
+          kills.textContent = 'Ready';
+          row.appendChild(kills);
+          
+          ui.panelPlayers.appendChild(row);
+        });
+      }
+      rosterCache = cacheKey;
       resetRosterRows();
     }
   }

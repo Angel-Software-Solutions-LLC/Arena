@@ -253,9 +253,9 @@ function renderLeaderboard(data, podiumEl, tbody, state) {
     const tr = document.createElement('tr');
     tr.innerHTML = `<td${rank <= 3 ? ` class="rank-${rank}"` : ''}>${getRankDisplay(rank)}</td>
       <td>${escapeHtml(entry.name)}</td>
-      <td>${statValue}</td>
-      <td>${entry.deaths > 0 ? (entry.kills / entry.deaths).toFixed(1) : `${entry.kills}.0`}</td>
-      <td>${entry.elo}</td>`;
+      <td>${escapeHtml(statValue)}</td>
+      <td>${escapeHtml(entry.deaths > 0 ? (entry.kills / entry.deaths).toFixed(1) : `${entry.kills}.0`)}</td>
+      <td>${escapeHtml(entry.elo)}</td>`;
     if (rank <= 3) tr.className = `rank-${rank}`;
     // Motion classes only when the row's rank ACTUALLY changed since the
     // last refresh of the same view, so steady-state refreshes stay still.
@@ -288,8 +288,8 @@ function renderBountyBoard(data, tbody) {
     const tr = document.createElement('tr');
     tr.innerHTML = `<td${rank <= 3 ? ` class="rank-${rank}"` : ''}>${getRankDisplay(rank)}</td>
       <td><span class="bounty-bot"><span class="bounty-dot" style="background:${escapeHtml(entry.avatar_color || '#fff')}"></span>${escapeHtml(entry.name)}</span></td>
-      <td><span class="bounty-chip">${entry.bounty_points} pts</span></td>
-      <td>${entry.win_streak}</td>
+      <td><span class="bounty-chip">${escapeHtml(entry.bounty_points)} pts</span></td>
+      <td>${escapeHtml(entry.win_streak)}</td>
       <td>${entry.is_target ? '<span class="bounty-status live">LIVE TARGET</span>' : '<span class="bounty-status dormant">TRACKED</span>'}</td>`;
     if (rank <= 3) tr.className = `rank-${rank}`;
     tbody.appendChild(tr);
@@ -312,21 +312,21 @@ function renderWeaponStatsBoard(data, podiumEl, tbody, updatedEl) {
 
   entries.forEach((entry) => {
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td><span class="weapon-tier tier-${entry.tier}">${entry.tier}</span></td>
+    tr.innerHTML = `<td><span class="weapon-tier tier-${escapeHtml(entry.tier)}">${escapeHtml(entry.tier)}</span></td>
       <td>
         <div class="weapon-name-cell">
           <strong>${escapeHtml(toTitleCase(entry.weapon))}</strong>
-          <span>${escapeHtml(entry.special)} - ${entry.rounds_tracked} rounds tracked</span>
+          <span>${escapeHtml(entry.special)} - ${escapeHtml(entry.rounds_tracked)} rounds tracked</span>
         </div>
       </td>
       <td>${formatScore(entry.meta_score)}</td>
       <td>${formatScore(entry.recent_form)}</td>
       <td>${renderBalanceSignal(entry.balance_direction, entry.recent_diff_pct, entry.recent_rounds, entry.history || [], entry.weapon)}</td>
-      <td>${entry.kills}</td>
-      <td>${entry.kills_24h}</td>
+      <td>${escapeHtml(entry.kills)}</td>
+      <td>${escapeHtml(entry.kills_24h)}</td>
       <td>${renderWeaponStatValue(entry.damage_exact.toFixed(2), entry.last_damage_move || entry.damage_trend, entry.damage_shift_pct, 'damage', entry.history || [], entry.weapon, entry.base_damage, `base ${entry.base_damage}`)}</td>
       <td>${renderWeaponStatValue(`${entry.cooldown.toFixed(2)}s`, entry.last_cooldown_move || entry.cooldown_trend, entry.cooldown_shift_pct, 'cooldown', entry.history || [], entry.weapon, entry.base_cooldown, `base ${entry.base_cooldown.toFixed(2)}s`)}</td>
-      <td>${entry.grid_range} tiles</td>`;
+      <td>${escapeHtml(entry.grid_range)} tiles</td>`;
     tbody.appendChild(tr);
   });
 }
@@ -353,11 +353,11 @@ function renderPodium(entries, container, sort) {
       </div>
       <div class="podium-metric">
         <span class="podium-metric-label">${escapeHtml(SORT_OPTIONS[sort] || 'ELO Rating')}</span>
-        <span class="podium-metric-value">${statValue}</span>
+        <span class="podium-metric-value">${escapeHtml(statValue)}</span>
       </div>
       <div class="podium-substats">
-        <span>K/D ${kd}</span>
-        <span>ELO ${entry.elo}</span>
+        <span>K/D ${escapeHtml(kd)}</span>
+        <span>ELO ${escapeHtml(entry.elo)}</span>
       </div>
     </article>`;
   }).join('');
@@ -376,7 +376,7 @@ function renderWeaponPodium(entries, container) {
     const accent = rank === 1 ? 'var(--accent-gold)' : rank === 2 ? '#d7dde6' : '#ffb57a';
 
     return `<article class="podium-card weapon-podium-card rank-${rank}" style="--podium-accent:${accent}">
-      <div class="podium-rank">${entry.tier} Tier - ${getRankDisplay(rank)}</div>
+      <div class="podium-rank">${escapeHtml(entry.tier)} Tier - ${getRankDisplay(rank)}</div>
       <div class="podium-name-row">
         <strong>${escapeHtml(toTitleCase(entry.weapon))}</strong>
       </div>
@@ -385,9 +385,9 @@ function renderWeaponPodium(entries, container) {
         <span class="podium-metric-value">${formatScore(entry.meta_score)}</span>
       </div>
       <div class="podium-substats">
-        <span>${entry.kills} kills</span>
-        <span>${entry.kills_24h} in 24h</span>
-        <span>${entry.damage} dmg</span>
+        <span>${escapeHtml(entry.kills)} kills</span>
+        <span>${escapeHtml(entry.kills_24h)} in 24h</span>
+        <span>${escapeHtml(entry.damage)} dmg</span>
       </div>
     </article>`;
   }).join('');

@@ -169,19 +169,53 @@ function renderProfile(container, profile) {
     botsHTML = `<div class="prf-bots">${bots.map(renderBotRow).join('')}</div>`;
   }
 
-  container.innerHTML = `
-    <div class="prf-head">
-      <div class="prf-avatar" style="${avatarStyle(profile.avatar_color)}"></div>
-      <div>
-        <div class="prf-name">${escapeHTML(profile.display_name || 'Arena developer')}</div>
-        <div class="prf-handle">${escapeHTML(profile.chat_handle || '')}</div>
-      </div>
-    </div>
-    <p class="prf-joined">${escapeHTML(joinedText)}</p>
-    ${profile.bio ? `<p class="prf-bio">${escapeHTML(profile.bio)}</p>` : ''}
-    <p class="prf-bots-title">Bots</p>
-    ${botsHTML}
-  `;
+  // Build DOM structure safely
+  container.textContent = '';
+  
+  const head = document.createElement('div');
+  head.className = 'prf-head';
+  
+  const avatar = document.createElement('div');
+  avatar.className = 'prf-avatar';
+  avatar.setAttribute('style', avatarStyle(profile.avatar_color));
+  
+  const headText = document.createElement('div');
+  
+  const name = document.createElement('div');
+  name.className = 'prf-name';
+  name.textContent = profile.display_name || 'Arena developer';
+  
+  const handle = document.createElement('div');
+  handle.className = 'prf-handle';
+  handle.textContent = profile.chat_handle || '';
+  
+  headText.appendChild(name);
+  headText.appendChild(handle);
+  head.appendChild(avatar);
+  head.appendChild(headText);
+  
+  const joinedP = document.createElement('p');
+  joinedP.className = 'prf-joined';
+  joinedP.textContent = joinedText;
+  
+  container.appendChild(head);
+  container.appendChild(joinedP);
+  
+  if (profile.bio) {
+    const bioP = document.createElement('p');
+    bioP.className = 'prf-bio';
+    bioP.textContent = profile.bio;
+    container.appendChild(bioP);
+  }
+  
+  const botsTitle = document.createElement('p');
+  botsTitle.className = 'prf-bots-title';
+  botsTitle.textContent = 'Bots';
+  container.appendChild(botsTitle);
+  
+  const botsContainer = document.createElement('div');
+  botsContainer.innerHTML = botsHTML;
+  container.appendChild(botsContainer);
 }
 
 /** Fetch and open the profile popup for accountId. No-op for a falsy id (anonymous/dev messages). */

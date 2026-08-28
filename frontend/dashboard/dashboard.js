@@ -1929,7 +1929,7 @@ function renderEloHistory(name) {
   // Dots + labels
   h.forEach((e,i)=>{
     const y=110-((e.elo-min)/rng)*100;
-    svg+=`<circle cx="${i*20+10}" cy="${y}" r="3" fill="var(--accent)"><title>${e.time}: ${e.elo}</title></circle>`;
+    svg+=`<circle cx="${i*20+10}" cy="${y}" r="3" fill="var(--accent)"><title>${esc(e.time)}: ${e.elo}</title></circle>`;
     if (i===0||i===h.length-1) svg+=`<text x="${i*20+10}" y="${y-8}" fill="var(--text2)" font-size="9" text-anchor="middle">${e.elo}</text>`;
   });
   svg += '</svg>';
