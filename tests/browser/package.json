@@ -9,7 +9,7 @@
     "@playwright/test": "1.62.1"
   },
   "dependencies": {
-    "babylonjs": "^9.21.2",
+    "babylonjs": "^9.22.2",
     "earcut": "^3.2.3"
   }
 }
