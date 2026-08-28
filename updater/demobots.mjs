@@ -40,13 +40,7 @@ export function demobotsConfigFromEnv(env = process.env) {
 /** The deploy key is operator-provisioned at a fixed name inside the fleet's
  * deploy dir, which is already the one host path this feature mounts. */
 export function deployKeyPath(config) {
-  const base = path.resolve(config.deployDir);
-  const target = path.resolve(base, ".deploy-key");
-  const rel = path.relative(base, target);
-  if (rel.startsWith('..') || path.isAbsolute(rel)) {
-    throw new Error('Invalid path');
-  }
-  return target;
+  return posix.join(config.deployDir, ".deploy-key");
 }
 
 /**
@@ -90,17 +84,10 @@ export function demobotsState(config = demobotsConfigFromEnv()) {
 
 async function gitEnv(config) {
   const keyPath = deployKeyPath(config);
-  const path = require('path');
-  const baseDir = path.resolve(__dirname);
-  const resolvedKeyPath = path.resolve(baseDir, keyPath);
-  const relativePath = path.relative(baseDir, resolvedKeyPath);
-  if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
-    throw new Error(`Invalid key path`);
-  }
-  await access(resolvedKeyPath).catch(() => {
-    throw new Error(`demobots deploy key not found at ${resolvedKeyPath}`);
+  await access(keyPath).catch(() => {
+    throw new Error(`demobots deploy key not found at ${keyPath}`);
   });
-  return { ...process.env, GIT_SSH_COMMAND: buildGitSSHCommand(resolvedKeyPath) };
+  return { ...process.env, GIT_SSH_COMMAND: buildGitSSHCommand(keyPath) };
 }
 
 /** Resolve the private repo's branch tip over SSH (no clone). */

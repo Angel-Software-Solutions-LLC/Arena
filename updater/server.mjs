@@ -681,17 +681,9 @@ async function restoreOwnership() {
     return;
   }
 
-  const base = path.resolve(DEPLOY_DIR);
   const targets = entries
     .filter((entry) => !OWNERSHIP_EXEMPT_NAMES.has(entry.name))
-    .map((entry) => {
-      const target = path.resolve(base, entry.name);
-      const relative = path.relative(base, target);
-      if (relative.startsWith('..') || path.isAbsolute(relative)) {
-        throw new Error('Invalid path');
-      }
-      return target;
-    });
+    .map((entry) => join(DEPLOY_DIR, entry.name));
 
   try {
     // Restore DEPLOY_DIR itself first (non-recursively -- the -R below handles

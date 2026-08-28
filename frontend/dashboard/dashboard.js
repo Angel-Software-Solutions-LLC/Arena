@@ -1908,17 +1908,32 @@ function renderPerf(s) {
 }
 
 // ========== Elo History ==========
+function normalizeEloHistory(value) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(-50).flatMap(entry => {
+    if (!entry || typeof entry !== 'object') return [];
+    const elo = Number(entry.elo);
+    if (!Number.isFinite(elo)) return [];
+    return [{time:String(entry.time ?? '').slice(0, 32), elo}];
+  });
+}
+function readEloHistory(key) {
+  try { return normalizeEloHistory(JSON.parse(localStorage.getItem(key) || '[]')); }
+  catch (e) { return []; }
+}
 function trackElo(name, elo) {
   const key = 'elo_history_'+name;
-  let h; try { h=JSON.parse(localStorage.getItem(key)||'[]'); } catch(e) { h=[]; }
+  const h = readEloHistory(key);
+  const normalizedElo = Number(elo);
+  if (!Number.isFinite(normalizedElo)) return;
   const now = new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
-  if (!h.length || h[h.length-1].elo !== elo) h.push({time:now, elo});
+  if (!h.length || h[h.length-1].elo !== normalizedElo) h.push({time:now, elo:normalizedElo});
   if (h.length > 50) h.shift();
   localStorage.setItem(key, JSON.stringify(h));
 }
 function renderEloHistory(name) {
   const key = 'elo_history_'+name;
-  let h; try { h=JSON.parse(localStorage.getItem(key)||'[]'); } catch(e) { h=[]; }
+  const h = readEloHistory(key);
   if (h.length < 2) { document.getElementById('eloHistory').innerHTML='<span style="color:var(--text2)">Refresh multiple times to build Elo history</span>'; return; }
   const min=Math.min(...h.map(e=>e.elo))-20, max=Math.max(...h.map(e=>e.elo))+20;
   const rng=max-min||1;
@@ -1929,7 +1944,7 @@ function renderEloHistory(name) {
   // Dots + labels
   h.forEach((e,i)=>{
     const y=110-((e.elo-min)/rng)*100;
-    svg+=`<circle cx="${i*20+10}" cy="${y}" r="3" fill="var(--accent)"><title>${e.time}: ${e.elo}</title></circle>`;
+    svg+=`<circle cx="${i*20+10}" cy="${y}" r="3" fill="var(--accent)"><title>${esc(e.time)}: ${e.elo}</title></circle>`;
     if (i===0||i===h.length-1) svg+=`<text x="${i*20+10}" y="${y-8}" fill="var(--text2)" font-size="9" text-anchor="middle">${e.elo}</text>`;
   });
   svg += '</svg>';

@@ -132,6 +132,7 @@ jobs:
           node scripts/test-admin-sse-reconnect.mjs
           node scripts/test-admin-connection-diagnostics.mjs
           node scripts/test-dashboard-startup.mjs
+          node scripts/test-dashboard-elo-history.mjs
           node scripts/test-dashboard-account-cosmetics.mjs
           node scripts/test-dashboard-cosmetics-preview.mjs
           node scripts/test-dashboard-accounts-login.mjs

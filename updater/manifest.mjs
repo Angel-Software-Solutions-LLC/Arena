@@ -31,7 +31,7 @@ export async function listReleaseFiles(rootDir) {
   for (const entry of entries) {
     if (!entry.isFile()) continue;
     const parent = entry.parentPath ?? entry.path;
-    const absolute = resolve(rootDir, join(parent, entry.name));
+    const absolute = join(parent, entry.name);
     const relative = absolute.slice(rootDir.length + 1).split(sep).join("/");
     files.push(relative);
   }
@@ -71,13 +71,7 @@ export function vanishedFiles(previousFiles, currentFiles, excludedPrefixes) {
  * (both mean "delete nothing this round"). */
 export async function readManifest(deployDir) {
   try {
-    const base = path.resolve(process.cwd());
-    const target = path.resolve(base, deployDir, MANIFEST_FILENAME);
-    const relative = path.relative(base, target);
-    if (relative.startsWith('..') || path.isAbsolute(relative)) {
-      return null;
-    }
-    const raw = await readFile(target, "utf8");
+    const raw = await readFile(join(deployDir, MANIFEST_FILENAME), "utf8");
     const parsed = JSON.parse(raw);
     if (!parsed || !Array.isArray(parsed.files)) return null;
     return parsed.files.filter((entry) => typeof entry === "string");
@@ -88,13 +82,7 @@ export async function readManifest(deployDir) {
 
 export async function writeManifest(deployDir, commitSha, files) {
   const payload = JSON.stringify({ commit: commitSha, files }, null, 0);
-  const base = path.resolve(deployDir);
-  const target = path.resolve(base, MANIFEST_FILENAME);
-  const relative = path.relative(base, target);
-  if (relative.startsWith('..') || path.isAbsolute(relative)) {
-    throw new Error('Invalid path');
-  }
-  await writeFile(target, payload, "utf8");
+  await writeFile(join(deployDir, MANIFEST_FILENAME), payload, "utf8");
 }
 
 /** Delete repo-owned files that vanished from the new release. Missing files
@@ -105,13 +93,7 @@ export async function removeVanishedFiles(deployDir, previousFiles, currentFiles
   const removed = [];
   for (const path of vanishedFiles(previousFiles, currentFiles, excludedPrefixes)) {
     try {
-      const base = resolve(deployDir);
-      const target = resolve(base, path.split("/").join(sep));
-      const rel = relative(base, target);
-      if (rel.startsWith("..") || isAbsolute(rel)) {
-        throw new Error("Invalid file path");
-      }
-      await unlink(target);
+      await unlink(join(deployDir, path.split("/").join(sep)));
       removed.push(path);
     } catch (error) {
       if (error?.code === "ENOENT") continue;

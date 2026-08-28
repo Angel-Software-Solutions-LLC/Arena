@@ -1,7 +1,5 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import path from 'node:path';
-import {fileURLToPath} from 'node:url';
 
 /**
  * The shared footer, held to the contract every Angel site implements.
@@ -17,16 +15,7 @@ import {fileURLToPath} from 'node:url';
  * content, and hover-open written in JavaScript.
  */
 
-const baseDir = path.dirname(fileURLToPath(import.meta.url));
-const base = path.resolve(baseDir, '..');
-const read = (userPath) => {
-  const target = path.resolve(base, userPath);
-  const relative = path.relative(base, target);
-  if (relative.startsWith('..') || path.isAbsolute(relative)) {
-    throw new Error('Invalid file path');
-  }
-  return readFileSync(target, 'utf8');
-};
+const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
 const css = read('frontend/css/site-footer.css');
 const js = read('frontend/js/site-footer.js');
