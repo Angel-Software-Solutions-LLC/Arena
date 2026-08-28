@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
 
 /**
  * Buying moves to the Angel account, and every surface that offers to sell
@@ -20,7 +22,15 @@ import vm from 'node:vm';
  * 409 and name the destination. These are the clients that have to read it.
  */
 
-const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
+const read = (filePath) => {
+  const base = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const target = path.resolve(base, filePath);
+  const relative = path.relative(base, target);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error('Invalid file path');
+  }
+  return readFileSync(target, 'utf8');
+};
 const HANDOFF = 'https://accounts.angel-serv.com/portal/items';
 
 /* ------------------------------------------- the Dashboard cosmetics panel */

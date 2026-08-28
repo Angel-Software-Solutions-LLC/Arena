@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import {copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
-import {join} from 'node:path';
-import {pathToFileURL} from 'node:url';
+import {join, resolve, relative} from 'node:path';
+import {pathToFileURL, fileURLToPath} from 'node:url';
 
 /**
  * Signing in is one press, from wherever the press happens.
@@ -25,7 +25,15 @@ import {pathToFileURL} from 'node:url';
  */
 
 const root = new URL('../', import.meta.url);
-const read = (path) => readFileSync(new URL(path, root), 'utf8');
+const read = (path) => {
+  const base = resolve(fileURLToPath(root));
+  const target = resolve(fileURLToPath(new URL(path, root)));
+  const rel = relative(base, target);
+  if (rel.startsWith('..') || resolve(rel) === rel) {
+    throw new Error('Invalid path');
+  }
+  return readFileSync(target, 'utf8');
+};
 
 /* ------------------------------------------------- sign-in.js, executed */
 

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { brotliCompressSync, constants as zlibConstants } from 'node:zlib';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 
-const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
+const read = (path) => { const base = new URL('.', import.meta.url); const target = new URL(path, base); const relPath = target.pathname.substring(base.pathname.length); if (relPath.startsWith('..') || relPath.includes('/..') || target.protocol !== base.protocol || target.host !== base.host) { throw new Error('Invalid path'); } return readFileSync(target, 'utf8'); };
 const desktop = read('../frontend/index.html');
 const mobile = read('../frontend/m/index.html');
 const shop = read('../frontend/shop/index.html');
