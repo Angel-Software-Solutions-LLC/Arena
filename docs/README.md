@@ -14,7 +14,7 @@ Start here if you are learning the repo or preparing a contribution.
 ## Feature Notes
 
 - [Graphics and animation settings](settings-system.md): how to add viewer-facing visual toggles
-- [Cosmetics and fair monetization](cosmetics-and-monetization.md): 346-item catalog, no-pay-to-win ownership, Stripe checkout, reversals, and launch runbook
+- [Cosmetics and fair monetization](cosmetics-and-monetization.md): 346-item catalog, the one Arena subscription that unlocks it, and the operator runbook
 - [Platform authority migration](platform-authority.md): same-database identity/cosmetics strangler boundary and extraction gates
 - [Combat animation plan](combat-animation-plan.md): historical notes for combat animation work
 - [Agent-readable frontend reference](../frontend/llms.txt): compact protocol reference for AI agents

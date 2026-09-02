@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"testing"
 	"time"
-
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func createCustomerCosmeticsTestBot(t *testing.T, ctx context.Context, suffix string) *Bot {
@@ -75,7 +73,33 @@ func waitForPostgresTestCondition(t *testing.T, ctx context.Context, description
 	}
 }
 
-func TestPostgresCustomerCosmeticsAccountOwnershipAndExclusiveAssignment(t *testing.T) {
+func linkSubscriptionTestBot(t *testing.T, ctx context.Context, account *CustomerAccount, bot *Bot) {
+	t.Helper()
+	if _, err := LinkBotToCustomerAccount(ctx, account.ID, bot.ID); err != nil {
+		t.Fatalf("link %s: %v", bot.ID, err)
+	}
+}
+
+func countLoadoutRows(t *testing.T, ctx context.Context, botID string) int {
+	t.Helper()
+	var rows int
+	if err := Pool.QueryRow(ctx, `SELECT COUNT(*) FROM bot_cosmetic_loadout WHERE bot_id = $1`, botID).Scan(&rows); err != nil {
+		t.Fatalf("count loadout rows for %s: %v", botID, err)
+	}
+	return rows
+}
+
+/*
+ * TestPostgresArenaSubscriptionUnlocksEveryCosmeticForLinkedBots is the
+ * commerce model in one place: there is no per-item ownership in Arena.
+ *
+ * A linked account whose Arena subscription is active may put any paid
+ * cosmetic on any of its bots, the same item on several at once. One without
+ * sees every paid item locked and every free one open. The subscription flag
+ * flipping is what turns the saved looks on and off — nothing is copied per
+ * item and nothing has to be cleaned up when it lapses.
+ */
+func TestPostgresArenaSubscriptionUnlocksEveryCosmeticForLinkedBots(t *testing.T) {
 	ctx := useFreshPostgresSchema(t)
 	if err := EnsureCoreSchema(ctx); err != nil {
 		t.Fatalf("EnsureCoreSchema: %v", err)
@@ -83,303 +107,175 @@ func TestPostgresCustomerCosmeticsAccountOwnershipAndExclusiveAssignment(t *test
 
 	botOne := createCustomerCosmeticsTestBot(t, ctx, "one")
 	botTwo := createCustomerCosmeticsTestBot(t, ctx, "two")
-	botOther := createCustomerCosmeticsTestBot(t, ctx, "other")
-
-	// Fulfillment may arrive before first login. The verified identity claims
-	// exactly that pending email account; a different identity cannot reuse it.
-	firstLicense, created, err := GrantCosmeticLicense(ctx, "Owner@Example.com", "skin-neon-grid", "stripe", "checkout-1")
-	if err != nil || !created {
-		t.Fatalf("GrantCosmeticLicense first = (%+v, %v, %v)", firstLicense, created, err)
-	}
-	pendingAccountID := *firstLicense.AccountID
-	account, err := UpsertVerifiedCustomerAccount(ctx, "owner@example.com", "https://id.example", "owner-subject", "Owner")
+	stranger := createCustomerCosmeticsTestBot(t, ctx, "stranger")
+	account, err := UpsertVerifiedCustomerAccount(ctx, "", "https://id.example", "owner-subject", "Owner")
 	if err != nil {
 		t.Fatalf("UpsertVerifiedCustomerAccount: %v", err)
 	}
-	if account.ID != pendingAccountID || account.EmailVerifiedAt == nil {
-		t.Fatalf("verified account = %+v, pending account ID = %s", account, pendingAccountID)
+	if account.SubscriptionActive || account.SubscriptionSyncedAt != nil {
+		t.Fatalf("a new account is subscribed before any sync: %+v", account)
 	}
-	/*
-	 * A second identity presenting the same address must not end up holding
-	 * this account. It no longer ends up holding an *error* either, and that
-	 * change is deliberate rather than incidental.
-	 *
-	 * The old expectation was ErrCustomerIdentityConflict, and it was produced
-	 * by the UNIQUE index on the address: the insert carried one, the row
-	 * above already had it, and the unique violation surfaced as a conflict.
-	 * Linking now empties that column — that is the entire point of the change
-	 * — so by the time this call is made there is no stored address left for
-	 * anything to collide with. A guarantee that was a side effect of holding
-	 * the data cannot outlive the data.
-	 *
-	 * What matters is unchanged and is what is asserted instead: the intruder
-	 * does not get this account. Claiming an existing row still requires that
-	 * row to be unlinked, so the owner's bots, licenses and handle stay with
-	 * the owner, and the newcomer gets an empty account of its own. Accounts
-	 * is the authority on one-verified-address-per-identity now, which is
-	 * where that rule belongs.
-	 */
-	intruder, err := UpsertVerifiedCustomerAccount(ctx, "owner@example.com", "https://id.example", "attacker-subject", "Other")
+	linkSubscriptionTestBot(t, ctx, account, botOne)
+	linkSubscriptionTestBot(t, ctx, account, botTwo)
+
+	// Not subscribed: paid is locked, free is not, and the bot-key path
+	// agrees with the Dashboard path.
+	if _, err := EquipCustomerCosmetic(ctx, account.ID, botOne.ID, CosmeticSlotBotSkin, "skin-neon-grid"); !errors.Is(err, ErrSubscriptionRequired) {
+		t.Fatalf("paid equip without a subscription error = %v, want ErrSubscriptionRequired", err)
+	}
+	if _, err := EquipCustomerCosmetic(ctx, account.ID, botOne.ID, CosmeticSlotAttachment, "attachment-signal-antenna"); err != nil {
+		t.Fatalf("free equip without a subscription: %v", err)
+	}
+	if _, err := EquipCosmetic(ctx, botOne.ID, CosmeticSlotBotSkin, "skin-neon-grid"); !errors.Is(err, ErrCosmeticNotOwned) {
+		t.Fatalf("bot-key paid equip without a subscription error = %v, want ErrCosmeticNotOwned", err)
+	}
+	locked, err := ListBotCosmetics(ctx, botOne.ID)
 	if err != nil {
-		t.Fatalf("second identity bind error = %v, want a separate account", err)
+		t.Fatalf("ListBotCosmetics locked: %v", err)
 	}
-	if intruder.ID == account.ID {
-		t.Fatalf("second identity took over the owner's account %s", account.ID)
+	paid := 0
+	for _, item := range locked {
+		if item.IsFree != item.Owned {
+			t.Fatalf("unsubscribed inventory item %s free=%v owned=%v, want owned only when free", item.ID, item.IsFree, item.Owned)
+		}
+		if !item.IsFree {
+			paid++
+		}
 	}
-	if intruder.Email != "" {
-		t.Fatalf("second identity stored an address: %q", intruder.Email)
-	}
-
-	/*
-	 * Fulfilment is keyed by account from here on, and these three assertions
-	 * are the reason the account-keyed seam had to exist.
-	 *
-	 * They used to be written against the address. That worked because the
-	 * address was a durable identifier: a late Stripe webhook naming it found
-	 * the same row every time. Linking empties the column, so the address
-	 * stops being able to find this account at all — see the test below, which
-	 * pins that consequence rather than leaving it to be discovered by a
-	 * webhook in production.
-	 */
-	idempotent, created, err := GrantCosmeticLicenseToAccount(ctx, account.ID, "skin-neon-grid", "stripe", "checkout-1")
-	if err != nil || created || idempotent.ID != firstLicense.ID {
-		t.Fatalf("idempotent grant = (%+v, %v, %v)", idempotent, created, err)
-	}
-	if _, _, err := GrantCosmeticLicenseToAccount(ctx, account.ID, "weapon-solar-flare", "stripe", "checkout-1"); !errors.Is(err, ErrCosmeticLicenseGrantConflict) {
-		t.Fatalf("conflicting external reference error = %v", err)
-	}
-	if _, _, err := GrantCosmeticLicenseToAccount(ctx, account.ID, "weapon-solar-flare", "stripe", ""); !errors.Is(err, ErrCosmeticLicenseReferenceRequired) {
-		t.Fatalf("provider grant without reference error = %v, want ErrCosmeticLicenseReferenceRequired", err)
+	if paid < 300 {
+		t.Fatalf("catalog exposes %d paid items to the unsubscribed bot, want the whole launch catalog listed as locked", paid)
 	}
 
-	linkedBotOne, err := LinkBotToCustomerAccount(ctx, account.ID, botOne.ID)
+	// Accounts reports an active Arena entitlement at sign-in.
+	syncedAt := time.Now().UTC().Truncate(time.Microsecond)
+	change, err := SetCustomerSubscription(ctx, account.ID, true, syncedAt)
+	if err != nil || !change.Changed || !change.Active || len(change.BotIDs) != 2 ||
+		change.BotIDs[0] != botOne.ID || change.BotIDs[1] != botTwo.ID {
+		t.Fatalf("subscribe = (%+v, %v), want a change naming both linked bots", change, err)
+	}
+	account, err = GetCustomerAccount(ctx, account.ID)
+	if err != nil || !account.SubscriptionActive || account.SubscriptionSyncedAt == nil || !account.SubscriptionSyncedAt.Equal(syncedAt) {
+		t.Fatalf("account after subscribe = (%+v, %v)", account, err)
+	}
+	if _, err := EquipCustomerCosmetic(ctx, account.ID, botOne.ID, CosmeticSlotBotSkin, "skin-neon-grid"); err != nil {
+		t.Fatalf("subscribed equip on bot one: %v", err)
+	}
+	// The same paid item on a second bot at the same time: there is no copy
+	// to move between them any more.
+	if _, err := EquipCustomerCosmetic(ctx, account.ID, botTwo.ID, CosmeticSlotBotSkin, "skin-neon-grid"); err != nil {
+		t.Fatalf("subscribed equip of the same item on bot two: %v", err)
+	}
+	if _, err := EquipCustomerCosmetic(ctx, account.ID, botTwo.ID, CosmeticSlotTrail, "trail-ember-sparks"); err != nil {
+		t.Fatalf("subscribed trail equip on bot two: %v", err)
+	}
+	if _, err := EquipCosmetic(ctx, botOne.ID, CosmeticSlotWeaponSkin, "weapon-solar-flare"); err != nil {
+		t.Fatalf("bot-key paid equip with a subscription: %v", err)
+	}
+	equipped, err := GetEquippedCosmeticsForBots(ctx, []string{botOne.ID, botTwo.ID})
 	if err != nil {
-		t.Fatalf("link bot one: %v", err)
+		t.Fatalf("GetEquippedCosmeticsForBots subscribed: %v", err)
 	}
-	if linkedBotOne.AvatarColor != botOne.AvatarColor || linkedBotOne.DefaultWeapon != botOne.DefaultWeapon {
-		t.Fatalf("linked bot one preview metadata = %+v, want color=%q weapon=%q", linkedBotOne, botOne.AvatarColor, botOne.DefaultWeapon)
+	if equipped[botOne.ID][CosmeticSlotBotSkin] != "neon_grid" || equipped[botOne.ID][CosmeticSlotWeaponSkin] != "solar_flare" ||
+		equipped[botOne.ID][CosmeticSlotAttachment] != "signal_antenna" || equipped[botOne.ID][CosmeticSlotTrail] != "standard" ||
+		equipped[botTwo.ID][CosmeticSlotBotSkin] != "neon_grid" || equipped[botTwo.ID][CosmeticSlotTrail] != "ember_sparks" {
+		t.Fatalf("subscribed loadouts = %v", equipped)
 	}
-	if _, err := LinkBotToCustomerAccount(ctx, account.ID, botTwo.ID); err != nil {
-		t.Fatalf("link bot two: %v", err)
-	}
-	linkedBots, err := ListAccountBots(ctx, account.ID)
+	unlocked, err := ListBotCosmetics(ctx, botOne.ID)
 	if err != nil {
-		t.Fatalf("ListAccountBots: %v", err)
+		t.Fatalf("ListBotCosmetics unlocked: %v", err)
 	}
-	if len(linkedBots) != 2 || linkedBots[0].AvatarColor != botOne.AvatarColor || linkedBots[0].DefaultWeapon != botOne.DefaultWeapon {
-		t.Fatalf("linked bot inventory preview metadata = %+v", linkedBots)
+	for _, item := range unlocked {
+		if !item.Owned {
+			t.Fatalf("subscribed inventory still locks %s", item.ID)
+		}
 	}
-	change, err := AssignCosmeticLicense(ctx, account.ID, firstLicense.ID, &botOne.ID)
-	if err != nil || change.CurrentBotID == nil || *change.CurrentBotID != botOne.ID {
-		t.Fatalf("assign first license = (%+v, %v)", change, err)
-	}
-	if _, err := EquipCustomerCosmeticLicense(ctx, account.ID, botOne.ID, firstLicense.ID); err != nil {
-		t.Fatalf("equip exact first license: %v", err)
-	}
-	if _, err := AssignCosmeticLicense(ctx, account.ID, firstLicense.ID, &botOne.ID); err != nil {
-		t.Fatalf("repeat same assignment: %v", err)
-	}
-	equippedAfterIdempotentAssign, err := GetEquippedCosmetics(ctx, botOne.ID)
-	if err != nil || equippedAfterIdempotentAssign[CosmeticSlotBotSkin] != "neon_grid" {
-		t.Fatalf("same assignment removed exact loadout: (%v, %v)", equippedAfterIdempotentAssign, err)
-	}
-
-	// Each purchase creates a stable, independently assignable copy.
-	secondLicense, created, err := GrantCosmeticLicenseToAccount(ctx, account.ID, "skin-neon-grid", "manual", "")
-	if err != nil || !created || secondLicense.ID == firstLicense.ID {
-		t.Fatalf("second copy = (%+v, %v, %v)", secondLicense, created, err)
-	}
-	if _, err := AssignCosmeticLicense(ctx, account.ID, secondLicense.ID, &botTwo.ID); err != nil {
-		t.Fatalf("assign second copy: %v", err)
-	}
-	if _, err := EquipCustomerCosmeticLicense(ctx, account.ID, botOne.ID, secondLicense.ID); !errors.Is(err, ErrCustomerBotNotLinked) {
-		t.Fatalf("equip license on wrong bot error = %v", err)
-	}
-
-	// PostgreSQL itself enforces one assignment per license.
-	_, err = Pool.Exec(ctx, `
-		INSERT INTO cosmetic_license_assignments (license_id, account_id, bot_id)
-		VALUES ($1, $2, $3)`, firstLicense.ID, account.ID, botTwo.ID)
-	var pgErr *pgconn.PgError
-	if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
-		t.Fatalf("duplicate license assignment error = %v, want unique violation", err)
-	}
-
-	otherAccount, err := UpsertVerifiedCustomerAccount(ctx, "other@example.com", "https://id.example", "other-subject", "Other")
+	inventory, err := GetCustomerCosmeticsInventory(ctx, account.ID)
 	if err != nil {
-		t.Fatalf("create other account: %v", err)
+		t.Fatalf("GetCustomerCosmeticsInventory: %v", err)
 	}
-	if _, err := LinkBotToCustomerAccount(ctx, otherAccount.ID, botOther.ID); err != nil {
-		t.Fatalf("link other bot: %v", err)
-	}
-	thirdLicense, _, err := GrantCosmeticLicense(ctx, "owner@example.com", "weapon-solar-flare", "manual", "copy-3")
+	catalog, err := ListCosmeticCatalog(ctx)
 	if err != nil {
-		t.Fatalf("grant third license: %v", err)
+		t.Fatalf("ListCosmeticCatalog: %v", err)
 	}
-	_, err = Pool.Exec(ctx, `
-		INSERT INTO cosmetic_license_assignments (license_id, account_id, bot_id)
-		VALUES ($1, $2, $3)`, thirdLicense.ID, otherAccount.ID, botOther.ID)
-	pgErr = nil
-	if !errors.As(err, &pgErr) || pgErr.Code != "23503" {
-		t.Fatalf("cross-account assignment error = %v, want FK violation", err)
-	}
-	if _, err := Pool.Exec(ctx, `UPDATE cosmetic_licenses SET status = 'refunded' WHERE id = $1`, thirdLicense.ID); err != nil {
-		t.Fatalf("mark exact copy refunded: %v", err)
-	}
-	if _, revoked, err := RevokeCosmeticLicense(ctx, thirdLicense.ID); err != nil || revoked {
-		t.Fatalf("revoke refunded copy = (%v, %v), want unchanged", revoked, err)
-	}
-	refunded, err := getCosmeticLicense(ctx, thirdLicense.ID)
-	if err != nil || refunded.Status != "refunded" {
-		t.Fatalf("terminal status after revoke = (%+v, %v), want refunded", refunded, err)
+	if !inventory.Subscription.Active || inventory.Subscription.SyncedAt == nil || len(inventory.Items) != len(catalog) || len(inventory.Bots) != 2 ||
+		inventory.Loadouts[botOne.ID][CosmeticSlotBotSkin] != "skin-neon-grid" || inventory.Loadouts[botTwo.ID][CosmeticSlotTrail] != "trail-ember-sparks" {
+		t.Fatalf("subscribed inventory = subscription %+v items %d bots %d loadouts %v",
+			inventory.Subscription, len(inventory.Items), len(inventory.Bots), inventory.Loadouts)
 	}
 
-	// A revoked key keeps ownership intact but cannot receive a new assignment
-	// or equip an already-assigned license. Unassign remains available.
+	// The subscription is the account's, and reaches only the bots it links.
+	if _, err := EquipCosmetic(ctx, stranger.ID, CosmeticSlotBotSkin, "skin-neon-grid"); !errors.Is(err, ErrCosmeticNotOwned) {
+		t.Fatalf("unlinked bot paid equip error = %v, want ErrCosmeticNotOwned", err)
+	}
+	if _, err := EquipCustomerCosmetic(ctx, account.ID, stranger.ID, CosmeticSlotBotSkin, "skin-neon-grid"); !errors.Is(err, ErrCustomerBotNotLinked) {
+		t.Fatalf("equip on an unlinked bot error = %v, want ErrCustomerBotNotLinked", err)
+	}
+	if _, err := EquipCustomerCosmetic(ctx, account.ID, botOne.ID, CosmeticSlotWeaponSkin, "skin-neon-grid"); !errors.Is(err, ErrCosmeticSlotMismatch) {
+		t.Fatalf("wrong-slot equip error = %v, want ErrCosmeticSlotMismatch", err)
+	}
+	if _, err := EquipCustomerCosmetic(ctx, account.ID, botOne.ID, CosmeticSlotBotSkin, "skin-does-not-exist"); !errors.Is(err, ErrCosmeticNotFound) {
+		t.Fatalf("unknown item equip error = %v, want ErrCosmeticNotFound", err)
+	}
+
+	// The subscription lapses. Nothing is deleted; the paid looks simply
+	// stop resolving, on both bots, and the free one stays.
+	change, err = SetCustomerSubscription(ctx, account.ID, false, syncedAt.Add(time.Hour))
+	if err != nil || !change.Changed || change.Active || len(change.BotIDs) != 2 {
+		t.Fatalf("lapse = (%+v, %v), want a change naming both linked bots", change, err)
+	}
+	equipped, err = GetEquippedCosmeticsForBots(ctx, []string{botOne.ID, botTwo.ID})
+	if err != nil {
+		t.Fatalf("GetEquippedCosmeticsForBots lapsed: %v", err)
+	}
+	if equipped[botOne.ID][CosmeticSlotBotSkin] != "standard" || equipped[botOne.ID][CosmeticSlotWeaponSkin] != "standard" ||
+		equipped[botOne.ID][CosmeticSlotAttachment] != "signal_antenna" ||
+		equipped[botTwo.ID][CosmeticSlotBotSkin] != "standard" || equipped[botTwo.ID][CosmeticSlotTrail] != "standard" {
+		t.Fatalf("lapsed loadouts = %v, want every paid look hidden and the free one kept", equipped)
+	}
+	if rows := countLoadoutRows(t, ctx, botOne.ID); rows != 3 {
+		t.Fatalf("lapse deleted loadout rows: %d, want 3 retained", rows)
+	}
+	inventory, err = GetCustomerCosmeticsInventory(ctx, account.ID)
+	if err != nil || inventory.Subscription.Active || len(inventory.Loadouts[botOne.ID]) != 1 || inventory.Loadouts[botOne.ID][CosmeticSlotAttachment] != "attachment-signal-antenna" {
+		t.Fatalf("lapsed inventory = (%+v, %v)", inventory, err)
+	}
+	if _, err := EquipCustomerCosmetic(ctx, account.ID, botOne.ID, CosmeticSlotBotSkin, "skin-neon-grid"); !errors.Is(err, ErrSubscriptionRequired) {
+		t.Fatalf("paid equip after lapse error = %v, want ErrSubscriptionRequired", err)
+	}
+	change, err = SetCustomerSubscription(ctx, account.ID, false, syncedAt.Add(2*time.Hour))
+	if err != nil || change.Changed || len(change.BotIDs) != 0 {
+		t.Fatalf("repeat lapse = (%+v, %v), want no change", change, err)
+	}
+
+	// It resumes: the saved looks come straight back.
+	if _, err := SetCustomerSubscription(ctx, account.ID, true, syncedAt.Add(3*time.Hour)); err != nil {
+		t.Fatalf("resubscribe: %v", err)
+	}
+	restored, err := GetEquippedCosmetics(ctx, botOne.ID)
+	if err != nil || restored[CosmeticSlotBotSkin] != "neon_grid" || restored[CosmeticSlotWeaponSkin] != "solar_flare" {
+		t.Fatalf("restored loadout = (%v, %v)", restored, err)
+	}
+
+	// A revoked key cannot receive an equip; unlinking removes the paid
+	// loadout and keeps the free one.
 	if err := DeactivateAPIKey(ctx, botTwo.APIKeyID); err != nil {
 		t.Fatalf("DeactivateAPIKey: %v", err)
 	}
-	if _, err := AssignCosmeticLicense(ctx, account.ID, firstLicense.ID, &botTwo.ID); !errors.Is(err, ErrCustomerBotKeyInactive) {
-		t.Fatalf("assignment to inactive bot error = %v", err)
+	if _, err := EquipCustomerCosmetic(ctx, account.ID, botTwo.ID, CosmeticSlotBotSkin, "skin-neon-grid"); !errors.Is(err, ErrCustomerBotKeyInactive) {
+		t.Fatalf("equip on an inactive key error = %v, want ErrCustomerBotKeyInactive", err)
 	}
-	if _, err := EquipCustomerCosmeticLicense(ctx, account.ID, botTwo.ID, secondLicense.ID); !errors.Is(err, ErrCustomerBotKeyInactive) {
-		t.Fatalf("equip on inactive bot error = %v", err)
+	if _, err := UnlinkBotFromCustomerAccount(ctx, account.ID, botOne.ID); err != nil {
+		t.Fatalf("unlink bot one: %v", err)
 	}
-	if _, err := AssignCosmeticLicense(ctx, account.ID, secondLicense.ID, nil); err != nil {
-		t.Fatalf("unassign from inactive bot: %v", err)
+	if rows := countLoadoutRows(t, ctx, botOne.ID); rows != 1 {
+		t.Fatalf("loadout rows after unlink = %d, want only the free attachment", rows)
 	}
-
-	assignment, revoked, err := RevokeCosmeticLicense(ctx, firstLicense.ID)
-	if err != nil || !revoked || assignment.PreviousBotID == nil || *assignment.PreviousBotID != botOne.ID {
-		t.Fatalf("revoke first license = (%+v, %v, %v)", assignment, revoked, err)
+	unlinked, err := GetEquippedCosmetics(ctx, botOne.ID)
+	if err != nil || unlinked[CosmeticSlotBotSkin] != "standard" || unlinked[CosmeticSlotAttachment] != "signal_antenna" {
+		t.Fatalf("unlinked loadout = (%v, %v)", unlinked, err)
 	}
-	if _, revokedAgain, err := RevokeCosmeticLicense(ctx, firstLicense.ID); err != nil || revokedAgain {
-		t.Fatalf("idempotent revoke = (%v, %v)", revokedAgain, err)
-	}
-	equipped, err := GetEquippedCosmetics(ctx, botOne.ID)
-	if err != nil || equipped[CosmeticSlotBotSkin] != "standard" {
-		t.Fatalf("post-revoke equipped cosmetics = (%v, %v)", equipped, err)
-	}
-
-	for index, preservedStatus := range []string{"refunded", "chargeback"} {
-		license, _, err := GrantCosmeticLicenseToAccount(ctx, account.ID, "attachment-orbital-halo", "manual",
-			fmt.Sprintf("preserve-status-%d", index))
-		if err != nil {
-			t.Fatalf("grant %s license: %v", preservedStatus, err)
-		}
-		if _, err := Pool.Exec(ctx, `UPDATE cosmetic_licenses SET status = $2 WHERE id = $1`, license.ID, preservedStatus); err != nil {
-			t.Fatalf("set %s status: %v", preservedStatus, err)
-		}
-		change, revoked, err := RevokeCosmeticLicense(ctx, license.ID)
-		if err != nil || revoked || change.License.Status != preservedStatus {
-			t.Fatalf("revoke preserved status %s = (%+v, %v, %v)", preservedStatus, change, revoked, err)
-		}
-	}
-}
-
-func TestPostgresPlatformChangeOrderingDoesNotDeadlockLegacyClaimAndRevoke(t *testing.T) {
-	ctx, cancel := context.WithTimeout(useFreshPostgresSchema(t), 15*time.Second)
-	defer cancel()
-	if err := EnsureCoreSchema(ctx); err != nil {
-		t.Fatalf("EnsureCoreSchema: %v", err)
-	}
-
-	bot := createCustomerCosmeticsTestBot(t, ctx, "change-lock-order")
-	if created, err := GrantCosmeticEntitlement(
-		ctx,
-		bot.ID,
-		"skin-neon-grid",
-		"manual",
-		"change-lock-order-license",
-	); err != nil || !created {
-		t.Fatalf("grant legacy entitlement = (%v, %v)", created, err)
-	}
-	var licenseID string
-	if err := Pool.QueryRow(ctx, `
-		SELECT id FROM cosmetic_licenses
-		WHERE legacy_bot_id = $1 AND cosmetic_id = 'skin-neon-grid'`, bot.ID).Scan(&licenseID); err != nil {
-		t.Fatalf("load legacy license: %v", err)
-	}
-	account, err := UpsertVerifiedCustomerAccount(
-		ctx,
-		"change-lock-order@example.com",
-		"https://id.example",
-		"change-lock-order",
-		"Change Lock Order",
-	)
-	if err != nil {
-		t.Fatalf("create account: %v", err)
-	}
-
-	const barrierClassID = 72104
-	const barrierObjectID = 11
-	if _, err := Pool.Exec(ctx, `
-		CREATE FUNCTION test_block_legacy_revoke() RETURNS TRIGGER
-		LANGUAGE plpgsql AS $$
-		BEGIN
-			IF OLD.status = 'active' AND NEW.status = 'revoked' THEN
-				PERFORM pg_advisory_xact_lock(72104, 11);
-			END IF;
-			RETURN NEW;
-		END
-		$$;
-		CREATE TRIGGER test_block_legacy_revoke
-		BEFORE UPDATE OF status ON cosmetic_licenses
-		FOR EACH ROW EXECUTE FUNCTION test_block_legacy_revoke()`); err != nil {
-		t.Fatalf("install revoke barrier: %v", err)
-	}
-	releaseBarrier := holdPostgresTestAdvisoryBarrier(t, ctx, barrierClassID, barrierObjectID)
-
-	type revokeResult struct {
-		revoked bool
-		err     error
-	}
-	revokeDone := make(chan revokeResult, 1)
-	go func() {
-		_, revoked, err := RevokeCosmeticLicense(ctx, licenseID)
-		revokeDone <- revokeResult{revoked: revoked, err: err}
-	}()
-
-	waitForPostgresTestCondition(t, ctx, "legacy revoke barrier", `
-		SELECT EXISTS (
-			SELECT 1 FROM pg_locks
-			WHERE locktype = 'advisory'
-			  AND classid = $1
-			  AND objid = $2
-			  AND NOT granted
-		)`, barrierClassID, barrierObjectID)
-
-	linkDone := make(chan error, 1)
-	go func() {
-		_, err := LinkBotToCustomerAccount(ctx, account.ID, bot.ID)
-		linkDone <- err
-	}()
-	waitForPostgresTestCondition(t, ctx, "legacy claim row lock", `
-		SELECT EXISTS (
-			SELECT 1 FROM pg_stat_activity
-			WHERE datname = current_database()
-			  AND pid <> pg_backend_pid()
-			  AND wait_event_type = 'Lock'
-			  AND query LIKE '%FROM cosmetic_licenses%'
-			  AND query LIKE '%legacy_bot_id%'
-		)`)
-
-	releaseBarrier()
-
-	var revoked revokeResult
-	select {
-	case revoked = <-revokeDone:
-	case <-ctx.Done():
-		t.Fatalf("legacy revoke did not finish: %v", ctx.Err())
-	}
-	var linkErr error
-	select {
-	case linkErr = <-linkDone:
-	case <-ctx.Done():
-		t.Fatalf("legacy claim did not finish: %v", ctx.Err())
-	}
-	if revoked.err != nil || !revoked.revoked || linkErr != nil {
-		t.Fatalf("concurrent legacy revoke/link = (revoked %v, revoke error %v, link error %v)", revoked.revoked, revoked.err, linkErr)
+	if _, err := UnlinkBotFromCustomerAccount(ctx, account.ID, botOne.ID); !errors.Is(err, ErrCustomerBotNotLinked) {
+		t.Fatalf("repeat unlink error = %v, want ErrCustomerBotNotLinked", err)
 	}
 }
 
@@ -1054,10 +950,12 @@ func TestPostgresPlatformAgentLinkReconciliationRestartsForNewCurrentAccount(t *
 	}
 }
 
-func TestPostgresExactPR69CosmeticsSchemaUpgradeAndLegacyRevoke(t *testing.T) {
+// TestPostgresPreAccountSchemaUpgradesAdditively recreates the exact
+// cosmetics shape PR #69 shipped — bot-scoped entitlements, no customer
+// tables — and checks the current schema repair carries it forward without
+// losing the bot's look or refusing to run twice.
+func TestPostgresPreAccountSchemaUpgradesAdditively(t *testing.T) {
 	ctx := useFreshPostgresSchema(t)
-	// Recreate the exact cosmetics-related shape that PR #69 shipped: no
-	// customer/account tables and no license/account columns on the loadout.
 	_, err := Pool.Exec(ctx, `
 		CREATE TABLE api_keys (id TEXT PRIMARY KEY);
 		CREATE TABLE bots (
@@ -1105,7 +1003,7 @@ func TestPostgresExactPR69CosmeticsSchemaUpgradeAndLegacyRevoke(t *testing.T) {
 			(id, name, description, slot, asset_key, rarity, price_cents, currency, is_free, is_purchasable, is_active)
 		VALUES ('skin-neon-grid', 'Neon Grid', '', 'bot_skin', 'neon_grid', 'rare', 499, 'USD', false, false, true);
 		INSERT INTO cosmetic_entitlements (bot_id, cosmetic_id, source, external_reference)
-		VALUES ('old-bot', 'skin-neon-grid', 'stripe', 'old-order-line-1');
+		VALUES ('old-bot', 'skin-neon-grid', 'demo', 'old-demo-grant');
 		INSERT INTO bot_cosmetic_loadout (bot_id, slot, cosmetic_id)
 		VALUES ('old-bot', 'bot_skin', 'skin-neon-grid')`)
 	if err != nil {
@@ -1118,186 +1016,104 @@ func TestPostgresExactPR69CosmeticsSchemaUpgradeAndLegacyRevoke(t *testing.T) {
 	if err := EnsureCosmeticsSchema(ctx); err != nil {
 		t.Fatalf("repeat upgraded schema: %v", err)
 	}
-	if err := EnsureCosmeticSubscriptionsSchema(ctx); err != nil {
-		t.Fatalf("install subscription schema for W1b.4: %v", err)
+	var subscriptionColumns int
+	if err := Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM information_schema.columns
+		WHERE table_schema = current_schema() AND table_name = 'customer_accounts'
+		  AND column_name IN ('subscription_active', 'subscription_synced_at')`).Scan(&subscriptionColumns); err != nil {
+		t.Fatalf("inspect subscription columns: %v", err)
 	}
-	if err := EnsureCosmeticAdminMembershipsSchema(ctx); err != nil {
-		t.Fatalf("install membership schema for W1b.4: %v", err)
-	}
-	// W1b.4 lands after the core bot timestamp migration. The fixture above is
-	// intentionally the older PR #69 cosmetics shape, so add only the
-	// intervening non-cosmetics columns before exercising the platform cutover.
-	if _, err := Pool.Exec(ctx, `
-		ALTER TABLE bots ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
-		ALTER TABLE bots ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`); err != nil {
-		t.Fatalf("install intervening bot timestamps: %v", err)
-	}
-	if err := EnsurePlatformAuthoritySchema(ctx); err != nil {
-		t.Fatalf("complete W1b.4 authority upgrade: %v", err)
+	if subscriptionColumns != 2 {
+		t.Fatalf("customer_accounts subscription columns = %d, want both added by the upgrade", subscriptionColumns)
 	}
 	if _, err := Pool.Exec(ctx, `
 		INSERT INTO bot_cosmetic_loadout (bot_id, slot, cosmetic_id)
 		VALUES ('old-bot', 'trail', 'trail-standard')`); err != nil {
 		t.Fatalf("upgraded loadout constraint rejected trail slot: %v", err)
 	}
-	var migratedTrailItem string
-	if err := Pool.QueryRow(ctx, `
-		SELECT cosmetic_id FROM bot_cosmetic_loadout
-		WHERE bot_id = 'old-bot' AND slot = 'trail'`).Scan(&migratedTrailItem); err != nil {
-		t.Fatalf("load upgraded trail slot: %v", err)
+	// The bot-scoped grant is honoured as it always was: the demo fleet's
+	// complimentary looks survive the upgrade.
+	equipped, err := GetEquippedCosmetics(ctx, "old-bot")
+	if err != nil || equipped[CosmeticSlotBotSkin] != "neon_grid" || equipped[CosmeticSlotTrail] != "standard" {
+		t.Fatalf("upgraded demo loadout = (%v, %v)", equipped, err)
 	}
-	if migratedTrailItem != "trail-standard" {
-		t.Fatalf("upgraded trail slot item = %q, want trail-standard", migratedTrailItem)
-	}
-
-	var licenseID string
-	if err := Pool.QueryRow(ctx, `
-		SELECT id FROM cosmetic_licenses
-		WHERE legacy_bot_id = 'old-bot' AND external_reference = 'old-order-line-1'`).Scan(&licenseID); err != nil {
-		t.Fatalf("load upgraded legacy license: %v", err)
-	}
-	var migratedLoadoutLicense *string
-	if err := Pool.QueryRow(ctx, `
-		SELECT license_id FROM bot_cosmetic_loadout WHERE bot_id = 'old-bot' AND slot = 'bot_skin'`).Scan(&migratedLoadoutLicense); err != nil {
-		t.Fatalf("load upgraded loadout: %v", err)
-	}
-	if migratedLoadoutLicense == nil || *migratedLoadoutLicense != licenseID {
-		t.Fatalf("upgraded loadout license = %v, want %s", migratedLoadoutLicense, licenseID)
-	}
-	if _, err := Pool.Exec(ctx, `
-		UPDATE cosmetic_licenses SET status = 'chargeback', assigned_bot_id = NULL WHERE id = $1`, licenseID); err != nil {
-		t.Fatalf("mark terminal legacy license: %v", err)
-	}
-	if _, err := GrantCosmeticEntitlement(ctx, "old-bot", "skin-neon-grid", "manual", ""); err != nil {
-		t.Fatalf("replay legacy grant: %v", err)
-	}
-	var terminalStatus string
-	var terminalAssignment *string
-	if err := Pool.QueryRow(ctx, `SELECT status, assigned_bot_id FROM cosmetic_licenses WHERE id = $1`, licenseID).
-		Scan(&terminalStatus, &terminalAssignment); err != nil {
-		t.Fatal(err)
-	}
-	if terminalStatus != "chargeback" || terminalAssignment != nil {
-		t.Fatalf("legacy replay changed terminal license: status=%q assignment=%v", terminalStatus, terminalAssignment)
-	}
-	// A separate active legacy generation exercises account recovery. The
-	// terminal copy above must remain terminal; W1b.4 deliberately forbids
-	// restoring it to active for test setup or runtime recovery.
-	if created, err := GrantCosmeticEntitlement(ctx, "old-bot", "weapon-solar-flare", "stripe", "old-order-line-2"); err != nil || !created {
-		t.Fatalf("create active legacy recovery generation = (%v, %v)", created, err)
-	}
-	if _, err := Pool.Exec(ctx, `DELETE FROM api_keys WHERE id = 'old-key'`); err != nil {
-		t.Fatalf("delete lost legacy key: %v", err)
-	}
-	recovered, claimed, err := GrantCosmeticLicense(ctx, "recovered@example.com", "weapon-solar-flare", "stripe", "old-order-line-2")
-	if err != nil || !claimed || recovered.ID == licenseID || recovered.AccountID == nil || recovered.LegacyBotID != nil {
-		t.Fatalf("recover legacy purchase by email/reference = (%+v, %v, %v)", recovered, claimed, err)
-	}
-
-	if _, revoked, err := RevokeCosmeticLicense(ctx, recovered.ID); err != nil || !revoked {
-		t.Fatalf("revoke upgraded legacy license = (%v, %v)", revoked, err)
-	}
-	var remaining int
-	if err := Pool.QueryRow(ctx, `SELECT COUNT(*) FROM bot_cosmetic_loadout WHERE license_id = $1`, recovered.ID).Scan(&remaining); err != nil {
-		t.Fatal(err)
-	}
-	if remaining != 0 {
-		t.Fatalf("legacy paid loadout rows after revoke = %d, want 0", remaining)
+	if created, err := GrantCosmeticEntitlement(ctx, "old-bot", "skin-neon-grid", "demo", "old-demo-grant"); err != nil || created {
+		t.Fatalf("replay of the old grant = (%v, %v), want idempotent", created, err)
 	}
 }
 
-func TestPostgresLegacyBotEntitlementMigratesAndSurvivesBotDeletion(t *testing.T) {
+/*
+ * TestPostgresLicenceEraLoadoutColumnsStayNullAndHarmless is the migration
+ * story for a database that ran the retired per-item licence model.
+ *
+ * Such a database still has `license_id` and `account_id` on
+ * bot_cosmetic_loadout, a foreign key to cosmetic_licenses and the composite
+ * assignment foreign key. Nothing drops them — migrations here are additive
+ * — so every write the new code makes must satisfy them, which it does by
+ * leaving both columns null.
+ */
+func TestPostgresLicenceEraLoadoutColumnsStayNullAndHarmless(t *testing.T) {
 	ctx := useFreshPostgresSchema(t)
 	if err := EnsureCoreSchema(ctx); err != nil {
 		t.Fatalf("EnsureCoreSchema: %v", err)
 	}
-	bot := createCustomerCosmeticsTestBot(t, ctx, "legacy")
-
-	// Recreate the exact pre-account PR #69 storage shape, then rerun startup
-	// schema repair to materialize the durable legacy license.
 	if _, err := Pool.Exec(ctx, `
-		INSERT INTO cosmetic_entitlements (bot_id, cosmetic_id, source, external_reference)
-		VALUES ($1, 'skin-neon-grid', 'legacy-test', 'legacy-order')`, bot.ID); err != nil {
-		t.Fatalf("insert legacy entitlement: %v", err)
+		CREATE TABLE cosmetic_licenses (
+			id TEXT PRIMARY KEY,
+			account_id TEXT REFERENCES customer_accounts(id) ON DELETE RESTRICT,
+			cosmetic_id TEXT NOT NULL REFERENCES cosmetic_items(id) ON DELETE RESTRICT,
+			status TEXT NOT NULL DEFAULT 'active',
+			UNIQUE (id, account_id)
+		);
+		CREATE TABLE cosmetic_license_assignments (
+			license_id TEXT PRIMARY KEY,
+			account_id TEXT NOT NULL,
+			bot_id TEXT NOT NULL,
+			UNIQUE (license_id, account_id, bot_id),
+			FOREIGN KEY (license_id, account_id) REFERENCES cosmetic_licenses(id, account_id) ON DELETE CASCADE,
+			FOREIGN KEY (account_id, bot_id) REFERENCES account_bot_links(account_id, bot_id) ON DELETE CASCADE
+		);
+		ALTER TABLE bot_cosmetic_loadout
+			ADD COLUMN license_id TEXT REFERENCES cosmetic_licenses(id) ON DELETE CASCADE,
+			ADD COLUMN account_id TEXT REFERENCES customer_accounts(id) ON DELETE RESTRICT,
+			ADD CONSTRAINT bot_cosmetic_loadout_assignment_fk
+				FOREIGN KEY (license_id, account_id, bot_id)
+				REFERENCES cosmetic_license_assignments(license_id, account_id, bot_id) ON DELETE CASCADE;
+		CREATE UNIQUE INDEX idx_bot_cosmetic_loadout_license
+			ON bot_cosmetic_loadout (license_id) WHERE license_id IS NOT NULL`); err != nil {
+		t.Fatalf("recreate licence-era loadout columns: %v", err)
 	}
-	if _, err := Pool.Exec(ctx, `
-		INSERT INTO bot_cosmetic_loadout (bot_id, slot, cosmetic_id)
-		VALUES ($1, 'bot_skin', 'skin-neon-grid')`, bot.ID); err != nil {
-		t.Fatalf("insert legacy loadout: %v", err)
-	}
-	if err := EnsureCosmeticsSchema(ctx); err != nil {
-		t.Fatalf("EnsureCosmeticsSchema legacy migration: %v", err)
+	if err := EnsureCoreSchema(ctx); err != nil {
+		t.Fatalf("repeat EnsureCoreSchema over licence-era columns: %v", err)
 	}
 
-	var licenseID string
-	var owner, legacyBot, assignedBot *string
-	if err := Pool.QueryRow(ctx, `
-		SELECT id, account_id, legacy_bot_id, assigned_bot_id
-		FROM cosmetic_licenses WHERE external_reference = 'legacy-order'`).
-		Scan(&licenseID, &owner, &legacyBot, &assignedBot); err != nil {
-		t.Fatalf("load migrated legacy license: %v", err)
-	}
-	if owner != nil || legacyBot == nil || *legacyBot != bot.ID || assignedBot == nil || *assignedBot != bot.ID {
-		t.Fatalf("migrated legacy state owner=%v legacy=%v assigned=%v", owner, legacyBot, assignedBot)
-	}
-
-	account, err := UpsertVerifiedCustomerAccount(ctx, "legacy@example.com", "https://id.example", "legacy-subject", "Legacy Owner")
+	bot := createCustomerCosmeticsTestBot(t, ctx, "licence-era")
+	account, err := UpsertVerifiedCustomerAccount(ctx, "", "https://id.example", "licence-era", "Licence Era")
 	if err != nil {
-		t.Fatalf("create legacy owner: %v", err)
+		t.Fatalf("create account: %v", err)
 	}
-	if _, err := LinkBotToCustomerAccount(ctx, account.ID, bot.ID); err != nil {
-		t.Fatalf("claim legacy bot: %v", err)
+	linkSubscriptionTestBot(t, ctx, account, bot)
+	if _, err := SetCustomerSubscription(ctx, account.ID, true, time.Now()); err != nil {
+		t.Fatalf("subscribe: %v", err)
 	}
-	claimed, err := getCosmeticLicense(ctx, licenseID)
-	if err != nil || claimed.AccountID == nil || *claimed.AccountID != account.ID || claimed.LegacyBotID != nil ||
-		claimed.AssignedBotID == nil || *claimed.AssignedBotID != bot.ID || !claimed.Equipped {
-		t.Fatalf("claimed legacy license = (%+v, %v)", claimed, err)
+	if _, err := EquipCustomerCosmetic(ctx, account.ID, bot.ID, CosmeticSlotBotSkin, "skin-neon-grid"); err != nil {
+		t.Fatalf("account equip over licence-era columns: %v", err)
 	}
-
-	// Even destructive stale-key cleanup can remove the bot/link/assignment but
-	// never the purchased account license.
-	if _, err := Pool.Exec(ctx, `DELETE FROM api_keys WHERE id = $1`, bot.APIKeyID); err != nil {
-		t.Fatalf("delete stale API key: %v", err)
+	if _, err := EquipCosmetic(ctx, bot.ID, CosmeticSlotWeaponSkin, "weapon-solar-flare"); err != nil {
+		t.Fatalf("bot-key equip over licence-era columns: %v", err)
 	}
-	claimed, err = getCosmeticLicense(ctx, licenseID)
-	if err != nil || claimed.AccountID == nil || *claimed.AccountID != account.ID || claimed.AssignedBotID != nil {
-		t.Fatalf("license after bot deletion = (%+v, %v)", claimed, err)
-	}
-
-	// If stale cleanup deleted the bot before it could be linked, replaying the
-	// trusted fulfillment reference claims the exact orphaned legacy copy for
-	// the purchase email instead of minting a duplicate.
-	orphanBot := createCustomerCosmeticsTestBot(t, ctx, "legacy-orphan")
-	if _, err := Pool.Exec(ctx, `
-		INSERT INTO cosmetic_entitlements (bot_id, cosmetic_id, source, external_reference)
-		VALUES ($1, 'skin-neon-grid', 'legacy-test', 'legacy-orphan-order')`, orphanBot.ID); err != nil {
-		t.Fatalf("insert orphan legacy entitlement: %v", err)
-	}
-	if _, err := Pool.Exec(ctx, `
-		INSERT INTO bot_cosmetic_loadout (bot_id, slot, cosmetic_id)
-		VALUES ($1, 'bot_skin', 'skin-neon-grid')`, orphanBot.ID); err != nil {
-		t.Fatalf("insert orphan legacy loadout: %v", err)
-	}
-	if err := EnsureCosmeticsSchema(ctx); err != nil {
-		t.Fatalf("migrate orphan legacy entitlement: %v", err)
-	}
-	var orphanLicenseID string
+	var nullRows int
 	if err := Pool.QueryRow(ctx, `
-		SELECT id FROM cosmetic_licenses
-		WHERE source = 'legacy-test' AND external_reference = 'legacy-orphan-order'`).Scan(&orphanLicenseID); err != nil {
-		t.Fatalf("load orphan legacy license: %v", err)
+		SELECT COUNT(*) FROM bot_cosmetic_loadout
+		WHERE bot_id = $1 AND license_id IS NULL AND account_id IS NULL`, bot.ID).Scan(&nullRows); err != nil {
+		t.Fatalf("inspect loadout columns: %v", err)
 	}
-	if _, err := Pool.Exec(ctx, `DELETE FROM api_keys WHERE id = $1`, orphanBot.APIKeyID); err != nil {
-		t.Fatalf("delete orphan bot key: %v", err)
+	if nullRows != 2 {
+		t.Fatalf("loadout rows with null licence columns = %d, want both equips", nullRows)
 	}
-	recovered, newlyClaimed, err := GrantCosmeticLicenseToAccount(ctx, account.ID, "skin-neon-grid", "legacy-test", "legacy-orphan-order")
-	if err != nil || !newlyClaimed || recovered.ID != orphanLicenseID ||
-		recovered.AccountID == nil || *recovered.AccountID != account.ID || recovered.LegacyBotID != nil || recovered.AssignedBotID != nil {
-		t.Fatalf("recover orphan legacy license = (%+v, %v, %v), want ID %s", recovered, newlyClaimed, err, orphanLicenseID)
-	}
-	replayed, newlyClaimed, err := GrantCosmeticLicenseToAccount(ctx, account.ID, "skin-neon-grid", "legacy-test", "legacy-orphan-order")
-	if err != nil || newlyClaimed || replayed.ID != orphanLicenseID {
-		t.Fatalf("idempotent orphan recovery = (%+v, %v, %v)", replayed, newlyClaimed, err)
+	equipped, err := GetEquippedCosmetics(ctx, bot.ID)
+	if err != nil || equipped[CosmeticSlotBotSkin] != "neon_grid" || equipped[CosmeticSlotWeaponSkin] != "solar_flare" {
+		t.Fatalf("loadout over licence-era columns = (%v, %v)", equipped, err)
 	}
 }
 
@@ -1323,31 +1139,29 @@ func TestPostgresConcurrentCosmeticsSchemaRepairIsSerialized(t *testing.T) {
 	if err := Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM pg_constraint
 		WHERE conrelid = 'bot_cosmetic_loadout'::regclass
-		  AND conname = 'bot_cosmetic_loadout_assignment_fk'`).Scan(&constraintCount); err != nil {
+		  AND conname = 'bot_cosmetic_loadout_slot_check'`).Scan(&constraintCount); err != nil {
 		t.Fatal(err)
 	}
 	if constraintCount != 1 {
-		t.Fatalf("assignment FK count = %d, want 1", constraintCount)
+		t.Fatalf("slot check constraint count = %d, want 1", constraintCount)
 	}
 }
 
-func TestPostgresAccountRowIsFirstAssignmentLock(t *testing.T) {
+// TestPostgresAccountRowIsFirstEquipLock pins the lock order every
+// account-scoped mutation shares: the account row first, then the bot link.
+// A subscription sync landing at the same moment therefore serialises with
+// the equip that reads the flag, instead of racing it.
+func TestPostgresAccountRowIsFirstEquipLock(t *testing.T) {
 	ctx := useFreshPostgresSchema(t)
 	if err := EnsureCoreSchema(ctx); err != nil {
 		t.Fatalf("EnsureCoreSchema: %v", err)
 	}
 	bot := createCustomerCosmeticsTestBot(t, ctx, "lock-order")
-	account, err := UpsertVerifiedCustomerAccount(ctx, "locks@example.com", "https://id.example", "locks-subject", "Locks")
+	account, err := UpsertVerifiedCustomerAccount(ctx, "", "https://id.example", "locks-subject", "Locks")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LinkBotToCustomerAccount(ctx, account.ID, bot.ID); err != nil {
-		t.Fatal(err)
-	}
-	license, _, err := GrantCosmeticLicenseToAccount(ctx, account.ID, "skin-neon-grid", "manual", "lock-order")
-	if err != nil {
-		t.Fatal(err)
-	}
+	linkSubscriptionTestBot(t, ctx, account, bot)
 
 	locker, err := Pool.Begin(ctx)
 	if err != nil {
@@ -1360,7 +1174,7 @@ func TestPostgresAccountRowIsFirstAssignmentLock(t *testing.T) {
 
 	result := make(chan error, 1)
 	go func() {
-		_, err := AssignCosmeticLicense(context.Background(), account.ID, license.ID, &bot.ID)
+		_, err := EquipCustomerCosmetic(context.Background(), account.ID, bot.ID, CosmeticSlotAttachment, "attachment-signal-antenna")
 		result <- err
 	}()
 	waitForBlockedCustomerStatement(t, ctx, "customer_accounts")
@@ -1369,9 +1183,9 @@ func TestPostgresAccountRowIsFirstAssignmentLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := probe.Exec(ctx, `SELECT 1 FROM cosmetic_licenses WHERE id = $1 FOR UPDATE NOWAIT`, license.ID); err != nil {
+	if _, err := probe.Exec(ctx, `SELECT 1 FROM account_bot_links WHERE bot_id = $1 FOR UPDATE NOWAIT`, bot.ID); err != nil {
 		probe.Rollback(ctx)
-		t.Fatalf("assignment locked license before account row: %v", err)
+		t.Fatalf("equip locked the bot link before the account row: %v", err)
 	}
 	if err := probe.Rollback(ctx); err != nil {
 		t.Fatal(err)
@@ -1382,10 +1196,10 @@ func TestPostgresAccountRowIsFirstAssignmentLock(t *testing.T) {
 	select {
 	case err := <-result:
 		if err != nil {
-			t.Fatalf("assignment after account unlock: %v", err)
+			t.Fatalf("equip after account unlock: %v", err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("assignment did not finish after account unlock")
+		t.Fatal("equip did not finish after account unlock")
 	}
 }
 

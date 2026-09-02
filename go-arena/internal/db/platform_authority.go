@@ -853,17 +853,11 @@ func EnsurePlatformAuthoritySchema(ctx context.Context) error {
 			return fmt.Errorf("EnsurePlatformAuthoritySchema exec: %w", err)
 		}
 	}
-	if err := ensurePlatformLicenseLifecycleSchemaTx(ctx, tx); err != nil {
-		return fmt.Errorf("EnsurePlatformAuthoritySchema license lifecycle: %w", err)
-	}
 	if err := ensurePlatformChangeSchemaTx(ctx, tx); err != nil {
 		return fmt.Errorf("EnsurePlatformAuthoritySchema change schema: %w", err)
 	}
 	if err := backfillPlatformAuthorityChangesTx(ctx, tx); err != nil {
 		return fmt.Errorf("EnsurePlatformAuthoritySchema authority changes: %w", err)
-	}
-	if err := backfillPlatformLicenseChangesTx(ctx, tx); err != nil {
-		return fmt.Errorf("EnsurePlatformAuthoritySchema license changes: %w", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -880,6 +874,9 @@ func EnsurePlatformAuthoritySchema(ctx context.Context) error {
 
 func ensurePlatformChangeSchemaTx(ctx context.Context, tx pgx.Tx) error {
 	statements := []string{
+		// 'license' and 'license_assignment' stay in the check so rows written
+		// by the retired per-item licence lifecycle remain valid; nothing
+		// writes them any more.
 		`CREATE TABLE IF NOT EXISTS platform_changes (
 			change_id BIGSERIAL PRIMARY KEY,
 			subject_kind TEXT NOT NULL

@@ -28,9 +28,9 @@ assert.doesNotMatch(appSource, /initCosmeticsPanel|cosmetics-panel\.js/,
 
 assert.match(desktopHTML, /js\/app\.js\?v=20260810e/);
 assert.match(mobileHTML, /mobile\.js\?v=20260824b/);
-assert.match(desktopHTML, /css\/embedded-checkout\.css\?v=20260713a/);
-assert.match(desktopHTML, /js\/embedded-checkout\.js\?v=20260823b/);
-assert.match(shopHTML, /cosmetics-shop\.js\?v=20260823b/);
+assert.doesNotMatch(desktopHTML + shopHTML, /embedded-checkout/,
+  'Arena runs no checkout of its own: the subscription is sold in Angel Accounts');
+assert.match(shopHTML, /cosmetics-shop\.js\?v=20260902a/);
 assert.match(appSource, /renderer\/engine\.js\?v=20260810e/);
 assert.match(mobileSource, /renderer\/engine\.js\?v=20260810e/);
 assert.match(shopSource, /shop-preview\.js\?v=20260718o/);

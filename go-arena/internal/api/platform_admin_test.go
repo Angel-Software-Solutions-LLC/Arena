@@ -43,6 +43,17 @@ type angelAccounts struct {
 	mu     sync.Mutex
 	nonce  string
 	claims map[string]any
+	// entitlements is the body /entitlements answers with for the access
+	// token the token endpoint minted, or "" for an Accounts that has not
+	// provisioned the endpoint for this client.
+	entitlements string
+}
+
+// serveEntitlements arms the entitlements endpoint with one published body.
+func (a *angelAccounts) serveEntitlements(body string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.entitlements = body
 }
 
 // expect arms the next token response: the nonce Arena just generated, and
@@ -124,6 +135,21 @@ func newAngelAccounts(t *testing.T) *angelAccounts {
 			"expires_in":   3600,
 			"id_token":     signRS256(t, key, claims),
 		})
+	})
+	mux.HandleFunc("/entitlements", func(w http.ResponseWriter, r *http.Request) {
+		accounts.mu.Lock()
+		body := accounts.entitlements
+		accounts.mu.Unlock()
+		if r.Header.Get("Authorization") != "Bearer angel-access-token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if body == "" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
 	})
 	accounts.server = httptest.NewServer(mux)
 	t.Cleanup(accounts.server.Close)
@@ -235,23 +261,25 @@ func callAdminRoute(t *testing.T, handler *CustomerOIDCHandler, cookie *http.Coo
 }
 
 // TestAngelPlatformAdminClaimDecidesArenaAdminAuthority is the contract, read
-// off a real sign-in each time.
+// off a real sign-in each time: `staff: true` OR `product_admin: true`
+// admits, on presence, and nothing else does.
 func TestAngelPlatformAdminClaimDecidesArenaAdminAuthority(t *testing.T) {
 	for _, testCase := range []struct {
-		name      string
-		claims    map[string]any
-		wantAdmin bool
-		wantRole  string
+		name          string
+		claims        map[string]any
+		wantAdmin     bool
+		wantAuthority string
+		wantRole      string
 	}{
 		{
 			name:      "a support-desk owner administers the platform",
 			claims:    map[string]any{"staff": true, "staff_role": "owner"},
-			wantAdmin: true, wantRole: "owner",
+			wantAdmin: true, wantAuthority: "staff", wantRole: "owner",
 		},
 		{
 			name:      "a support-desk admin administers the platform",
 			claims:    map[string]any{"staff": true, "staff_role": "admin"},
-			wantAdmin: true, wantRole: "admin",
+			wantAdmin: true, wantAuthority: "staff", wantRole: "admin",
 		},
 		{
 			// The shape every ordinary customer arrives in. There is no
@@ -274,12 +302,45 @@ func TestAngelPlatformAdminClaimDecidesArenaAdminAuthority(t *testing.T) {
 			// what it means beyond that.
 			name:      "an unrecognised role is an administrator, nothing finer",
 			claims:    map[string]any{"staff": true, "staff_role": "incident-commander"},
-			wantAdmin: true, wantRole: "incident-commander",
+			wantAdmin: true, wantAuthority: "staff", wantRole: "incident-commander",
 		},
 		{
 			name:      "staff with no role named is still an administrator",
 			claims:    map[string]any{"staff": true},
-			wantAdmin: true, wantRole: "",
+			wantAdmin: true, wantAuthority: "staff", wantRole: "",
+		},
+		{
+			// The per-product grant: somebody the desk made an administrator
+			// of Arena specifically. Same routes, its own principal.
+			name:      "a product administrator grant administers Arena",
+			claims:    map[string]any{"product_admin": true},
+			wantAdmin: true, wantAuthority: "product_admin", wantRole: "",
+		},
+		{
+			// A grant is decided on presence too. Accounts never emits false,
+			// and if anything ever does it must not be read as truthy.
+			name:      "an explicit product_admin:false is not an administrator",
+			claims:    map[string]any{"product_admin": false},
+			wantAdmin: false,
+		},
+		{
+			name:      "a product_admin string is not an administrator",
+			claims:    map[string]any{"product_admin": "true"},
+			wantAdmin: false,
+		},
+		{
+			// A desk owner who also holds a grant is reported as the desk:
+			// it is the wider authority and the grant adds nothing to it.
+			name:      "a desk owner who also holds a product grant is reported as staff",
+			claims:    map[string]any{"staff": true, "staff_role": "owner", "product_admin": true},
+			wantAdmin: true, wantAuthority: "staff", wantRole: "owner",
+		},
+		{
+			// A role is only meaningful beside `staff`. On its own it is
+			// not a claim Arena reads, and it must not leak onto a grant.
+			name:      "a product grant does not pick up a stray staff_role",
+			claims:    map[string]any{"product_admin": true, "staff_role": "owner"},
+			wantAdmin: true, wantAuthority: "product_admin", wantRole: "",
 		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -287,10 +348,10 @@ func TestAngelPlatformAdminClaimDecidesArenaAdminAuthority(t *testing.T) {
 			handler, _ := newArenaSignedInWithAngel(t, accounts)
 			session, cookie := signInThroughAngel(t, handler, accounts, testCase.claims)
 
-			role, isAdmin := session.platformAdminAt(time.Now())
-			if isAdmin != testCase.wantAdmin || role != testCase.wantRole {
-				t.Fatalf("session authority = (%q, %v), want (%q, %v)",
-					role, isAdmin, testCase.wantRole, testCase.wantAdmin)
+			grant, isAdmin := session.platformAdminGrantAt(time.Now())
+			if isAdmin != testCase.wantAdmin || grant.Role != testCase.wantRole || grant.Authority != testCase.wantAuthority {
+				t.Fatalf("session authority = (%q, %q, %v), want (%q, %q, %v)",
+					grant.Authority, grant.Role, isAdmin, testCase.wantAuthority, testCase.wantRole, testCase.wantAdmin)
 			}
 
 			status, principal := callAdminRoute(t, handler, cookie, http.MethodGet, nil)
@@ -298,8 +359,8 @@ func TestAngelPlatformAdminClaimDecidesArenaAdminAuthority(t *testing.T) {
 				if status != http.StatusNoContent {
 					t.Fatalf("admin route status = %d, want the administrator through", status)
 				}
-				if principal != expectedPlatformAdminPrincipal(session.AccountID, testCase.wantRole) {
-					t.Fatalf("admin principal = %q, want it to name the account and role", principal)
+				if want := expectedPlatformAdminPrincipal(session.AccountID, testCase.wantAuthority, testCase.wantRole); principal != want {
+					t.Fatalf("admin principal = %q, want %q", principal, want)
 				}
 			} else if status != http.StatusUnauthorized {
 				t.Fatalf("admin route status = %d, want 401 for a non-administrator", status)
@@ -314,7 +375,10 @@ func TestAngelPlatformAdminClaimDecidesArenaAdminAuthority(t *testing.T) {
 	}
 }
 
-func expectedPlatformAdminPrincipal(accountID, role string) string {
+func expectedPlatformAdminPrincipal(accountID, authority, role string) string {
+	if authority == "product_admin" {
+		return "accounts-product-admin:" + accountID
+	}
 	if role == "" {
 		return "accounts-staff:" + accountID
 	}
@@ -429,20 +493,30 @@ func TestPlatformAdminMutationsAreHeldToOriginAndCSRF(t *testing.T) {
 // over shapes a live token is unlikely to carry and must not be fooled by.
 func TestPlatformAdminClaimDecidesOnPresenceOfTrue(t *testing.T) {
 	for _, testCase := range []struct {
-		payload   string
-		wantAdmin bool
-		wantRole  string
+		payload       string
+		wantAdmin     bool
+		wantAuthority string
+		wantRole      string
 	}{
 		{payload: `{}`, wantAdmin: false},
 		{payload: `{"staff_role":"owner"}`, wantAdmin: false},
-		{payload: `{"staff":true,"staff_role":"owner"}`, wantAdmin: true, wantRole: "owner"},
-		{payload: `{"staff":true}`, wantAdmin: true},
+		{payload: `{"staff":true,"staff_role":"owner"}`, wantAdmin: true, wantAuthority: "staff", wantRole: "owner"},
+		{payload: `{"staff":true}`, wantAdmin: true, wantAuthority: "staff"},
 		{payload: `{"staff":false}`, wantAdmin: false},
 		{payload: `{"staff":null}`, wantAdmin: false},
 		{payload: `{"staff":"true"}`, wantAdmin: false},
 		{payload: `{"staff":1}`, wantAdmin: false},
-		{payload: `{"staff":true,"staff_role":123}`, wantAdmin: true},
-		{payload: `{"staff":true,"staff_role":"  owner  "}`, wantAdmin: true, wantRole: "owner"},
+		{payload: `{"staff":true,"staff_role":123}`, wantAdmin: true, wantAuthority: "staff"},
+		{payload: `{"staff":true,"staff_role":"  owner  "}`, wantAdmin: true, wantAuthority: "staff", wantRole: "owner"},
+		{payload: `{"product_admin":true}`, wantAdmin: true, wantAuthority: "product_admin"},
+		{payload: `{"product_admin":false}`, wantAdmin: false},
+		{payload: `{"product_admin":null}`, wantAdmin: false},
+		{payload: `{"product_admin":"true"}`, wantAdmin: false},
+		{payload: `{"product_admin":1}`, wantAdmin: false},
+		{payload: `{"product_admin":true,"staff_role":"owner"}`, wantAdmin: true, wantAuthority: "product_admin"},
+		{payload: `{"staff":false,"product_admin":true}`, wantAdmin: true, wantAuthority: "product_admin"},
+		{payload: `{"staff":true,"product_admin":true,"staff_role":"admin"}`, wantAdmin: true, wantAuthority: "staff", wantRole: "admin"},
+		{payload: `{"staff":true,"product_admin":false}`, wantAdmin: true, wantAuthority: "staff"},
 	} {
 		t.Run(testCase.payload, func(t *testing.T) {
 			var claims map[string]json.RawMessage
@@ -450,8 +524,9 @@ func TestPlatformAdminClaimDecidesOnPresenceOfTrue(t *testing.T) {
 				t.Fatalf("decode payload: %v", err)
 			}
 			admin := platformAdminFromVerifiedClaims(claims)
-			if admin.Present != testCase.wantAdmin || admin.Role != testCase.wantRole {
-				t.Fatalf("claim = %+v, want present=%v role=%q", admin, testCase.wantAdmin, testCase.wantRole)
+			if admin.Present != testCase.wantAdmin || admin.Role != testCase.wantRole || admin.authority() != testCase.wantAuthority {
+				t.Fatalf("claim = %+v, want present=%v authority=%q role=%q",
+					admin, testCase.wantAdmin, testCase.wantAuthority, testCase.wantRole)
 			}
 		})
 	}
@@ -477,13 +552,52 @@ func TestPlatformAdminIsReportedToTheSignedInBrowser(t *testing.T) {
 	}
 
 	body := read()
-	if body["platform_admin"] != true || body["platform_admin_role"] != "owner" {
-		t.Fatalf("session info = %v, want it to report the administrator role", body)
+	if body["platform_admin"] != true || body["platform_admin_role"] != "owner" || body["platform_admin_authority"] != "staff" {
+		t.Fatalf("session info = %v, want it to report the desk authority and role", body)
+	}
+
+	_, grantCookie := signInThroughAngel(t, handler, accounts, map[string]any{"product_admin": true})
+	cookie = grantCookie
+	if body := read(); body["platform_admin"] != true || body["platform_admin_authority"] != "product_admin" || body["platform_admin_role"] != "" {
+		t.Fatalf("session info = %v, want it to report the product grant", body)
 	}
 
 	_, ordinaryCookie := signInThroughAngel(t, handler, accounts, nil)
 	cookie = ordinaryCookie
-	if body := read(); body["platform_admin"] != false || body["platform_admin_role"] != "" {
+	if body := read(); body["platform_admin"] != false || body["platform_admin_role"] != "" || body["platform_admin_authority"] != "" {
 		t.Fatalf("an ordinary session was reported as an administrator: %v", body)
+	}
+}
+
+// TestProductAdminGrantIsGoneAtTheNextSignInAfterRevocation is the revocation
+// path for the per-product grant, and the reason it is not persisted either:
+// Accounts stops emitting the claim, the next token has no grant, and there is
+// nothing in Arena to clean up.
+func TestProductAdminGrantIsGoneAtTheNextSignInAfterRevocation(t *testing.T) {
+	accounts := newAngelAccounts(t)
+	handler, _ := newArenaSignedInWithAngel(t, accounts)
+
+	granted, grantedCookie := signInThroughAngel(t, handler, accounts, map[string]any{"product_admin": true})
+	if grant, isAdmin := granted.platformAdminGrantAt(time.Now()); !isAdmin || grant.Authority != "product_admin" {
+		t.Fatalf("the product-admin sign-in carried no authority: %+v %v", grant, isAdmin)
+	}
+	if !granted.platformAdmin.ExpiresAt.Before(granted.ExpiresAt) {
+		t.Fatalf("a product grant runs as long as the customer session: grant %v, session %v",
+			granted.platformAdmin.ExpiresAt, granted.ExpiresAt)
+	}
+	status, principal := callAdminRoute(t, handler, grantedCookie, http.MethodGet, nil)
+	if status != http.StatusNoContent || principal != "accounts-product-admin:"+granted.AccountID {
+		t.Fatalf("product administrator was refused or misnamed: status = %d principal = %q", status, principal)
+	}
+
+	revoked, revokedCookie := signInThroughAngel(t, handler, accounts, nil)
+	if revoked.AccountID != granted.AccountID {
+		t.Fatalf("second sign-in bound a different account: %q vs %q", revoked.AccountID, granted.AccountID)
+	}
+	if _, isAdmin := revoked.platformAdminAt(time.Now()); isAdmin {
+		t.Fatal("product-admin authority survived revocation")
+	}
+	if status, _ := callAdminRoute(t, handler, revokedCookie, http.MethodGet, nil); status != http.StatusUnauthorized {
+		t.Fatalf("admin route status after revocation = %d, want 401", status)
 	}
 }

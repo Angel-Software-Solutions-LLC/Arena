@@ -4,18 +4,18 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Cosmetic Shop | The Arena | Angel Software Solutions</title>
-  <meta name="description" content="Preview Arena cosmetic sets and particle trails on a full-size bot, inspect every included item, and purchase presentation-only customization.">
+  <meta name="description" content="Preview Arena cosmetic sets and particle trails on a full-size bot, inspect every included item, and see what one Arena subscription unlocks for every bot you link.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23030b13'/%3E%3Cpath d='M18 45 32 12l14 33-14-8z' fill='%2347d7ff'/%3E%3Ccircle cx='32' cy='32' r='5' fill='%23ff8f5c'/%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="../css/arena.css?v=20260714g">
-  <link rel="stylesheet" href="../css/shop.css?v=20260714g">
+  <link rel="stylesheet" href="../css/shop.css?v=20260902a">
   <link rel="stylesheet" href="../css/site-footer.css?v=20260823a">
   <link rel="stylesheet" href="../css/brand-lockup.css?v=20260714a">
   <link rel="modulepreload" href="../assets/vendor/babylon-runtime.5c31912818a4.min.js">
   <script defer src="../js/cosmetic-themes.js?v=20260713f"></script>
-  <script type="module" src="../js/cosmetics-shop.js?v=20260823b"></script>
+  <script type="module" src="../js/cosmetics-shop.js?v=20260902a"></script>
 </head>
 <body class="shop-page">
   <script>
@@ -39,11 +39,7 @@
     var resolved = new URL(href, window.location.href);
     event.preventDefault();
     if (resolved.searchParams.get('dash_open') === '1' && typeof window.top.ArenaOpenDashboard === 'function') {
-      window.top.ArenaOpenDashboard({
-        tab: resolved.searchParams.get('dash_tab') || '',
-        plan: resolved.searchParams.get('dash_plan') || '',
-        pack: resolved.searchParams.get('dash_pack') || '',
-      });
+      window.top.ArenaOpenDashboard({tab: resolved.searchParams.get('dash_tab') || ''});
       return;
     }
     if (typeof window.top.ArenaCloseOverlay === 'function') {
@@ -95,28 +91,16 @@
       <p class="shop-catalog-state" data-shop-status role="status" aria-live="polite">Loading cosmetic catalog...</p>
     </section>
 
-    <section class="shop-license-rules" aria-labelledby="shop-license-title">
-      <div>
-        <p class="shop-kicker">Pack ownership</p>
-        <h2 id="shop-license-title">Every included item becomes its own license.</h2>
+    <section class="shop-subscription" data-shop-subscription aria-labelledby="shop-subscription-title">
+      <div class="shop-subscription-copy">
+        <p class="shop-kicker">One subscription</p>
+        <h2 id="shop-subscription-title">Included with an Arena subscription</h2>
+        <p>Every cosmetic set, full-body skin and trail in this catalog is unlocked by the Arena subscription, for every bot linked to your Angel account. Nothing is sold one item at a time.</p>
+        <p class="shop-subscription-note">Subscribe in your Angel account. Cancelling keeps everything through the paid period; when it lapses, subscription cosmetics come off your bots until it is renewed.</p>
       </div>
-      <ul>
-        <li>Each purchased item copy can be assigned to one bot at a time.</li>
-        <li>Items from the same pack can be assigned to different bots.</li>
-      </ul>
-    </section>
-
-    <section class="shop-all-access" data-shop-subscription aria-labelledby="shop-all-access-title">
-      <div class="shop-all-access-copy">
-        <p class="shop-kicker">Monthly collection pass</p>
-        <h2 id="shop-all-access-title">All Access</h2>
-        <p>Get every current and future cosmetic set, full-body skin, and trail, plus up to 5 active API keys, for one monthly price.</p>
-        <p class="shop-all-access-removal">Cancellation keeps access through the paid period. When service ends, subscription cosmetics are removed from your account and any bots using them.</p>
-      </div>
-      <div class="shop-all-access-offer">
-        <p data-shop-subscription-state role="status">Checking All Access availability...</p>
-        <strong data-shop-subscription-price>$19.99 / month</strong>
-        <a class="btn btn-gold" data-shop-subscription-action href="../?dash_open=1&amp;dash_tab=cosmetics&amp;dash_plan=all-access" aria-disabled="true" hidden>View All Access in Dashboard</a>
+      <div class="shop-subscription-offer">
+        <p data-shop-subscription-state role="status">Reading the catalog...</p>
+        <a class="btn btn-gold" data-shop-subscription-action href="../?dash_open=1&amp;dash_tab=cosmetics" aria-disabled="true" hidden>Open your Dashboard</a>
       </div>
     </section>
 
@@ -145,8 +129,6 @@
         <select id="shop-sort" data-shop-sort aria-controls="shop-pack-list">
           <option value="featured">Featured</option>
           <option value="name">Name</option>
-          <option value="price-low">Price, low to high</option>
-          <option value="price-high">Price, high to low</option>
         </select>
       </label>
       <p class="shop-results-summary" data-shop-results-summary role="status" aria-live="polite">Preparing the showroom...</p>
@@ -209,7 +191,7 @@
             <p class="shop-kicker">Selected pack</p>
             <h2 id="shop-pack-name" data-shop-pack-name>Choose a pack</h2>
           </div>
-          <strong class="shop-pack-price" data-shop-pack-price>--</strong>
+          <strong class="shop-pack-access" data-shop-pack-access>--</strong>
         </header>
         <p class="shop-pack-description" data-shop-pack-description>Select a pack from the index to inspect every included cosmetic and preview it on the bot.</p>
         <p class="shop-pack-count" data-shop-pack-count>No pack selected</p>
@@ -231,8 +213,8 @@
           </div>
         </section>
 
-        <a class="btn btn-gold shop-purchase" data-shop-purchase href="../?dash_open=1&amp;dash_tab=cosmetics" aria-disabled="true" hidden>Select a pack to continue</a>
-        <p class="shop-purchase-note" data-shop-purchase-note>Checkout opens in your Dashboard once you are signed in. Returning from checkout does not mark an order paid until Arena verifies the signed payment event.</p>
+        <a class="btn btn-gold shop-access" data-shop-access href="../?dash_open=1&amp;dash_tab=cosmetics" aria-disabled="true" hidden>Select a pack to continue</a>
+        <p class="shop-access-note" data-shop-access-note>Included with an Arena subscription. Equipping happens in your Dashboard once you are signed in.</p>
       </aside>
     </div>
   </main>

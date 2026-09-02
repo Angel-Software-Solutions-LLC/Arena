@@ -13,18 +13,21 @@ import (
 // compilation — tightening further would require a frontend refactor.
 const contentSecurityPolicy = "" +
 	"default-src 'self'; " +
-	"script-src 'self' https://cdn.jsdelivr.net https://cdn.babylonjs.com https://js.stripe.com https://*.js.stripe.com https://checkout.stripe.com 'unsafe-inline' 'unsafe-eval'; " +
+	"script-src 'self' https://cdn.jsdelivr.net https://cdn.babylonjs.com 'unsafe-inline' 'unsafe-eval'; " +
 	"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
 	"font-src 'self' https://fonts.gstatic.com; " +
-	"img-src 'self' data: blob: https://*.stripe.com https://*.link.com; " +
+	"img-src 'self' data: blob:; " +
 	// accounts.angel-serv.com is the legal corpus, which the shared footer
 	// fetches at runtime so publishing a document updates every site at once.
 	// Scoped to that one host: it is a read of public documents, answered with
 	// a wildcard and no credentials, and widening this to anything else would
 	// give the page a new place it may talk to for no reason.
-	"connect-src 'self' ws: wss: https://accounts.angel-serv.com https://cdn.babylonjs.com https://api.stripe.com https://checkout.stripe.com https://link.com https://*.link.com; " +
+	"connect-src 'self' ws: wss: https://accounts.angel-serv.com https://cdn.babylonjs.com; " +
 	"worker-src 'self' blob:; " +
-	"frame-src 'self' https://checkout.stripe.com https://js.stripe.com https://*.js.stripe.com https://hooks.stripe.com https://link.com https://*.link.com; " +
+	// Only the same-origin dashboard/shop iframes. No payment provider is
+	// framed here any more: the Arena subscription is bought in Angel
+	// Accounts, in its own tab.
+	"frame-src 'self'; " +
 	"frame-ancestors 'self'; " +
 	"base-uri 'self'; " +
 	"form-action 'self'"
@@ -66,7 +69,7 @@ func SecurityHeadersMiddleware(next http.Handler) http.Handler {
 		// blocks ALL framing including same-origin, which breaks that embed.
 		h.Set("X-Frame-Options", "SAMEORIGIN")
 		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
-		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(self \"https://checkout.stripe.com\" \"https://*.stripe.com\" \"https://link.com\" \"https://*.link.com\")")
+		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
 		// Only takes effect over HTTPS (browsers ignore it over plain HTTP), so
 		// it's safe to always send even behind a proxy that terminates TLS.
 		h.Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")

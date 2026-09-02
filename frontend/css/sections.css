@@ -2581,7 +2581,7 @@ body.no-fx-killFeedGlow .killfeed-entry.killfeed-new::before {
   max-width: 68ch;
 }
 
-.cosmetics-checkout-state {
+.cosmetics-catalog-state {
   flex: 0 0 auto;
   border: 1px solid rgba(255, 206, 84, 0.25);
   border-radius: 999px;
@@ -2755,18 +2755,9 @@ body.no-fx-killFeedGlow .killfeed-entry.killfeed-new::before {
   min-width: max-content;
 }
 
-.cosmetic-purchase-link,
 .cosmetics-show-more,
 .cosmetics-empty-state button {
   min-height: 44px;
-}
-
-.cosmetic-purchase-link {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding-inline: 14px;
-  white-space: nowrap;
 }
 
 .cosmetics-show-more {
@@ -2867,7 +2858,6 @@ body.no-fx-killFeedGlow .killfeed-entry.killfeed-new::before {
     justify-items: start;
     min-width: 0;
   }
-  .cosmetic-purchase-link { min-width: 148px; }
   .cosmetic-pack-offer .cosmetic-state { justify-self: end; }
 }
 

@@ -3,6 +3,7 @@ package db
 import (
 	"errors"
 	"testing"
+	"time"
 )
 
 func TestNormalizeCustomerEmail(t *testing.T) {
@@ -25,10 +26,16 @@ func TestCustomerCosmeticsQueriesNilPoolReturnError(t *testing.T) {
 	if _, err := GetCustomerAccount(t.Context(), "account"); !errors.Is(err, ErrNoDatabase) {
 		t.Fatalf("GetCustomerAccount error = %v, want ErrNoDatabase", err)
 	}
-	if _, _, err := GrantCosmeticLicense(t.Context(), "owner@example.com", "skin", "manual", ""); !errors.Is(err, ErrNoDatabase) {
-		t.Fatalf("GrantCosmeticLicense error = %v, want ErrNoDatabase", err)
+	if _, err := SetCustomerSubscription(t.Context(), "account", true, time.Now()); !errors.Is(err, ErrNoDatabase) {
+		t.Fatalf("SetCustomerSubscription error = %v, want ErrNoDatabase", err)
 	}
-	if _, err := AssignCosmeticLicense(t.Context(), "account", "license", nil); !errors.Is(err, ErrNoDatabase) {
-		t.Fatalf("AssignCosmeticLicense error = %v, want ErrNoDatabase", err)
+	if _, err := EquipCustomerCosmetic(t.Context(), "account", "bot", CosmeticSlotBotSkin, "skin"); !errors.Is(err, ErrNoDatabase) {
+		t.Fatalf("EquipCustomerCosmetic error = %v, want ErrNoDatabase", err)
+	}
+	if _, err := EquipCustomerCosmetic(t.Context(), "account", "bot", "hat", "skin"); !errors.Is(err, ErrInvalidCosmeticSlot) {
+		t.Fatalf("EquipCustomerCosmetic bad slot error = %v, want ErrInvalidCosmeticSlot", err)
+	}
+	if _, err := ListAccountBotLoadouts(t.Context(), "account"); !errors.Is(err, ErrNoDatabase) {
+		t.Fatalf("ListAccountBotLoadouts error = %v, want ErrNoDatabase", err)
 	}
 }

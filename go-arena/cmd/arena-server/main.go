@@ -73,39 +73,14 @@ const managedSchemaPreflightQuery = `
 			('cosmetic_catalog_audit', 'id'),
 			('cosmetic_entitlements', 'bot_id'),
 			('customer_accounts', 'id'),
+			('customer_accounts', 'subscription_active'),
+			('customer_accounts', 'subscription_synced_at'),
 			('customer_email_verifications', 'email'),
 			('customer_email_verifications', 'token_hash'),
 			('customer_email_verifications', 'expires_at'),
 			('account_bot_links', 'account_id'),
 			('account_api_keys', 'account_id'),
-			('cosmetic_licenses', 'id'),
-			('cosmetic_license_assignments', 'license_id'),
-			('bot_cosmetic_loadout', 'license_id'),
-			('bot_cosmetic_loadout', 'account_id'),
-			('cosmetic_orders', 'account_id'),
-			('cosmetic_orders', 'pack_description'),
-			('cosmetic_orders', 'expected_subtotal_cents'),
-			('cosmetic_orders', 'cumulative_charge_refunded_cents'),
-			('cosmetic_orders', 'stripe_checkout_session_id'),
-			('cosmetic_orders', 'stripe_payment_intent_id'),
-			('cosmetic_order_items', 'item_id'),
-			('cosmetic_order_licenses', 'license_id'),
-			('cosmetic_payment_events', 'payload_hash'),
-			('cosmetic_order_refunds', 'refund_id'),
-			('cosmetic_subscriptions', 'id'),
-			('cosmetic_subscriptions', 'stripe_subscription_id'),
-			('cosmetic_subscriptions', 'last_provider_event_created_at'),
-			('cosmetic_subscriptions', 'last_provider_state_observed_at'),
-			('cosmetic_subscription_licenses', 'license_id'),
-			('cosmetic_subscription_events', 'payload_hash'),
-			('cosmetic_admin_memberships', 'id'),
-			('cosmetic_admin_memberships', 'account_id'),
-			('cosmetic_admin_memberships', 'status'),
-			('cosmetic_admin_memberships', 'expires_at'),
-			('cosmetic_admin_memberships', 'granted_by'),
-			('cosmetic_admin_membership_licenses', 'membership_id'),
-			('cosmetic_admin_membership_licenses', 'item_id'),
-			('cosmetic_admin_membership_licenses', 'license_id'),
+			('bot_cosmetic_loadout', 'cosmetic_id'),
 			('platform_account_metadata', 'account_id'),
 			('platform_account_metadata', 'status'),
 			('platform_account_metadata', 'maximum_agents'),
@@ -253,7 +228,8 @@ func main() {
 	}
 
 	// Initialise Redis for rate limiting. General routes degrade gracefully;
-	// email delivery and checkout fail closed until Redis is available.
+	// the fail-closed quotas (registration, key mutation) refuse until Redis
+	// is available.
 	if err := security.InitRedis(); err != nil {
 		slog.Warn("redis rate limiting initialisation failed", "error", err)
 	}
@@ -306,9 +282,6 @@ func main() {
 	}
 	game.GameEventHook = func(eventName string, data map[string]interface{}) {
 		api.EmitGameEvent(api.GlobalEventBus, eventName, data)
-	}
-	if db.Pool != nil {
-		go api.RunCosmeticAdminMembershipExpiryLoop(ctx, engine)
 	}
 	go engine.Run(ctx)
 

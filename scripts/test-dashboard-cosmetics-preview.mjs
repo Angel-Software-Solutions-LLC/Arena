@@ -222,12 +222,12 @@ assert.match(dashboardHTML, /Current(?:ly equipped)?[\s\S]*Preview/, 'outfitter 
 assert.match(dashboardHTML, /import\('\.\/cosmetics-preview\.js\?v=20260823b'\)/,
   'the heavy preview controller must be loaded lazily');
 assert.match(dashboardHTML, /ArenaAccountCosmetics\.previewModel/,
-  'Dashboard runtime must revalidate staged license IDs through the pure preview model');
+  'Dashboard runtime must revalidate staged item IDs through the pure preview model');
 assert.match(dashboardHTML, /ArenaAccountCosmetics\.equippedLoadout/,
-  'Dashboard runtime must derive current visuals from server-authoritative equipped licenses');
+  'Dashboard runtime must derive current visuals from the server-authoritative loadout');
 
-const previewHandlerStart = dashboardHTML.indexOf('function previewAccountLicense');
-const previewHandlerEnd = dashboardHTML.indexOf('async function equipAccountLicense', previewHandlerStart);
+const previewHandlerStart = dashboardHTML.indexOf('function previewAccountCosmetic');
+const previewHandlerEnd = dashboardHTML.indexOf('async function equipAccountCosmetic', previewHandlerStart);
 assert.ok(previewHandlerStart >= 0 && previewHandlerEnd > previewHandlerStart);
 const previewHandler = dashboardHTML.slice(previewHandlerStart, previewHandlerEnd);
 assert.doesNotMatch(previewHandler, /accountRequest|fetch\(/,

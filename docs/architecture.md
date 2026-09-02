@@ -32,7 +32,7 @@ The backend lives in `go-arena/`.
 | `internal/config` | environment-driven configuration |
 | `internal/db` | PostgreSQL connection, queries, and models |
 | `internal/game` | game state, combat, movement, pickups, map shape, scoring, rounds |
-| `internal/platform` | provider-neutral shared identity/catalog/license authority port and current same-database adapter |
+| `internal/platform` | provider-neutral shared identity/catalog authority port (identity, subscription flag, cosmetics) and current same-database adapter |
 | `internal/demobots` | built-in demo bot behavior |
 | `internal/security` | API key generation/verification, validation, rate limiting |
 | `internal/ws` | bot and spectator WebSocket handlers |
@@ -72,20 +72,32 @@ For local experiments, `ARENA_DB_OPTIONAL=true` can let the server run in a degr
   Arena has -- can claim the existing bot by submitting its token once to
   `POST /api/v1/account/bots`; the form clears that proof after the request.
 - The Dashboard may also create account-owned keys directly. Durable account
-  links and cosmetics survive key rotation or revocation.
+  links, the subscription flag and equipped cosmetics survive key rotation or
+  revocation.
+- Cosmetics are unlocked by one thing: an active Arena subscription on the
+  Angel account, read from the Accounts entitlements endpoint at sign-in and
+  written to `customer_accounts.subscription_active`. Arena sells nothing
+  itself and holds no payment credential; see
+  [cosmetics-and-monetization.md](cosmetics-and-monetization.md).
 - Admin APIs separate people from machines, and admit each on its own terms.
-- **Humans:** the support-desk role in Angel Accounts is the single source of
-  human admin authority. An administrator signs in at Accounts like any other
-  customer; the platform-administrator claim (`staff: true`, with `staff_role`
-  recorded for audit) on that verified sign-in is what opens the Admin Panel
-  and the admin API. The claim is read only from the validated ID token,
-  decided on presence rather than truthiness, and never persisted; see
-  `go-arena/internal/api/platform_admin.go`. Authority lapses on
-  `ARENA_OIDC_SESSION_TTL_HOURS` and is re-read at the next sign-in, so
-  withdrawing the desk role in Accounts revokes it with nothing to clean up in
-  Arena. Because the panel acts on the ordinary `arena_customer_session`
-  cookie, its mutations are held to the same same-origin and CSRF checks as
-  every other customer mutation.
+- **Humans:** Angel Accounts is the single source of human admin authority,
+  through two claims on the verified ID token. The support-desk role arrives
+  as `staff: true` (with `staff_role` recorded for audit); a product
+  administrator for Arena arrives as `product_admin: true`. Either claim,
+  present as the literal `true`, opens the Admin Panel and the admin API. The
+  claims are read only from the validated ID token, decided on presence
+  rather than truthiness (a string `"true"`, `false` or an absent claim admits
+  nobody), and never persisted; see `go-arena/internal/api/platform_admin.go`.
+  The audit principal says which claim admitted the actor:
+  `accounts-staff:<account_id>[:role]` for the desk role,
+  `accounts-product-admin:<account_id>` for a product grant (the desk role
+  wins when both are present), and `GET /api/v1/admin/session` reports the
+  same `authority`. Authority lapses on `ARENA_OIDC_SESSION_TTL_HOURS` and is
+  re-read at the next sign-in, so withdrawing either grant in Accounts revokes
+  it with nothing to clean up in Arena. A customer cookie without one of the
+  claims is a customer, never an administrator. Because the panel acts on the
+  ordinary `arena_customer_session` cookie, its mutations are held to the same
+  same-origin and CSRF checks as every other customer mutation.
 - **Retired:** Arena's own admin SSO application — its issuer and client
   credentials, its `arena_admin_session` cookie, the `/admin/login`,
   `/admin/callback` and `/admin/logout` routes, and the
@@ -104,7 +116,7 @@ For local experiments, `ARENA_DB_OPTIONAL=true` can let the server run in a degr
   deliberate: there is no second emergency human login to keep in sync, and
   inventing one would recreate exactly the second source of truth this change
   removed.
-- Administrator authority is orthogonal to entitlements, which are checked exactly as before.
+- Administrator authority is orthogonal to the subscription: a `product_admin` grant does not subscribe the account, and a subscription grants no administrative access.
 - Bot input is schema validated before it affects game state.
 - WebSocket and HTTP paths have size and rate controls.
 - Production deployments should terminate TLS at a reverse proxy and pass only the needed routes to the server.
@@ -120,11 +132,11 @@ Bots interact with the arena through a small loop:
 5. Receive `tick` messages.
 6. Send an `action` for the current tick.
 
-Account registration is a separate, optional commerce path: after signing in
-with Angel Accounts, the owner proves the existing token once to claim that bot
-before purchasing, assigning, or equipping cosmetics. Signing in is one press
-of any sign-in control and opens the Accounts flow directly; Arena holds no
-customer password and sends no sign-in mail.
+Account registration is a separate, optional path: after signing in with
+Angel Accounts, the owner proves the existing token once to claim that bot,
+and every cosmetic the Arena subscription includes can then be equipped on
+it. Signing in is one press of any sign-in control and opens the Accounts flow
+directly; Arena holds no customer password and sends no sign-in mail.
 
 The complete public reference is in [BOT-GUIDE.md](../BOT-GUIDE.md) and the machine-readable endpoint `GET /api/v1/bot-setup`.
 

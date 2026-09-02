@@ -41,7 +41,11 @@ func TestSecurityHeadersMiddleware_AllowsSameOriginFraming(t *testing.T) {
 	}
 }
 
-func TestSecurityHeadersMiddleware_AllowsStripeEmbeddedCheckout(t *testing.T) {
+// TestSecurityHeadersMiddleware_TrustsNoPaymentProvider pins the removal of
+// Arena's own checkout: nothing from a payment processor is scripted, framed,
+// connected to or allowed the Payment Request API. The subscription is bought
+// in Angel Accounts, on its own origin.
+func TestSecurityHeadersMiddleware_TrustsNoPaymentProvider(t *testing.T) {
 	config.C.SecurityHeadersEnabled = true
 	handler := SecurityHeadersMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -50,35 +54,19 @@ func TestSecurityHeadersMiddleware_AllowsStripeEmbeddedCheckout(t *testing.T) {
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 
 	csp := rec.Header().Get("Content-Security-Policy")
-	/*
-	 * Checked origin by origin, within the directive that must carry it,
-	 * rather than by matching a whole directive verbatim.
-	 *
-	 * The verbatim form asserted more than it meant: adding any unrelated
-	 * origin to connect-src — the legal corpus, say — failed a test named for
-	 * Stripe, while saying nothing about whether Stripe still worked. This
-	 * still fails if any of these is dropped, which is the thing worth
-	 * protecting, and stays silent about origins it has no opinion on.
-	 */
-	for _, required := range []struct{ directive, origin string }{
-		{"script-src", "https://js.stripe.com"},
-		{"script-src", "https://*.js.stripe.com"},
-		{"script-src", "https://checkout.stripe.com"},
-		{"frame-src", "https://checkout.stripe.com"},
-		{"frame-src", "https://js.stripe.com"},
-		{"frame-src", "https://hooks.stripe.com"},
-		{"frame-src", "https://*.link.com"},
-		{"connect-src", "https://api.stripe.com"},
-		{"connect-src", "https://checkout.stripe.com"},
-		{"connect-src", "https://*.link.com"},
-		{"img-src", "https://*.stripe.com"},
-	} {
-		if !cspDirectiveAllows(csp, required.directive, required.origin) {
-			t.Errorf("CSP %s must allow %s for Stripe Embedded Checkout: %q", required.directive, required.origin, csp)
+	for _, forbidden := range []string{"stripe.com", "link.com"} {
+		if strings.Contains(csp, forbidden) {
+			t.Errorf("CSP still trusts a payment provider origin %q: %q", forbidden, csp)
 		}
 	}
-	if policy := rec.Header().Get("Permissions-Policy"); !strings.Contains(policy, `payment=(self "https://checkout.stripe.com"`) {
-		t.Errorf("Permissions-Policy blocks Stripe wallet payments: %q", policy)
+	if !cspDirectiveAllows(csp, "frame-src", "'self'") {
+		t.Errorf("CSP frame-src must keep the same-origin dashboard and shop iframes: %q", csp)
+	}
+	if !cspDirectiveAllows(csp, "connect-src", "https://accounts.angel-serv.com") {
+		t.Errorf("CSP connect-src must keep the legal corpus origin: %q", csp)
+	}
+	if policy := rec.Header().Get("Permissions-Policy"); !strings.Contains(policy, "payment=()") {
+		t.Errorf("Permissions-Policy still delegates payment: %q", policy)
 	}
 }
 

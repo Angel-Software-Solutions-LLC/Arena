@@ -15,9 +15,10 @@ import (
 //     Time-window leaderboards read round_bot_stats.created_at directly, so
 //     purging rounds does not affect them (round_id FKs are ON DELETE SET
 //     NULL).
-//   - cosmetic_payment_events, cosmetic_subscription_events: Stripe webhook
-//     idempotency guards; deleting rows re-opens replay windows.
-//   - platform_license_lifecycle_events: financial/licensing audit.
+//   - the retired Stripe ledger (cosmetic_orders, cosmetic_payment_events,
+//     cosmetic_subscription_events, cosmetic_licenses and friends): nothing
+//     writes them since commerce moved to Angel Accounts, and an operator
+//     who still has them keeps them as a record.
 //   - platform_changes, platform_agent_link_events: replay-cursor feed and
 //     revision replay guard, not log spam.
 //   - consent_acceptances: legal record; the published privacy policy
