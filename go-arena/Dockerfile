@@ -1,4 +1,4 @@
-FROM golang:1.25 AS builder
+FROM golang:1.27 AS builder
 WORKDIR /app
 COPY go-arena/go.mod go-arena/go.sum ./go-arena/
 RUN cd go-arena && go mod download
