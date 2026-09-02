@@ -1,0 +1,45 @@
+version: 2
+
+# One Dependabot PR per week for the whole repository, covering every
+# ecosystem below. Security updates are not grouped by this and still
+# arrive individually, so urgent fixes never wait for the weekly batch.
+multi-ecosystem-groups:
+  weekly-updates:
+    schedule:
+      interval: weekly
+
+updates:
+  - package-ecosystem: npm
+    directories:
+      - /
+      - /sdk/nodejs
+      - /tests/browser
+    multi-ecosystem-group: weekly-updates
+    patterns:
+      - "*"
+
+  - package-ecosystem: gomod
+    directory: /go-arena
+    multi-ecosystem-group: weekly-updates
+    patterns:
+      - "*"
+
+  - package-ecosystem: pip
+    directory: /sdk/python
+    multi-ecosystem-group: weekly-updates
+    patterns:
+      - "*"
+
+  - package-ecosystem: docker
+    directories:
+      - /go-arena
+      - /updater
+    multi-ecosystem-group: weekly-updates
+    patterns:
+      - "*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    multi-ecosystem-group: weekly-updates
+    patterns:
+      - "*"

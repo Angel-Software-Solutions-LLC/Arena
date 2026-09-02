@@ -19,5 +19,5 @@ classifiers = [
 dev = ["pytest", "pytest-asyncio"]
 
 [project.urls]
-Homepage = "https://github.com/ablac/Arena"
-Repository = "https://github.com/ablac/Arena"
+Homepage = "https://github.com/Angel-Software-Solutions-LLC/Arena"
+Repository = "https://github.com/Angel-Software-Solutions-LLC/Arena"

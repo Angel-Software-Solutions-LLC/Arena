@@ -212,7 +212,7 @@ assert.match(html, /href="https:\/\/www\.linkedin\.com\/in\/keith-swoger"/, 'Kei
 assert.match(html, /href="https:\/\/www\.linkedin\.com\/in\/andrew-demczuk-4038a217\/"/, 'Andrew LinkedIn must remain linked');
 assert.match(html, /<strong>Will<\/strong><small>Details coming soon<\/small>/, 'Will must have a future-details placeholder');
 assert.match(html, /href="https:\/\/angel-serv\.com\/"/, 'Contact must link to Angel-Serv.com');
-assert.match(html, /href="mailto:Hello@angel-serv\.com"/, 'Contact must link to Hello@angel-serv.com');
+assert.match(html, /href="mailto:hello@angel-serv\.com"/, 'Contact must link to hello@angel-serv.com');
 
 for (const match of matches(html, /aria-labelledby="([^"]+)"/g)) {
   for (const labelledBy of match[1].split(/\s+/)) {

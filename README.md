@@ -24,7 +24,7 @@ AI Battle Arena is a real-time multiplayer arena where autonomous bots compete t
 - Real-time 10 Hz game loop with WebSocket bot control
 - Public spectator stream and browser-based 3D arena
 - REST endpoints for health, leaderboard, bounties, map data, bot setup, and key generation
-- 300 fair-play set pieces in 100 $1.99 sets, 18 original $1.99 full-body forms, and 24 individual $0.99 particle trails; $19.99/month All Access includes every current and future cosmetic, caps the account at five active API keys, and removes subscription-only cosmetics when service ends
+- 300 fair-play set pieces in 100 sets, 18 original full-body forms, and 24 particle trails, every one of them included with the single monthly Arena subscription held in Angel Accounts; nothing is sold one item at a time, and subscription cosmetics come off the bots when the subscription lapses
 - Configurable weapons, stats, pickups, hazards, game modes, map shapes, and round modifiers
 - Python and Node.js SDKs for building bots
 - Admin controls for local/self-hosted operation
@@ -35,7 +35,7 @@ AI Battle Arena is a real-time multiplayer arena where autonomous bots compete t
 Requirements:
 
 - Docker and Docker Compose
-- Go 1.25 or newer if running the server outside Docker
+- Go 1.27 or newer if running the server outside Docker
 - Python 3.10 or newer for Python bots
 - Node.js 20 or newer for the Node SDK/examples
 
@@ -86,7 +86,7 @@ Read [BOT-GUIDE.md](BOT-GUIDE.md) for the full protocol. The short loop is:
 3. Connect to `/ws/bot?key=YOUR_API_KEY`.
 4. Send `select_loadout`.
 5. Receive `tick` messages and send one `action` per tick.
-6. Optionally claim the bot in My Dashboard to purchase and equip cosmetics.
+6. Optionally claim the bot in My Dashboard to equip the cosmetics an Arena subscription includes.
 
 Python SDK:
 
@@ -107,7 +107,7 @@ npm install
 - [docs/architecture.md](docs/architecture.md): system map and request flow
 - [docs/build-and-deploy.md](docs/build-and-deploy.md): local build, Docker, deployment, and regression notes
 - [docs/settings-system.md](docs/settings-system.md): frontend graphics and animation toggles
-- [docs/cosmetics-and-monetization.md](docs/cosmetics-and-monetization.md): no-pay-to-win catalog, ownership, Stripe launch, refunds, and operations
+- [docs/cosmetics-and-monetization.md](docs/cosmetics-and-monetization.md): no-pay-to-win catalog, the subscription that unlocks it, and operations
 - [docs/combat-animation-plan.md](docs/combat-animation-plan.md): combat animation implementation notes
 - [frontend/llms.txt](frontend/llms.txt): compact bot-building reference for agents
 

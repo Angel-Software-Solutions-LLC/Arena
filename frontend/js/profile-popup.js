@@ -184,9 +184,14 @@ function renderProfile(container, profile) {
   `;
 }
 
+// Which open is current. Two handles clicked in quick succession are two
+// fetches in flight, and the first can answer last; only the latest may draw.
+let profileOpenSequence = 0;
+
 /** Fetch and open the profile popup for accountId. No-op for a falsy id (anonymous/dev messages). */
 export async function openProfilePopup(accountId) {
   if (!accountId) return;
+  const sequence = ++profileOpenSequence;
   const dialog = ensureDialog();
   const content = dialog.querySelector('.prf-content');
   content.innerHTML = '<p class="prf-loading">Loading profile...</p>';
@@ -199,13 +204,16 @@ export async function openProfilePopup(accountId) {
       cache: 'no-store',
       headers: { Accept: 'application/json' },
     });
+    if (sequence !== profileOpenSequence) return;
     if (!resp.ok) {
       content.innerHTML = '<p class="prf-error">Profile not found.</p>';
       return;
     }
     const profile = await resp.json();
+    if (sequence !== profileOpenSequence) return;
     renderProfile(content, profile);
   } catch (err) {
+    if (sequence !== profileOpenSequence) return;
     content.innerHTML = '<p class="prf-error">Could not load this profile right now.</p>';
   }
 }

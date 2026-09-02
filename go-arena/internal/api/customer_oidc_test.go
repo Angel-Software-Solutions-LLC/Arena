@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"arena-server/internal/accounts"
 	"arena-server/internal/config"
 	"arena-server/internal/db"
 	"arena-server/internal/game"
@@ -24,11 +25,34 @@ type fakeIdentityAuthority struct {
 	issuer      string
 	subject     string
 	displayName string
+
+	// What the subscription sync recorded, in order. The fake plays the
+	// account row: a sync that repeats the current flag is not a change.
+	subscriptionCalls []fakeSubscriptionCall
+	subscriptionBots  []string
+}
+
+type fakeSubscriptionCall struct {
+	accountID string
+	active    bool
 }
 
 func (f *fakeIdentityAuthority) UpsertVerifiedIdentity(_ context.Context, email, issuer, subject, displayName string) (*db.CustomerAccount, error) {
 	f.email, f.issuer, f.subject, f.displayName = email, issuer, subject, displayName
 	return f.account, nil
+}
+
+func (f *fakeIdentityAuthority) SetSubscription(_ context.Context, accountID string, active bool, _ time.Time) (*db.SubscriptionSyncChange, error) {
+	f.subscriptionCalls = append(f.subscriptionCalls, fakeSubscriptionCall{accountID: accountID, active: active})
+	changed := f.account == nil || f.account.SubscriptionActive != active
+	if f.account != nil {
+		f.account.SubscriptionActive = active
+	}
+	change := &db.SubscriptionSyncChange{AccountID: accountID, Active: active, Changed: changed}
+	if changed {
+		change.BotIDs = append([]string(nil), f.subscriptionBots...)
+	}
+	return change, nil
 }
 
 func newTestCustomerOIDCHandler() *CustomerOIDCHandler {
@@ -257,9 +281,8 @@ func TestCustomerCookieNeverAuthorizesAdmin(t *testing.T) {
 	config.C.AdminLocalhostBypass = false
 	config.C.AdminToken = "admin-secret"
 
-	adminOIDC := &OIDCHandler{sessions: make(map[string]*OIDCSession)}
 	called := false
-	protected := MakeAdminAuthMiddlewareWithOIDC(nil, adminOIDC)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+	protected := MakeAdminAuthMiddlewareWithPlatformAdmins(nil, nil)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		called = true
 	}))
 	req := httptest.NewRequest(http.MethodGet, "https://arena.example/api/v1/admin/status", nil)
@@ -276,7 +299,6 @@ func TestCustomerCookieNeverAuthorizesAdmin(t *testing.T) {
 func TestCustomerDashboardAuthRoutesExistWhenLoginDisabled(t *testing.T) {
 	previous := config.C
 	t.Cleanup(func() { config.C = previous })
-	config.C.OIDCEnabled = false
 	config.C.CustomerOIDCEnabled = false
 	router := NewRouter(game.NewGameEngine())
 
@@ -297,4 +319,12 @@ func TestCustomerDashboardAuthRoutesExistWhenLoginDisabled(t *testing.T) {
 			t.Errorf("POST %s status = %d, want 503", path, rec.Code)
 		}
 	}
+}
+
+func newTestEntitlementsClient(server *httptest.Server) *accounts.Client {
+	return accounts.NewClient(server.URL, server.Client())
+}
+
+func accountsEntitlementsClientAt(endpoint string) *accounts.Client {
+	return accounts.NewClient(endpoint, nil)
 }

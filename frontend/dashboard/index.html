@@ -4,11 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Bot Dashboard | The Arena | Angel Software Solutions</title>
-<link rel="stylesheet" href="../css/embedded-checkout.css?v=20260713a">
 <link rel="stylesheet" href="./cosmetics-preview.css?v=20260713a">
-<script src="../js/embedded-checkout.js?v=20260713a"></script>
 <script type="module" src="../js/consent-gate.js?v=20260714a"></script>
-<link rel="stylesheet" href="./dashboard.css?v=20260718a">
+<script type="module" src="../js/accounts.js?v=20260825a"></script>
+<link rel="stylesheet" href="./dashboard.css?v=20260902a">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;700;800&display=swap" rel="stylesheet">
@@ -18,19 +17,6 @@
 <script>
 if (window.self !== window.top) {
   document.body.classList.add('dashboard-embedded');
-} else {
-  // A magic-link email always opens a fresh top-level tab -- the browser's
-  // call, not something a site can prevent. Rather than loading this whole
-  // dashboard (or the full live Arena) just to show a confirm button, hand
-  // off to confirm.html: a minimal, self-contained page that verifies the
-  // token, notifies any already-open Arena tab via account-session.js (see
-  // notifySessionChanged in dashboard/index.html's confirmCustomerEmailToken
-  // for the same pattern), and tells the user they can close this tab.
-  var hash = String(window.location.hash || '');
-  if (hash.indexOf('email_token=') !== -1) {
-    var mounted = window.location.pathname === '/arena' || window.location.pathname.indexOf('/arena/') === 0;
-    window.location.replace((mounted ? '/arena/dashboard/confirm.html' : '/dashboard/confirm.html') + hash);
-  }
 }
 </script>
 
@@ -52,44 +38,35 @@ if (window.self !== window.top) {
 
 <div id="login">
   <h1>// BOT DASHBOARD</h1>
-  <p>Your verified email owns purchases. API keys only prove which bots you control and can be replaced without losing cosmetics.</p>
+  <p>Your Angel account holds the Arena subscription. API keys only prove which bots you control and can be replaced without losing anything.</p>
   <div class="error" id="loginError"></div>
   <div class="login-shell">
     <section class="login-choice primary">
-      <div class="choice-kicker">Recommended</div>
-      <h2>Create or sign in</h2>
-      <p>Use a one-time email link to create your verified Arena account or return to it. No password is stored by Arena.</p>
-      <form class="account-email-form" id="accountEmailForm" hidden novalidate>
-        <label>Email
-          <input id="accountEmailInput" type="email" autocomplete="email" inputmode="email" maxlength="254" placeholder="pilot@example.com" required>
-        </label>
-        <label>Display name <span aria-hidden="true">(optional)</span>
-          <input id="accountDisplayNameInput" type="text" autocomplete="name" maxlength="200" placeholder="Pilot name">
-        </label>
-        <button id="accountEmailSubmit" type="submit" disabled>Email me a sign-in link</button>
-        <div class="account-email-status" id="accountEmailStatus" role="status" aria-live="polite"></div>
-      </form>
-      <div class="account-email-confirm" id="accountEmailConfirm" hidden>
-        <div class="choice-kicker">Email link opened</div>
-        <h3>Finish signing in</h3>
-        <p>Continue only if you requested this Arena account link. This click consumes it once.</p>
-        <button id="accountEmailConfirmButton" type="button">Continue to Arena</button>
-        <div class="account-email-status" id="accountEmailConfirmStatus" role="status" aria-live="polite"></div>
+      <h2>Sign in</h2>
+      <p>One press. Arena opens an Angel Accounts window, you sign in there, and it closes itself — Arena never sees your password, and no longer keeps your email address.</p>
+      <div class="account-email-setup" id="accountEmailSetup" role="status">Checking sign-in...</div>
+      <button class="account-sign-in" id="accountSignInButton" type="button" hidden disabled>Sign in with Angel Accounts</button>
+      <p class="login-register">No Angel account yet? <a data-accounts-register>Create one</a> — the same account works across every Angel product.</p>
+      <div class="login-privacy">One subscription unlocks every cosmetic for every bot you link. Linking a key never makes that key the subscriber.</div>
+    </section>
+    <!--
+      Bot operators still need this, and it is still here — but it is no longer
+      a fork in the road. It used to sit beside the account panel as an equal
+      choice, which made every person signing in answer a question that has
+      only ever had one answer for them. Folded away, it costs a press to the
+      few who want it and none to everybody else, and it opens itself for
+      anybody who already has a key in this tab.
+    -->
+    <details class="login-secondary" id="botKeyDetails">
+      <summary>Bot operator? Open with an API key instead</summary>
+      <div class="login-secondary-body">
+        <p>Keep using a bot key for stats, comparisons, and live performance tools. This does not touch your subscription, and the key is kept only for this browser tab.</p>
+        <input type="password" id="apiKeyInput" placeholder="arena_...">
+        <input id="keyLabel" placeholder="Local label (optional)">
+        <button type="button" onclick="doLogin()">Connect bot</button>
+        <div class="saved-keys" id="savedKeysList"></div>
       </div>
-      <div class="account-email-setup" id="accountEmailSetup" role="status">Checking account registration...</div>
-      <div class="account-auth-divider" id="accountAuthDivider" hidden>or</div>
-      <button class="account-sign-in" id="accountSignInButton" type="button" hidden disabled>Continue with SSO</button>
-      <div class="login-privacy">One cosmetic license can be used by one bot at a time. Linking a key never makes that key the owner.</div>
-    </section>
-    <section class="login-choice secondary">
-      <div class="choice-kicker">Bot performance</div>
-      <h2>Open with an API key</h2>
-      <p>Keep using a bot key for stats, comparisons, and live performance tools. This does not control purchase ownership. The key is kept only for this browser tab.</p>
-      <input type="password" id="apiKeyInput" placeholder="arena_..." autofocus>
-      <input id="keyLabel" placeholder="Local label (optional)">
-      <button onclick="doLogin()">Connect bot</button>
-      <div class="saved-keys" id="savedKeysList"></div>
-    </section>
+    </details>
   </div>
   <div style="margin-top:16px;font-size:11px;color:var(--text2)">
     <a href="../">Back to Arena</a> &nbsp;|&nbsp; Don't have a key? <a href="../#keygen">Generate one</a>
@@ -134,7 +111,7 @@ if (window.self !== window.top) {
         <div>
           <div class="cosmetic-kicker">Live loadout lab</div>
           <h2 id="account-cosmetics-outfitter-title">Bot outfitter</h2>
-          <p>Try any active cosmetic you own. Preview is visual only; nothing changes on your bot until you use its separate Equip action below.</p>
+          <p>Try any cosmetic in the catalog. Preview is visual only; nothing changes on your bot until you use its separate Equip action below.</p>
         </div>
         <label class="cosmetics-preview-bot-label" for="accountCosmeticsPreviewBot">
           Preview bot
@@ -146,7 +123,7 @@ if (window.self !== window.top) {
       <div class="cosmetics-outfitter-grid">
         <div class="cosmetics-preview-stage">
           <canvas id="accountCosmeticsPreviewCanvas" width="720" height="540" hidden aria-label="Animated preview of the selected bot and staged cosmetics" aria-busy="false"></canvas>
-          <div class="cosmetics-preview-status" id="accountCosmeticsPreviewStatus" role="status" aria-live="polite">Link a bot to preview your owned cosmetics.</div>
+          <div class="cosmetics-preview-status" id="accountCosmeticsPreviewStatus" role="status" aria-live="polite">Link a bot to preview cosmetics on it.</div>
           <div class="cosmetics-preview-orbit" aria-hidden="true"></div>
         </div>
         <div class="cosmetics-preview-inspector">
@@ -163,12 +140,12 @@ if (window.self !== window.top) {
           <div class="cosmetics-preview-slots" id="accountCosmeticsPreviewSlots">
             <p>Link a bot to compare its current loadout with a staged preview.</p>
           </div>
-          <p class="cosmetics-preview-safety">Preview buttons never assign, move, or equip a license. The current column always comes from Arena's saved account data.</p>
+          <p class="cosmetics-preview-safety">Preview buttons never equip anything. The current column always comes from Arena's saved account data.</p>
         </div>
       </div>
     </section>
     <div class="section">
-      <div id="accountCosmeticsPanel" class="cosmetic-loading">Loading your account-owned cosmetics...</div>
+      <div id="accountCosmeticsPanel" class="cosmetic-loading">Loading your subscription and cosmetics...</div>
     </div>
   </div>
 
@@ -263,8 +240,8 @@ if (window.self !== window.top) {
 </div>
 
 <script src="../js/cosmetic-themes.js?v=20260713f"></script>
-<script src="./account-cosmetics.js?v=20260714h"></script>
+<script src="./account-cosmetics.js?v=20260902a"></script>
 <script src="./account-profile.js?v=20260714a"></script>
-<script src="./dashboard.js?v=20260810d"></script>
+<script src="./dashboard.js?v=20260902a"></script>
 </body>
 </html>

@@ -47,9 +47,12 @@ const compressed = brotliCompressSync(runtime, {
 // The ceiling rose from 2.30 MB when the required side-effect modules
 // (postProcess presentation, shadow/effect-layer/particle scene components,
 // Ray) joined the bundle — without them the runtime was smaller but rendered
-// a black arena (see vendor-src/babylon-runtime-entry.mjs).
-assert.ok(runtime.byteLength <= 2_350_000,
-  `Babylon runtime raw size ${runtime.byteLength} exceeds 2.35 MB safety ceiling`);
+// a black arena (see vendor-src/babylon-runtime-entry.mjs). It rose again
+// from 2.35 MB when @babylonjs/core moved 9.14.0 -> 9.21.2 (2,385,023 raw);
+// the Brotli cold-start budget below is the binding constraint and did not
+// move — 9.21.2 compresses to ~416 KB, well inside it.
+assert.ok(runtime.byteLength <= 2_450_000,
+  `Babylon runtime raw size ${runtime.byteLength} exceeds 2.45 MB safety ceiling`);
 assert.ok(compressed.byteLength <= 500_000,
   `Babylon runtime Brotli size ${compressed.byteLength} exceeds 500 KB cold-start budget`);
 assert.match(runtime.toString('utf8'), /BABYLON/,

@@ -24,4 +24,4 @@
 - [ ] New bot/API behavior is reflected in `BOT-GUIDE.md` or `GET /api/v1/bot-setup`
 
 ## Notes
-Add reviewer context or follow-up work here.
+Add rollout details or follow-up work here.

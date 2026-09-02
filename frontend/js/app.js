@@ -22,6 +22,7 @@ import { installClientErrorReporting } from './client-errors.js?v=20260810e';
 // Install before anything else so failures during startup are reported too.
 installClientErrorReporting();
 import { observeArenaSafeViewport } from './safe-viewport.js?v=20260718b';
+import { isSignedOut, signInAvailability, startSignIn, watchSignInState } from './sign-in.js?v=20260825a';
 
 const ARENA_WIDTH = 2000;
 const ARENA_HEIGHT = 2000;
@@ -55,6 +56,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupRevealAnimations();
   setupOverlays();
   initAboutPanel();
+
+  // Start reading the session now, so that by the time anybody presses
+  // anything this page already knows whether they are signed in -- see
+  // openDashboardFromPress, which has to decide without a network round trip
+  // if the Accounts window is to open on the press itself.
+  //
+  // It also takes the explicit sign-in controls off the page once somebody is
+  // signed in, because an offer to sign in is a lie told to a signed-in
+  // visitor about which state they are in.
+  watchSignInState((session) => {
+    const signedIn = Boolean(session?.authenticated);
+    document.querySelectorAll('[data-arena-signin]').forEach((control) => {
+      control.hidden = signedIn;
+    });
+  });
 
   // Arena renderer
   const canvas = document.getElementById('arena-canvas');
@@ -453,7 +469,7 @@ function initAboutPanel() {
       commitEl.textContent = v.commit_short || 'unknown';
       const link = document.getElementById('about-commit-link');
       if (link && v.commit && v.commit !== 'unknown') {
-        link.href = `${v.repo || 'https://github.com/ablac/Arena'}/commit/${v.commit}`;
+        link.href = `${v.repo || 'https://github.com/Angel-Software-Solutions-LLC/Arena'}/commit/${v.commit}`;
         link.title = v.commit;
       }
       const buildEl = document.getElementById('about-build-time');
@@ -562,26 +578,17 @@ function setupOverlays() {
   // same-origin documents that can't reach this page's own overlay JS call
   // directly -- the Shop iframe uses it instead of navigating with
   // ?dash_open=1, which used to reload the whole Arena just to switch tabs.
-  const openDashboardOverlay = ({ tab = '', plan = '', pack = '' } = {}) => {
+  const openDashboardOverlay = ({ tab = '' } = {}) => {
     const frame = document.getElementById('dashboard-frame');
     if (frame) {
       const extra = [];
       if (tab) extra.push(`tab=${encodeURIComponent(tab)}`);
-      if (plan) extra.push(`plan=${encodeURIComponent(plan)}`);
-      if (pack) extra.push(`pack=${encodeURIComponent(pack)}`);
       const loaded = Boolean(frame.getAttribute('src'));
       if (!loaded) {
         if (extra.length) {
           const base = frame.dataset.src || '';
           frame.dataset.src = base + (base.includes('?') ? '&' : '?') + extra.join('&');
         }
-      } else if (plan || pack) {
-        // Switching subscription plan or resuming a specific pack purchase
-        // needs the dashboard's own bootstrap to re-run (subscription offer
-        // resolution / pending-pack catalog lookup) -- reload just this
-        // small iframe, never the whole Arena page.
-        const base = frame.dataset.src || '/dashboard/?view=private';
-        frame.setAttribute('src', appPath(base) + (base.includes('?') ? '&' : '?') + extra.join('&'));
       } else if (tab && typeof frame.contentWindow?.activateTab === 'function') {
         frame.contentWindow.activateTab(tab);
       }
@@ -589,21 +596,70 @@ function setupOverlays() {
     openOverlay('dashboard-overlay');
   };
 
+  /*
+   * Signing in is one press, and this is where that press lands.
+   *
+   * Every way into an Arena account went through this drawer, and the drawer
+   * used to open on a screen asking which of two ways you would like to sign
+   * in. There has only been one way since Arena's own email sign-in was
+   * retired, so the question was a press spent answering nothing. It is gone
+   * from the drawer, and for a visitor we already know is signed out the
+   * press that opens the drawer starts the Accounts window itself.
+   *
+   * Only from a real press. `?dash_open=1` and the Shop iframe's
+   * `ArenaOpenDashboard` are not user gestures, and a window opened without
+   * one is a window the browser blocks -- which would fall back to a
+   * full-page redirect nobody asked for. Those paths keep opening the drawer,
+   * where the sign-in control still is.
+   *
+   * And whatever the sign-in does -- completed, closed, declined, or not
+   * configured on this Arena at all -- the drawer opens afterwards. There is
+   * no outcome where the press does nothing, the "not configured" message
+   * still has somewhere to appear, and the API key path bot operators need is
+   * behind it either way.
+   */
+  const openDashboardFromPress = (options) => {
+    if (!isSignedOut() || signInAvailability() !== 'available') {
+      openDashboardOverlay(options);
+      return;
+    }
+    startSignIn().finally(() => openDashboardOverlay(options));
+  };
+
   openButtons.forEach((button) => {
     button.addEventListener('click', (event) => {
       event.preventDefault();
-      if (button.dataset.overlayOpen === 'dashboard-overlay' && button.dataset.dashboardTab) {
-        openDashboardOverlay({ tab: button.dataset.dashboardTab });
-        return;
-      }
-      if (!button.dataset.overlayTarget) {
-        const overlay = document.getElementById(button.dataset.overlayOpen);
+      const overlayId = button.dataset.overlayOpen;
+      // A plain rail button toggles: pressing it again closes the drawer it
+      // opened. A button that names a tab or a scroll target does not, because
+      // it is asking for somewhere specific rather than for the drawer.
+      if (!button.dataset.overlayTarget && !button.dataset.dashboardTab) {
+        const overlay = document.getElementById(overlayId);
         if (overlay?.classList.contains('open')) {
-          closeOverlay(button.dataset.overlayOpen);
+          closeOverlay(overlayId);
           return;
         }
       }
-      openOverlay(button.dataset.overlayOpen, button.dataset.overlayTarget);
+      if (overlayId === 'dashboard-overlay') {
+        openDashboardFromPress(button.dataset.dashboardTab ? { tab: button.dataset.dashboardTab } : {});
+        return;
+      }
+      openOverlay(overlayId, button.dataset.overlayTarget);
+    });
+  });
+
+  /*
+   * Controls whose whole purpose is signing in: they open the window and
+   * nothing else. Marked in the markup rather than matched on their text, so
+   * rewording one never quietly turns it back into a link to somewhere.
+   */
+  document.querySelectorAll('[data-arena-signin]').forEach((control) => {
+    control.addEventListener('click', async (event) => {
+      event.preventDefault();
+      const result = await startSignIn();
+      if (result.status === 'unconfigured') {
+        openDashboardOverlay({});
+      }
     });
   });
 
@@ -635,30 +691,23 @@ function setupOverlays() {
   window.ArenaCloseOverlay = closeOverlay;
 
   applyDeepLinkedDashboardOpen(openDashboardOverlay);
-  applyEmailTokenHandoff(openOverlay);
   applyDeepLinkedShopOpen(openOverlay);
 }
 
 // Pages that can't reach this page's overlay JS directly (a freshly
 // generated key's "claim this bot" link, or the Shop when it's reached as
 // its own standalone tab rather than embedded) hand off by navigating here
-// with ?dash_open=1 (plus optional dash_tab/dash_plan/dash_pack). This is
+// with ?dash_open=1 (plus an optional dash_tab). This is
 // what makes "Dashboard" open in the slide-out drawer everywhere instead of
 // sometimes landing on /dashboard/ as a bare full-page navigation.
 function applyDeepLinkedDashboardOpen(openDashboardOverlay) {
   const params = new URLSearchParams(window.location.search);
   if (params.get('dash_open') !== '1') return;
 
-  openDashboardOverlay({
-    tab: params.get('dash_tab') || '',
-    plan: params.get('dash_plan') || '',
-    pack: params.get('dash_pack') || '',
-  });
+  openDashboardOverlay({tab: params.get('dash_tab') || ''});
 
   params.delete('dash_open');
   params.delete('dash_tab');
-  params.delete('dash_plan');
-  params.delete('dash_pack');
   const query = params.toString();
   const cleanURL = window.location.pathname + (query ? `?${query}` : '') + window.location.hash;
   window.history.replaceState(null, '', cleanURL);
@@ -678,32 +727,5 @@ function applyDeepLinkedShopOpen(openOverlay) {
   params.delete('shop_open');
   const query = params.toString();
   const cleanURL = window.location.pathname + (query ? `?${query}` : '') + window.location.hash;
-  window.history.replaceState(null, '', cleanURL);
-}
-
-// A magic-link sign-in email always opens a fresh top-level tab. Landing
-// there takes visitors to /dashboard/ first, which immediately hands the
-// token back here via a same-origin redirect (see the inline script at the
-// top of dashboard/index.html) rather than showing its standalone
-// confirm-sign-in screen. This is the other half of that handoff: forward
-// the token into the embedded Dashboard drawer's iframe (as a hash fragment,
-// same as the original email link, so it never touches a server access log)
-// and open the drawer, so sign-in completes on the live arena instead of a
-// bare page.
-function applyEmailTokenHandoff(openOverlay) {
-  const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''));
-  const token = hash.get('email_token');
-  if (!token) return;
-
-  const frame = document.getElementById('dashboard-frame');
-  if (frame) {
-    const base = frame.dataset.src || '';
-    frame.dataset.src = base + '#email_token=' + encodeURIComponent(token);
-  }
-  openOverlay('dashboard-overlay');
-
-  hash.delete('email_token');
-  const remaining = hash.toString();
-  const cleanURL = window.location.pathname + window.location.search + (remaining ? `#${remaining}` : '');
   window.history.replaceState(null, '', cleanURL);
 }

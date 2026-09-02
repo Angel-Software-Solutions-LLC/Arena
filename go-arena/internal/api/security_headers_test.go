@@ -41,7 +41,11 @@ func TestSecurityHeadersMiddleware_AllowsSameOriginFraming(t *testing.T) {
 	}
 }
 
-func TestSecurityHeadersMiddleware_AllowsStripeEmbeddedCheckout(t *testing.T) {
+// TestSecurityHeadersMiddleware_TrustsNoPaymentProvider pins the removal of
+// Arena's own checkout: nothing from a payment processor is scripted, framed,
+// connected to or allowed the Payment Request API. The subscription is bought
+// in Angel Accounts, on its own origin.
+func TestSecurityHeadersMiddleware_TrustsNoPaymentProvider(t *testing.T) {
 	config.C.SecurityHeadersEnabled = true
 	handler := SecurityHeadersMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -50,18 +54,19 @@ func TestSecurityHeadersMiddleware_AllowsStripeEmbeddedCheckout(t *testing.T) {
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 
 	csp := rec.Header().Get("Content-Security-Policy")
-	for _, directive := range []string{
-		"script-src 'self' https://cdn.jsdelivr.net https://cdn.babylonjs.com https://js.stripe.com https://*.js.stripe.com https://checkout.stripe.com",
-		"frame-src 'self' https://checkout.stripe.com https://js.stripe.com https://*.js.stripe.com https://hooks.stripe.com https://link.com https://*.link.com",
-		"connect-src 'self' ws: wss: https://cdn.babylonjs.com https://api.stripe.com https://checkout.stripe.com https://link.com https://*.link.com",
-		"img-src 'self' data: blob: https://*.stripe.com https://*.link.com",
-	} {
-		if !strings.Contains(csp, directive) {
-			t.Errorf("CSP missing Stripe Embedded Checkout directive %q: %q", directive, csp)
+	for _, forbidden := range []string{"stripe.com", "link.com"} {
+		if strings.Contains(csp, forbidden) {
+			t.Errorf("CSP still trusts a payment provider origin %q: %q", forbidden, csp)
 		}
 	}
-	if policy := rec.Header().Get("Permissions-Policy"); !strings.Contains(policy, `payment=(self "https://checkout.stripe.com"`) {
-		t.Errorf("Permissions-Policy blocks Stripe wallet payments: %q", policy)
+	if !cspDirectiveAllows(csp, "frame-src", "'self'") {
+		t.Errorf("CSP frame-src must keep the same-origin dashboard and shop iframes: %q", csp)
+	}
+	if !cspDirectiveAllows(csp, "connect-src", "https://accounts.angel-serv.com") {
+		t.Errorf("CSP connect-src must keep the legal corpus origin: %q", csp)
+	}
+	if policy := rec.Header().Get("Permissions-Policy"); !strings.Contains(policy, "payment=()") {
+		t.Errorf("Permissions-Policy still delegates payment: %q", policy)
 	}
 }
 
@@ -83,4 +88,25 @@ func TestSecurityHeadersMiddleware_RejectsCloudflareInsightsInjection(t *testing
 			t.Errorf("CSP must not trust Cloudflare Browser Insights origin %q: %q", forbidden, csp)
 		}
 	}
+}
+
+// cspDirectiveAllows reports whether one CSP directive lists one source.
+//
+// Split on the directive rather than searched across the whole policy, so an
+// origin permitted for scripts is not mistaken for one permitted to be
+// connected to. Sources are compared whole, so `https://link.com` never
+// matches because `https://*.link.com` happens to contain it.
+func cspDirectiveAllows(policy, directive, source string) bool {
+	for _, section := range strings.Split(policy, ";") {
+		fields := strings.Fields(strings.TrimSpace(section))
+		if len(fields) == 0 || fields[0] != directive {
+			continue
+		}
+		for _, candidate := range fields[1:] {
+			if candidate == source {
+				return true
+			}
+		}
+	}
+	return false
 }

@@ -871,7 +871,7 @@ func TestPostgresPlatformAgentCapacitySerializesConcurrentLinksIndependentlyOfAP
 	}
 }
 
-func TestPostgresPlatformAuthorityBackfillsStableArenaAgentsWithoutTouchingLicenses(t *testing.T) {
+func TestPostgresPlatformAuthorityBackfillsStableArenaAgentsWithoutTouchingCosmetics(t *testing.T) {
 	ctx := useFreshPostgresSchema(t)
 	if err := EnsureCoreSchema(ctx); err != nil {
 		t.Fatalf("EnsureCoreSchema: %v", err)
@@ -893,40 +893,19 @@ func TestPostgresPlatformAuthorityBackfillsStableArenaAgentsWithoutTouchingLicen
 		t.Fatalf("LinkBotToCustomerAccount: %v", err)
 	}
 
-	activeLicense, _, err := GrantCosmeticLicense(ctx, account.Email, "skin-neon-grid", "manual", "platform-active")
-	if err != nil {
-		t.Fatalf("GrantCosmeticLicense active: %v", err)
+	if _, err := SetCustomerSubscription(ctx, account.ID, true, time.Now()); err != nil {
+		t.Fatalf("subscribe: %v", err)
 	}
-	if _, err := AssignCosmeticLicense(ctx, account.ID, activeLicense.ID, &linkedBot.ID); err != nil {
-		t.Fatalf("AssignCosmeticLicense active: %v", err)
+	if _, err := EquipCustomerCosmetic(ctx, account.ID, linkedBot.ID, CosmeticSlotBotSkin, "skin-neon-grid"); err != nil {
+		t.Fatalf("EquipCustomerCosmetic: %v", err)
 	}
-	for _, status := range []string{"refunded", "revoked", "chargeback", "expired"} {
-		license, _, err := GrantCosmeticLicense(ctx, account.Email, "attachment-orbital-halo", "manual", "platform-"+status)
-		if err != nil {
-			t.Fatalf("GrantCosmeticLicense %s: %v", status, err)
-		}
-		if _, err := TransitionPlatformLicense(ctx, PlatformLicenseTransitionCommand{
-			LicenseID: license.ID, TargetStatus: status, ExpectedRevision: license.Revision,
-			Reason: "platform_authority_fixture", IdempotencyKey: "platform-authority-" + status,
-		}); err != nil {
-			t.Fatalf("set %s license status: %v", status, err)
-		}
-	}
-	if _, err := GrantCosmeticEntitlement(ctx, unlinkedBot.ID, "weapon-solar-flare", "legacy-test", "platform-legacy"); err != nil {
+	if _, err := GrantCosmeticEntitlement(ctx, unlinkedBot.ID, "weapon-solar-flare", "demo", "platform-demo"); err != nil {
 		t.Fatalf("GrantCosmeticEntitlement: %v", err)
 	}
-	if _, err := Pool.Exec(ctx, `
-		INSERT INTO cosmetic_subscriptions (
-			id, account_id, account_email, status, terminal_at
-		) VALUES ('platform-expired-subscription', $1, $2, 'expired', NOW())`, account.ID, account.Email); err != nil {
-		t.Fatalf("seed expired subscription: %v", err)
-	}
 
-	licenseBefore := snapshotPlatformMigrationTable(t, ctx, "cosmetic_licenses", "id")
-	assignmentBefore := snapshotPlatformMigrationTable(t, ctx, "cosmetic_license_assignments", "license_id")
+	loadoutBefore := snapshotPlatformMigrationTable(t, ctx, "bot_cosmetic_loadout", "bot_id, slot")
 	entitlementBefore := snapshotPlatformMigrationTable(t, ctx, "cosmetic_entitlements", "bot_id, cosmetic_id")
 	linkBefore := snapshotPlatformMigrationTable(t, ctx, "account_bot_links", "account_id, bot_id")
-	subscriptionBefore := snapshotPlatformMigrationTable(t, ctx, "cosmetic_subscriptions", "id")
 
 	// Recreate an authentic pre-W1b.2 database: all existing Arena tables and
 	// data are present, but the new platform metadata has not been installed.
@@ -1061,22 +1040,18 @@ func TestPostgresPlatformAuthorityBackfillsStableArenaAgentsWithoutTouchingLicen
 	}
 
 	for table, before := range map[string]string{
-		"cosmetic_licenses":            licenseBefore,
-		"cosmetic_license_assignments": assignmentBefore,
-		"cosmetic_entitlements":        entitlementBefore,
-		"account_bot_links":            linkBefore,
-		"cosmetic_subscriptions":       subscriptionBefore,
+		"bot_cosmetic_loadout":  loadoutBefore,
+		"cosmetic_entitlements": entitlementBefore,
+		"account_bot_links":     linkBefore,
 	} {
 		orderBy := "id"
 		switch table {
-		case "cosmetic_license_assignments":
-			orderBy = "license_id"
+		case "bot_cosmetic_loadout":
+			orderBy = "bot_id, slot"
 		case "cosmetic_entitlements":
 			orderBy = "bot_id, cosmetic_id"
 		case "account_bot_links":
 			orderBy = "account_id, bot_id"
-		case "cosmetic_subscriptions":
-			orderBy = "id"
 		}
 		if after := snapshotPlatformMigrationTable(t, ctx, table, orderBy); after != before {
 			t.Fatalf("%s changed during platform metadata migration\nbefore: %s\nafter:  %s", table, before, after)

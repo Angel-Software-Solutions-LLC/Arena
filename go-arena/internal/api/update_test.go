@@ -12,10 +12,10 @@ import (
 
 func TestSplitRepo(t *testing.T) {
 	cases := []struct{ in, owner, name string }{
-		{"ablac/Arena", "ablac", "Arena"},
+		{"Angel-Software-Solutions-LLC/Arena", "Angel-Software-Solutions-LLC", "Arena"},
 		{" foo/bar ", "foo", "bar"},
-		{"", "ablac", "Arena"},
-		{"nowhere", "ablac", "Arena"},
+		{"", "Angel-Software-Solutions-LLC", "Arena"},
+		{"nowhere", "Angel-Software-Solutions-LLC", "Arena"},
 		{"a/b/c", "a", "b/c"},
 	}
 	for _, c := range cases {

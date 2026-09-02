@@ -2,8 +2,10 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -12,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"arena-server/internal/accounts"
 	"arena-server/internal/config"
 	"arena-server/internal/db"
 	"arena-server/internal/platform"
@@ -28,6 +31,17 @@ import (
 // never used by its real owner still expires.
 const customerSessionSlideFraction = 0.5
 
+// generateToken creates a cryptographically random hex token. It backs every
+// unguessable value a sign-in produces: the OAuth state, the browser-binding
+// cookie, the PKCE verifier, the nonce, the session id, and the CSRF token.
+func generateToken(bytes int) string {
+	b := make([]byte, bytes)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand failed: " + err.Error())
+	}
+	return hex.EncodeToString(b)
+}
+
 func hashSessionToken(token string) []byte {
 	sum := sha256.Sum256([]byte(token))
 	return sum[:]
@@ -37,6 +51,10 @@ const (
 	customerSessionCookieName = "arena_customer_session"
 	customerStateCookieName   = "arena_customer_oauth_state"
 	customerStateTTL          = 10 * time.Minute
+
+	// The page a popup sign-in lands on. Static, same-origin with whatever
+	// opened it, and does nothing but hand the news over and close.
+	customerPopupLandingFile = "signed-in.html"
 )
 
 // CustomerSession is intentionally separate from OIDCSession. In particular,
@@ -50,6 +68,12 @@ type CustomerSession struct {
 	CSRFToken       string
 	CreatedAt       time.Time
 	ExpiresAt       time.Time
+	// platformAdmin is the Angel Accounts administrator claim from the
+	// sign-in that created this session, or nil for the overwhelming
+	// majority of sessions. It is memory-only: nothing writes it to
+	// customer_sessions, so a restart, a second replica, or simply waiting
+	// it out all resolve to "not an administrator". See platform_admin.go.
+	platformAdmin *platformAdminGrant
 }
 
 type customerOIDCTransaction struct {
@@ -58,18 +82,29 @@ type customerOIDCTransaction struct {
 	Nonce                string
 	PKCEVerifier         string
 	ReturnTo             string
+	// Popup is remembered here rather than round-tripped through the
+	// provider. Where the browser lands at the end of the flow is Arena's
+	// decision about its own UI, and putting it in the request would let
+	// anything that can craft a login URL choose it.
+	Popup bool
 }
 
 type CustomerOIDCHandler struct {
-	oauth2Config      *oauth2.Config
-	verifier          *oidc.IDTokenVerifier
-	issuer            string
-	emailStore        customerEmailStore
-	emailSender       customerEmailSender
-	emailSignInURL    string
-	emailTokenTTL     time.Duration
-	emailSendCooldown time.Duration
-	authority         platform.IdentityAuthority
+	oauth2Config *oauth2.Config
+	verifier     *oidc.IDTokenVerifier
+	issuer       string
+	// See config.CustomerLinkLegacyByEmail. False means no sign-in carries an
+	// address at any point, not even in memory.
+	linkLegacyByEmail bool
+	// Where what-somebody-owns is read from, or nil while Accounts does not
+	// own commerce here yet. See customer_entitlements.go for why this is only
+	// ever used inside the callback.
+	entitlements *accounts.Client
+	authority    platform.IdentityAuthority
+	// onSubscriptionSynced is told which linked bots a sign-in's
+	// subscription sync affected, so the ones in the arena can be re-read.
+	// Set by the router, which is where the engine lives.
+	onSubscriptionSynced func(context.Context, []string)
 
 	sessions map[string]*CustomerSession
 	states   map[string]customerOIDCTransaction
@@ -78,13 +113,32 @@ type CustomerOIDCHandler struct {
 
 type customerSessionContextKey struct{}
 
+// customerAccountAuthEnabled reports whether a customer can sign in at all.
+//
+// One way in now. Signing in is an Accounts sign-in; there is no second,
+// Arena-operated path that mails somebody a link, because operating one meant
+// holding the address it was mailed to.
 func customerAccountAuthEnabled(handler *CustomerOIDCHandler) bool {
-	return handler != nil && (handler.oauth2Config != nil || (handler.emailSender != nil && handler.emailStore != nil))
+	return handler != nil && handler.oauth2Config != nil
+}
+
+// activeCustomerOIDC is the handler whose session cache serves requests, so
+// plain handlers that change what the cache copies (the profile rename) can
+// reach it without threading the handler through every route constructor.
+var (
+	activeCustomerOIDCMu sync.RWMutex
+	activeCustomerOIDC   *CustomerOIDCHandler
+)
+
+func activeCustomerOIDCHandler() *CustomerOIDCHandler {
+	activeCustomerOIDCMu.RLock()
+	defer activeCustomerOIDCMu.RUnlock()
+	return activeCustomerOIDC
 }
 
 func newCustomerOIDCHandlerWithAuthority(authority platform.IdentityAuthority) *CustomerOIDCHandler {
 	cfg := &config.C
-	if !cfg.CustomerOIDCEnabled && !cfg.CustomerEmailAuthEnabled {
+	if !cfg.CustomerOIDCEnabled {
 		return nil
 	}
 	h := &CustomerOIDCHandler{
@@ -92,37 +146,56 @@ func newCustomerOIDCHandlerWithAuthority(authority platform.IdentityAuthority) *
 		states:    make(map[string]customerOIDCTransaction),
 		authority: authority,
 	}
-	if cfg.CustomerEmailAuthEnabled {
-		if err := configureCustomerEmailAuth(h, *cfg); err != nil {
-			slog.Error("failed to initialise native customer email auth", "error", err)
-			if !cfg.CustomerOIDCEnabled {
-				return nil
-			}
-		}
-	}
+	activeCustomerOIDCMu.Lock()
+	activeCustomerOIDC = h
+	activeCustomerOIDCMu.Unlock()
 	if cfg.CustomerOIDCEnabled {
 		if cfg.CustomerOIDCIssuer == "" || cfg.CustomerOIDCClientID == "" ||
 			cfg.CustomerOIDCClientSecret == "" || cfg.CustomerOIDCRedirectURI == "" {
 			slog.Warn("customer OIDC enabled but missing required config")
-			if h.emailSender == nil {
-				return nil
-			}
+			return nil
 		} else {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			provider, err := oidc.NewProvider(ctx, cfg.CustomerOIDCIssuer)
 			cancel()
 			if err != nil {
 				slog.Error("failed to initialise customer OIDC provider", "issuer", cfg.CustomerOIDCIssuer, "error", err)
-				if h.emailSender == nil {
-					return nil
-				}
+				return nil
 			} else {
+				/*
+				 * `email` is requested only while legacy accounts are still
+				 * being linked, and is the first thing to go when they are
+				 * not. Asking for a claim we have no intention of storing is
+				 * defensible for the length of a cutover and indefensible
+				 * afterwards — it shows up on the consent screen as something
+				 * Arena wants, and the honest answer at that point is that it
+				 * does not.
+				 */
+				scopes := []string{oidc.ScopeOpenID, "profile"}
+				if cfg.CustomerLinkLegacyByEmail {
+					scopes = append(scopes, "email")
+				}
+				/*
+				 * `entitlements` is asked for only when there is somewhere to
+				 * spend it. The endpoint is advertised in the discovery
+				 * document, so this configures itself: while the Accounts side
+				 * has not provisioned Arena's client, no scope is requested and
+				 * no read is attempted; the day it publishes the endpoint,
+				 * Arena starts asking. No flag day, and no consent screen
+				 * listing a permission that would go unused.
+				 */
+				h.entitlements = accounts.NewClient(entitlementsEndpoint(provider), nil)
+				if h.entitlements != nil {
+					scopes = append(scopes, "entitlements")
+					slog.Info("customer entitlements source configured", "endpoint", h.entitlements.Endpoint())
+				}
+				h.linkLegacyByEmail = cfg.CustomerLinkLegacyByEmail
 				h.oauth2Config = &oauth2.Config{
 					ClientID:     cfg.CustomerOIDCClientID,
 					ClientSecret: cfg.CustomerOIDCClientSecret,
 					RedirectURL:  cfg.CustomerOIDCRedirectURI,
 					Endpoint:     provider.Endpoint(),
-					Scopes:       []string{oidc.ScopeOpenID, "profile", "email"},
+					Scopes:       scopes,
 				}
 				h.verifier = provider.Verifier(&oidc.Config{ClientID: cfg.CustomerOIDCClientID})
 				h.issuer = cfg.CustomerOIDCIssuer
@@ -132,6 +205,29 @@ func newCustomerOIDCHandlerWithAuthority(authority platform.IdentityAuthority) *
 	}
 	go h.cleanupLoop()
 	return h
+}
+
+// entitlementsEndpoint decides where entitlements are read from.
+//
+// The discovery document is the source, so Accounts moves its endpoint and
+// Arena follows without a deploy. The environment override wins because a
+// staging Accounts and the tests both need to point somewhere the discovery
+// document does not name.
+func entitlementsEndpoint(provider *oidc.Provider) string {
+	if override := strings.TrimSpace(config.C.AccountsEntitlementsURL); override != "" {
+		return override
+	}
+	if provider == nil {
+		return ""
+	}
+	var discovery struct {
+		EntitlementsEndpoint string `json:"entitlements_endpoint"`
+	}
+	if err := provider.Claims(&discovery); err != nil {
+		slog.Warn("could not read the accounts discovery document", "error", err)
+		return ""
+	}
+	return strings.TrimSpace(discovery.EntitlementsEndpoint)
 }
 
 func customerDashboardPath(r *http.Request) string {
@@ -157,6 +253,25 @@ func setCustomerNoStore(w http.ResponseWriter) {
 	w.Header().Set("Pragma", "no-cache")
 }
 
+// customerReturnToPrefixes is the closed set of places a completed sign-in is
+// allowed to land. Everything here is an app of Arena's own that a signed-in
+// browser reaches with this cookie: the Dashboard, and — since the support
+// desk in Angel Accounts became the only human way into administration — the
+// Admin Panel, which an administrator now signs into exactly as a customer.
+var customerReturnToPrefixes = []string{
+	"/dashboard", "/arena/dashboard",
+	"/admin", "/arena/admin",
+}
+
+func customerReturnToIsAllowed(path string) bool {
+	for _, prefix := range customerReturnToPrefixes {
+		if path == prefix || strings.HasPrefix(path, prefix+"/") {
+			return true
+		}
+	}
+	return false
+}
+
 func safeCustomerReturnTo(r *http.Request) string {
 	raw := strings.TrimSpace(r.URL.Query().Get("return_to"))
 	if raw == "" || len(raw) > 2048 || strings.Contains(raw, "\\") || strings.HasPrefix(raw, "//") {
@@ -166,8 +281,7 @@ func safeCustomerReturnTo(r *http.Request) string {
 	if err != nil || parsed.IsAbs() || parsed.Host != "" {
 		return customerDashboardPath(r)
 	}
-	if parsed.Path != "/dashboard" && !strings.HasPrefix(parsed.Path, "/dashboard/") &&
-		parsed.Path != "/arena/dashboard" && !strings.HasPrefix(parsed.Path, "/arena/dashboard/") {
+	if !customerReturnToIsAllowed(parsed.Path) {
 		return customerDashboardPath(r)
 	}
 	return raw
@@ -189,6 +303,7 @@ func (h *CustomerOIDCHandler) LoginHandler(w http.ResponseWriter, r *http.Reques
 		Nonce:                nonce,
 		PKCEVerifier:         pkceVerifier,
 		ReturnTo:             safeCustomerReturnTo(r),
+		Popup:                r.URL.Query().Get("popup") == "1",
 	}
 	h.mu.Lock()
 	h.states[state] = txn
@@ -277,9 +392,24 @@ func (h *CustomerOIDCHandler) CallbackHandler(w http.ResponseWriter, r *http.Req
 		http.Error(w, "invalid identity claims", http.StatusForbidden)
 		return
 	}
-	if !claims.EmailVerified || strings.TrimSpace(claims.Email) == "" {
-		http.Error(w, "a verified email address is required", http.StatusForbidden)
-		return
+	/*
+	 * An address is no longer required to sign in, and that is the point.
+	 *
+	 * Accounts has already decided who this person is; the id_token's subject
+	 * is that decision, and it is what Arena binds to. Refusing a sign-in for
+	 * want of an address would make Arena depend on a claim it has no reason
+	 * to receive — and once the `email` scope is dropped at the end of the
+	 * cutover, no sign-in would carry one and every one of them would fail.
+	 *
+	 * An address is still *used* when it arrives verified, for the one job
+	 * described on the binder: matching a pre-cutover row so its owner keeps
+	 * their bots and cosmetics. Unverified is treated as absent, because an
+	 * unverified address is not evidence of anything and adopting an account
+	 * on the strength of one would be an account takeover.
+	 */
+	linkEmail := ""
+	if h.linkLegacyByEmail && claims.EmailVerified {
+		linkEmail = strings.TrimSpace(claims.Email)
 	}
 	if claims.Name == "" {
 		claims.Name = claims.PreferredUser
@@ -288,20 +418,58 @@ func (h *CustomerOIDCHandler) CallbackHandler(w http.ResponseWriter, r *http.Req
 	if verifiedIssuer == "" {
 		verifiedIssuer = h.issuer
 	}
-	account, err := h.bindVerifiedIdentity(ctx, claims.Email, verifiedIssuer, idToken.Subject, claims.Name)
+	account, err := h.bindVerifiedIdentity(ctx, linkEmail, verifiedIssuer, idToken.Subject, claims.Name)
 	if err != nil {
 		slog.Warn("customer account binding failed", "error", err, "subject", idToken.Subject)
 		http.Error(w, "unable to bind customer account", http.StatusConflict)
 		return
 	}
 	if account.EmailVerifiedAt == nil {
-		slog.Error("verified customer account is missing verification timestamp", "account_id", account.ID)
+		slog.Error("linked customer account is missing its identity-verified timestamp", "account_id", account.ID)
 		http.Error(w, "unable to verify customer account", http.StatusInternalServerError)
 		return
 	}
-	h.establishCustomerSession(w, r, account, idToken.Subject)
-	slog.Info("customer OIDC login", "account_id", account.ID, "email", account.Email)
-	http.Redirect(w, r, txn.ReturnTo, http.StatusFound)
+	/*
+	 * Whether this person administers the platform, read from the token the
+	 * verifier has just accepted and from nowhere else. See platform_admin.go
+	 * for the presence rule and for why the answer is not written down.
+	 */
+	platformAdmin := platformAdminFromIDToken(idToken)
+	h.establishCustomerSession(w, r, account, idToken.Subject, platformAdmin)
+	/*
+	 * The one moment Arena holds a token it may read entitlements with. After
+	 * this line the token goes out of scope and is never written anywhere —
+	 * see customer_entitlements.go. The error is deliberately dropped: a
+	 * commerce service that is unreachable must not turn a good sign-in into a
+	 * failed one, and the failure is already logged where it happened.
+	 */
+	if _, syncErr := h.syncEntitlementsFromAccounts(ctx, account.ID, token.AccessToken); syncErr != nil {
+		_ = syncErr
+	}
+	// The account id, and not the address. A log line is a place an address
+	// outlives the database it was deleted from.
+	slog.Info("customer signed in with Angel Accounts", "account_id", account.ID)
+	if platformAdmin.Present {
+		// Worth its own line: this is the sign-in that can reach the admin
+		// panel, and an operator asking "who administered this" needs to be
+		// able to find it — and to see which claim let them in.
+		slog.Info("customer sign-in carries platform administrator authority",
+			"account_id", account.ID, "authority", platformAdmin.authority(), "staff_role", platformAdmin.Role)
+	}
+	/*
+	 * A popup finishes on a page of Arena's own, which tells the window that
+	 * opened it and closes itself. The session cookie is already set by the
+	 * time that page loads, so the opener has only to re-read it.
+	 *
+	 * Sending the popup to `ReturnTo` instead would leave a second, full copy
+	 * of the dashboard sitting in a small window, and the person who pressed
+	 * Sign in still looking at a signed-out one.
+	 */
+	destination := txn.ReturnTo
+	if txn.Popup {
+		destination = customerDashboardPath(r) + customerPopupLandingFile
+	}
+	http.Redirect(w, r, destination, http.StatusFound)
 }
 
 func (h *CustomerOIDCHandler) bindVerifiedIdentity(ctx context.Context, email, issuer, subject, displayName string) (*db.CustomerAccount, error) {
@@ -315,10 +483,11 @@ func customerAccountAPIPath(r *http.Request, suffix string) string {
 	return "/api/v1/account" + suffix
 }
 
-func (h *CustomerOIDCHandler) establishCustomerSession(w http.ResponseWriter, r *http.Request, account *db.CustomerAccount, subject string) *CustomerSession {
+func (h *CustomerOIDCHandler) establishCustomerSession(w http.ResponseWriter, r *http.Request, account *db.CustomerAccount, subject string, admin verifiedPlatformAdmin) *CustomerSession {
 	ttl := customerSessionTTL()
 	now := time.Now().UTC()
 	sessionID := generateToken(32)
+	expires := now.Add(ttl)
 	session := &CustomerSession{
 		AccountID:       account.ID,
 		Email:           account.Email,
@@ -327,7 +496,8 @@ func (h *CustomerOIDCHandler) establishCustomerSession(w http.ResponseWriter, r 
 		EmailVerifiedAt: account.EmailVerifiedAt,
 		CSRFToken:       generateToken(32),
 		CreatedAt:       now,
-		ExpiresAt:       now.Add(ttl),
+		ExpiresAt:       expires,
+		platformAdmin:   newPlatformAdminGrant(admin, now, expires),
 	}
 	h.mu.Lock()
 	h.sessions[sessionID] = session
@@ -369,7 +539,7 @@ func (h *CustomerOIDCHandler) refreshSessionCookie(w http.ResponseWriter, r *htt
 	if err != nil || cookie.Value == "" {
 		return
 	}
-	maxAge := int(time.Until(session.ExpiresAt).Seconds())
+	maxAge := int(time.Until(h.sessionExpiry(session)).Seconds())
 	if maxAge <= 0 {
 		return
 	}
@@ -442,12 +612,44 @@ func (h *CustomerOIDCHandler) GetSession(r *http.Request) *CustomerSession {
 		h.mu.Lock()
 		h.sessions[cookie.Value] = session
 		h.mu.Unlock()
-	} else if time.Now().After(session.ExpiresAt) {
+	} else if time.Now().After(h.sessionExpiry(session)) {
 		return nil
 	}
 
 	h.maybeSlideSessionExpiry(r.Context(), cookie.Value, session)
 	return session
+}
+
+// sessionExpiry reads ExpiresAt under the handler lock.
+//
+// maybeSlideSessionExpiry writes the field under h.mu while two requests
+// from the same browser can be in flight together, and time.Time is two
+// words: an unsynchronised read could tear and make a live session read as
+// expired mid-page, or the other way round. Every reader goes through here.
+func (h *CustomerOIDCHandler) sessionExpiry(session *CustomerSession) time.Time {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return session.ExpiresAt
+}
+
+// ForgetAccountSessions drops every cached session for an account, so the
+// next request rehydrates it from the database.
+//
+// The cache holds a copy of the display name for the whole sliding thirty-day
+// session, and chat derives its visible handle from that copy; a rename in
+// the dashboard otherwise kept posting under the old name until the process
+// restarted. The durable row is untouched: the cookie stays valid.
+func (h *CustomerOIDCHandler) ForgetAccountSessions(accountID string) {
+	if h == nil || accountID == "" {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for id, session := range h.sessions {
+		if session.AccountID == accountID {
+			delete(h.sessions, id)
+		}
+	}
 }
 
 // maybeSlideSessionExpiry extends a session that is more than halfway to
@@ -456,7 +658,7 @@ func (h *CustomerOIDCHandler) GetSession(r *http.Request) *CustomerSession {
 // indefinitely while an abandoned or stolen cookie still lapses.
 func (h *CustomerOIDCHandler) maybeSlideSessionExpiry(ctx context.Context, sessionID string, session *CustomerSession) {
 	ttl := customerSessionTTL()
-	remaining := time.Until(session.ExpiresAt)
+	remaining := time.Until(h.sessionExpiry(session))
 	if remaining > time.Duration(float64(ttl)*customerSessionSlideFraction) {
 		return
 	}
@@ -476,29 +678,52 @@ func (h *CustomerOIDCHandler) SessionInfoHandler(w http.ResponseWriter, r *http.
 	setCustomerNoStore(w)
 	session := h.GetSession(r)
 	oidcEnabled := h != nil && h.oauth2Config != nil
-	emailEnabled := h != nil && h.emailSender != nil && h.emailStore != nil
 	if session != nil {
 		h.refreshSessionCookie(w, r, session)
 	}
 	if session == nil {
+		/*
+		 * `email_login_enabled` is still reported, and is always false.
+		 *
+		 * A deployed dashboard reads this document to decide what to draw, and
+		 * a key that vanishes is a key that reads as `undefined` — which is
+		 * falsey, so the old script does the right thing, but only by
+		 * accident. Saying false out loud keeps a browser that has not
+		 * reloaded its bundle correct on purpose, and the field can go once
+		 * nothing asks for it.
+		 */
 		writeJSON(w, http.StatusOK, map[string]any{
 			"authenticated":       false,
-			"login_enabled":       oidcEnabled || emailEnabled,
+			"login_enabled":       oidcEnabled,
 			"oidc_login_enabled":  oidcEnabled,
-			"email_login_enabled": emailEnabled,
+			"email_login_enabled": false,
 			"login_url":           customerAPIDashboardPath(r, "/login"),
-			"email_start_url":     customerAccountAPIPath(r, "/email/start"),
-			"email_verify_url":    customerAccountAPIPath(r, "/email/verify"),
 		})
 		return
 	}
+	/*
+	 * Whether this session administers the platform is reported so the site
+	 * can offer an entry point to somebody who has one, and is recomputed on
+	 * every read rather than remembered anywhere. It is a description of the
+	 * session, never the thing that grants authority — the admin routes ask
+	 * the same question themselves.
+	 */
+	platformAdminGrant, isPlatformAdmin := session.platformAdminGrantAt(time.Now())
 	writeJSON(w, http.StatusOK, map[string]any{
-		"authenticated":       true,
-		"login_enabled":       oidcEnabled || emailEnabled,
-		"oidc_login_enabled":  oidcEnabled,
-		"email_login_enabled": emailEnabled,
+		"authenticated":  true,
+		"login_enabled":  oidcEnabled,
+		"platform_admin": isPlatformAdmin,
+		// Which claim admitted the sign-in ("staff" or "product_admin"), and
+		// the desk role when Accounts named one. Descriptive only.
+		"platform_admin_authority": platformAdminGrant.Authority,
+		"platform_admin_role":      platformAdminGrant.Role,
+		"oidc_login_enabled":       oidcEnabled,
+		"email_login_enabled":      false,
 		"account": map[string]any{
-			"id":                session.AccountID,
+			"id": session.AccountID,
+			// Empty for a linked account, which is every account after the
+			// cutover. The key stays so a dashboard that has not reloaded
+			// still finds what it reads; there is simply nothing in it.
 			"email":             session.Email,
 			"display_name":      session.Name,
 			"name":              session.Name,
@@ -507,7 +732,7 @@ func (h *CustomerOIDCHandler) SessionInfoHandler(w http.ResponseWriter, r *http.
 		},
 		"csrf_token":       session.CSRFToken,
 		"created_at":       session.CreatedAt,
-		"expires_at":       session.ExpiresAt,
+		"expires_at":       h.sessionExpiry(session),
 		"login_url":        customerAPIDashboardPath(r, "/login"),
 		"logout_url":       customerAPIDashboardPath(r, "/logout"),
 		"email_start_url":  customerAccountAPIPath(r, "/email/start"),

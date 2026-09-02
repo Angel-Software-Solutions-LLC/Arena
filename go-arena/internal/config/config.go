@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
-	"net"
-	"net/mail"
 	"net/url"
 	"os"
 	"strings"
@@ -29,6 +27,11 @@ type Config struct {
 	DBName     string `envconfig:"ARENA_DB_NAME" default:"arena"`
 	DBUser     string `envconfig:"ARENA_DB_USER" default:"arena"`
 	DBPassword string `envconfig:"ARENA_DB_PASSWORD" default:"arena"`
+	// DBSSLMode is passed through as libpq's sslmode. "disable" is right for
+	// the compose deployment, where the database is a sibling container on a
+	// private network; a managed or remote database wants "require" or
+	// "verify-full", and before this there was no way to ask for either.
+	DBSSLMode string `envconfig:"ARENA_DB_SSLMODE" default:"disable"`
 	// DBRuntimeUser is the least-privilege application role that an owner-run
 	// `arena-server migrate` command grants access to. It is normally supplied
 	// only to the one-shot migration container.
@@ -245,7 +248,7 @@ type Config struct {
 	UpdateGitHubToken string `envconfig:"ARENA_UPDATE_GITHUB_TOKEN" default:""`
 	// owner/repo and branch the "update to latest" check compares the running
 	// build against (production release branch by default).
-	UpdateRepo   string `envconfig:"ARENA_UPDATE_REPO" default:"ablac/Arena"`
+	UpdateRepo   string `envconfig:"ARENA_UPDATE_REPO" default:"Angel-Software-Solutions-LLC/Arena"`
 	UpdateBranch string `envconfig:"ARENA_UPDATE_BRANCH" default:"main"`
 
 	// Demo-bot fleet control (optional). Base URL of the private fleet's
@@ -396,17 +399,28 @@ type Config struct {
 	WeaponAutoBalanceMinEffect         float64 `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MIN_EFFECT" default:"0.05"`
 	WeaponAutoBalanceMaxEvidenceRounds int     `envconfig:"ARENA_WEAPON_AUTO_BALANCE_MAX_EVIDENCE_ROUNDS" default:"48"`
 
-	// OIDC / SSO (opt-in)
-	OIDCEnabled      bool   `envconfig:"ARENA_OIDC_ENABLED" default:"false"`
-	OIDCIssuer       string `envconfig:"ARENA_OIDC_ISSUER" default:""`
-	OIDCClientID     string `envconfig:"ARENA_OIDC_CLIENT_ID" default:""`
-	OIDCClientSecret string `envconfig:"ARENA_OIDC_CLIENT_SECRET" default:""`
-	OIDCRedirectURI  string `envconfig:"ARENA_OIDC_REDIRECT_URI" default:""`
-	OIDCSessionTTL   int    `envconfig:"ARENA_OIDC_SESSION_TTL_HOURS" default:"8"`
-	OIDCAdminEmails  string `envconfig:"ARENA_OIDC_ADMIN_EMAILS" default:""`
+	// OIDCSessionTTL is all that remains of Arena's own admin SSO application.
+	//
+	// That application — its issuer, its client credentials, its
+	// arena_admin_session cookie and the ARENA_OIDC_ADMIN_EMAILS allowlist
+	// that admitted people to it — is retired. The support-desk role in Angel
+	// Accounts is the single source of HUMAN admin authority, so a second
+	// list of addresses maintained by hand in Arena's environment was a
+	// second answer to a question that must have exactly one, and the only
+	// one nothing revoked. ARENA_ADMIN_TOKEN, database-issued admin tokens
+	// and the loopback bypass are untouched: they authenticate machines, not
+	// people, and they are the break-glass path if Accounts is unreachable.
+	//
+	// The variable keeps its name because it still does the same job it
+	// always did: it bounds how long one sign-in's administrator answer is
+	// trusted for. See platformAdminGrantTTL in
+	// internal/api/platform_admin.go.
+	OIDCSessionTTL int `envconfig:"ARENA_OIDC_SESSION_TTL_HOURS" default:"8"`
 
-	// Customer OIDC is deliberately a separate client/application from admin
-	// SSO. A public customer login must never mint an admin-authorized session.
+	// Customer OIDC is the one sign-in Arena has. What used to make it
+	// dangerous — that a public customer login must never mint an
+	// admin-authorized session — is now decided per sign-in by the verified
+	// platform-administrator claim, and by nothing else.
 	CustomerOIDCEnabled      bool   `envconfig:"ARENA_CUSTOMER_OIDC_ENABLED" default:"false"`
 	CustomerOIDCIssuer       string `envconfig:"ARENA_CUSTOMER_OIDC_ISSUER" default:""`
 	CustomerOIDCClientID     string `envconfig:"ARENA_CUSTOMER_OIDC_CLIENT_ID" default:""`
@@ -416,44 +430,50 @@ type Config struct {
 	// customer_oidc.go): a visitor who returns at least once within any
 	// 30-day window never has to sign back in, while an abandoned or stolen
 	// cookie still lapses.
-	CustomerOIDCSessionTTL      int `envconfig:"ARENA_CUSTOMER_OIDC_SESSION_TTL_HOURS" default:"720"`
+	CustomerOIDCSessionTTL int `envconfig:"ARENA_CUSTOMER_OIDC_SESSION_TTL_HOURS" default:"720"`
+
+	// CustomerLinkLegacyByEmail is the cutover switch for retiring stored
+	// email addresses.
+	//
+	// While it is on, sign-in asks Accounts for the `email` scope and uses a
+	// verified address, in memory only, to find the pre-cutover Arena account
+	// that signed up with it — so that person keeps their bots, their
+	// cosmetics and their handle. The address is never written; the row that
+	// is matched has its own address emptied by the same transaction.
+	//
+	// Turn it off once the straggler report is empty or accounted for. Arena
+	// then stops requesting the scope at all, and no sign-in carries an
+	// address anywhere, even transiently. That is the end state the owner
+	// asked for; this flag exists because you cannot get there in one step
+	// without stranding everybody who already had an account.
+	CustomerLinkLegacyByEmail bool `envconfig:"ARENA_CUSTOMER_LINK_LEGACY_BY_EMAIL" default:"true"`
+
+	// AccountsShopURL is where the Arena subscription is bought and managed:
+	// the Angel Accounts portal. Arena sells nothing itself. A signed-in
+	// customer without an active subscription is shown "Included with an
+	// Arena subscription" and sent here; leave it empty and the link is
+	// simply not offered (the lock is unchanged).
+	AccountsShopURL string `envconfig:"ARENA_ACCOUNTS_SHOP_URL" default:""`
+
+	// AccountsEntitlementsURL overrides where Arena reads whether the person
+	// signing in holds an active Arena subscription.
+	//
+	// Normally nothing sets this: the endpoint is advertised as
+	// `entitlements_endpoint` in the Accounts discovery document, and Arena
+	// takes it from there, so the two sides cannot drift. The override exists
+	// for a staging Accounts whose discovery points somewhere else, and for
+	// the tests, which need an endpoint that is not the internet.
+	AccountsEntitlementsURL string `envconfig:"ARENA_ACCOUNTS_ENTITLEMENTS_URL" default:""`
+
 	CustomerBotLinkRPM          int `envconfig:"ARENA_CUSTOMER_BOT_LINK_RPM" default:"10"`
 	CustomerBotLinkPerHour      int `envconfig:"ARENA_CUSTOMER_BOT_LINK_PER_HOUR" default:"10"`
 	CustomerAPIKeyMutationRPM   int `envconfig:"ARENA_CUSTOMER_API_KEY_MUTATION_RPM" default:"30"`
 	CustomerAPIKeyCreatePerHour int `envconfig:"ARENA_CUSTOMER_API_KEY_CREATE_PER_HOUR" default:"10"`
 	CustomerAPIKeyRevokePerHour int `envconfig:"ARENA_CUSTOMER_API_KEY_REVOKE_PER_HOUR" default:"20"`
 
-	// Native customer email auth is an alternative to customer OIDC. It sends
-	// one-time passwordless links through the deployment's transactional SMTP
-	// service and reuses the same customer session/CSRF boundary as OIDC.
-	CustomerEmailAuthEnabled         bool   `envconfig:"ARENA_CUSTOMER_EMAIL_AUTH_ENABLED" default:"false"`
-	CustomerEmailSignInURL           string `envconfig:"ARENA_CUSTOMER_EMAIL_SIGN_IN_URL" default:""`
-	CustomerEmailTokenTTLMinutes     int    `envconfig:"ARENA_CUSTOMER_EMAIL_TOKEN_TTL_MINUTES" default:"15"`
-	CustomerEmailSendCooldownSeconds int    `envconfig:"ARENA_CUSTOMER_EMAIL_SEND_COOLDOWN_SECONDS" default:"60"`
-	CustomerEmailSendRPM             int    `envconfig:"ARENA_CUSTOMER_EMAIL_SEND_RPM" default:"5"`
-	SMTPHost                         string `envconfig:"ARENA_SMTP_HOST" default:""`
-	SMTPPort                         int    `envconfig:"ARENA_SMTP_PORT" default:"465"`
-	SMTPTLSMode                      string `envconfig:"ARENA_SMTP_TLS_MODE" default:"implicit"`
-	SMTPTLSServerName                string `envconfig:"ARENA_SMTP_TLS_SERVER_NAME" default:""`
-	SMTPUsername                     string `envconfig:"ARENA_SMTP_USERNAME" default:""`
-	SMTPPassword                     string `envconfig:"ARENA_SMTP_PASSWORD" default:""`
-	SMTPFrom                         string `envconfig:"ARENA_SMTP_FROM" default:""`
-
-	// Cosmetics checkout is disabled by default. Enabling it requires the
-	// verified customer auth provider, durable database state, and a complete
-	// Stripe configuration; ValidateCosmeticsCheckoutConfig enforces that
-	// launch boundary before the server starts.
-	CosmeticsCheckoutEnabled bool   `envconfig:"ARENA_COSMETICS_CHECKOUT_ENABLED" default:"false"`
-	StripeSecretKey          string `envconfig:"ARENA_STRIPE_SECRET_KEY" default:""`
-	StripePublishableKey     string `envconfig:"ARENA_STRIPE_PUBLISHABLE_KEY" default:""`
-	StripeWebhookSecrets     string `envconfig:"ARENA_STRIPE_WEBHOOK_SECRETS" default:""`
-	StripeSuccessURL         string `envconfig:"ARENA_STRIPE_SUCCESS_URL" default:""`
-	StripeCancelURL          string `envconfig:"ARENA_STRIPE_CANCEL_URL" default:""`
-	StripeReturnURL          string `envconfig:"ARENA_STRIPE_RETURN_URL" default:""`
-	StripePortalReturnURL    string `envconfig:"ARENA_STRIPE_PORTAL_RETURN_URL" default:""`
-	StripeAutomaticTax       bool   `envconfig:"ARENA_STRIPE_AUTOMATIC_TAX" default:"false"`
-	CosmeticsCheckoutRPM     int    `envconfig:"ARENA_COSMETICS_CHECKOUT_RPM" default:"10"`
-	CosmeticsAccountReadRPM  int    `envconfig:"ARENA_COSMETICS_ACCOUNT_READ_RPM" default:"60"`
+	// Inventory reads are limited per IP and per verified account, protecting
+	// the catalog-backed Dashboard query from scraping.
+	CosmeticsAccountReadRPM int `envconfig:"ARENA_COSMETICS_ACCOUNT_READ_RPM" default:"60"`
 
 	// Developer lobby chat. Off by default; posting requires a signed-in
 	// customer session, so enabling chat without customer auth yields a
@@ -649,204 +669,20 @@ func StartingElo() int {
 	return startingElo
 }
 
-// ValidateCosmeticsCheckoutConfig keeps the payment surface fail-closed. It
-// intentionally does nothing while checkout is disabled so development and
-// existing non-commerce deployments retain their current defaults.
-func ValidateCosmeticsCheckoutConfig(cfg Config) error {
+// ValidateCosmeticsConfig checks the little cosmetics configuration that is
+// left now that Arena sells nothing itself: the inventory read quota, and the
+// address the Dashboard sends an unsubscribed customer to.
+func ValidateCosmeticsConfig(cfg Config) error {
 	if cfg.CosmeticsAccountReadRPM <= 0 {
 		return fmt.Errorf("ARENA_COSMETICS_ACCOUNT_READ_RPM must be positive")
 	}
-	if !cfg.CosmeticsCheckoutEnabled {
-		if len(ParseStripeWebhookSecrets(cfg.StripeWebhookSecrets)) > 0 {
-			if stripeAPIKeyMode(cfg.StripeSecretKey, false) == "" {
-				return fmt.Errorf("ARENA_STRIPE_SECRET_KEY must be retained as an sk_test, rk_test, sk_live, or rk_live key while Stripe webhooks service existing cosmetic subscriptions")
-			}
-			if err := validateCosmeticsCheckoutURL("ARENA_STRIPE_PORTAL_RETURN_URL", cfg.StripePortalReturnURL); err != nil {
-				return err
-			}
+	if shop := strings.TrimSpace(cfg.AccountsShopURL); shop != "" {
+		parsed, err := url.Parse(shop)
+		if err != nil || !strings.EqualFold(parsed.Scheme, "https") || parsed.Host == "" {
+			return fmt.Errorf("ARENA_ACCOUNTS_SHOP_URL must be an absolute HTTPS URL")
 		}
-		return nil
-	}
-	oidcReady := cfg.CustomerOIDCEnabled &&
-		strings.TrimSpace(cfg.CustomerOIDCIssuer) != "" &&
-		strings.TrimSpace(cfg.CustomerOIDCClientID) != "" &&
-		strings.TrimSpace(cfg.CustomerOIDCClientSecret) != "" &&
-		strings.TrimSpace(cfg.CustomerOIDCRedirectURI) != "" &&
-		cfg.CustomerOIDCSessionTTL > 0
-	emailReady := cfg.CustomerEmailAuthEnabled && ValidateCustomerEmailAuthConfig(cfg) == nil
-	if !oidcReady && !emailReady {
-		return fmt.Errorf("cosmetics checkout requires fully configured customer OIDC or native verified-email auth")
-	}
-	if cfg.DBOptional {
-		return fmt.Errorf("cosmetics checkout requires the database; ARENA_DB_OPTIONAL must be false")
-	}
-	if strings.TrimSpace(cfg.StripeSecretKey) == "" {
-		return fmt.Errorf("ARENA_STRIPE_SECRET_KEY is required when cosmetics checkout is enabled")
-	}
-	secretMode := stripeAPIKeyMode(cfg.StripeSecretKey, false)
-	if secretMode == "" {
-		return fmt.Errorf("ARENA_STRIPE_SECRET_KEY must be an sk_test, rk_test, sk_live, or rk_live key")
-	}
-	publishableMode := stripeAPIKeyMode(cfg.StripePublishableKey, true)
-	if publishableMode == "" {
-		return fmt.Errorf("ARENA_STRIPE_PUBLISHABLE_KEY must be a pk_test or pk_live key")
-	}
-	if secretMode != publishableMode {
-		return fmt.Errorf("ARENA_STRIPE_SECRET_KEY and ARENA_STRIPE_PUBLISHABLE_KEY must use the same Stripe mode")
-	}
-	if len(ParseStripeWebhookSecrets(cfg.StripeWebhookSecrets)) == 0 {
-		return fmt.Errorf("ARENA_STRIPE_WEBHOOK_SECRETS must contain at least one secret")
-	}
-	if err := validateCosmeticsCheckoutURL("ARENA_STRIPE_SUCCESS_URL", cfg.StripeSuccessURL); err != nil {
-		return err
-	}
-	if err := validateCosmeticsCheckoutURL("ARENA_STRIPE_CANCEL_URL", cfg.StripeCancelURL); err != nil {
-		return err
-	}
-	if err := validateCosmeticsCheckoutURL("ARENA_STRIPE_RETURN_URL", cfg.StripeReturnURL); err != nil {
-		return err
-	}
-	if !strings.Contains(cfg.StripeReturnURL, "{CHECKOUT_SESSION_ID}") {
-		return fmt.Errorf("ARENA_STRIPE_RETURN_URL must include {CHECKOUT_SESSION_ID}")
-	}
-	if err := validateCosmeticsCheckoutURL("ARENA_STRIPE_PORTAL_RETURN_URL", cfg.StripePortalReturnURL); err != nil {
-		return err
-	}
-	if cfg.CosmeticsCheckoutRPM <= 0 {
-		return fmt.Errorf("ARENA_COSMETICS_CHECKOUT_RPM must be positive")
 	}
 	return nil
-}
-
-func stripeAPIKeyMode(value string, publishable bool) string {
-	value = strings.TrimSpace(value)
-	if publishable {
-		switch {
-		case strings.HasPrefix(value, "pk_test_"):
-			return "test"
-		case strings.HasPrefix(value, "pk_live_"):
-			return "live"
-		default:
-			return ""
-		}
-	}
-	switch {
-	case strings.HasPrefix(value, "sk_test_"), strings.HasPrefix(value, "rk_test_"):
-		return "test"
-	case strings.HasPrefix(value, "sk_live_"), strings.HasPrefix(value, "rk_live_"):
-		return "live"
-	default:
-		return ""
-	}
-}
-
-// ValidateCustomerEmailAuthConfig keeps passwordless registration fail-closed.
-// The SMTP credential is a send-only app password and transport encryption is
-// mandatory, including when the service is reached over a private address.
-func ValidateCustomerEmailAuthConfig(cfg Config) error {
-	if !cfg.CustomerEmailAuthEnabled {
-		return nil
-	}
-	if cfg.DBOptional {
-		return fmt.Errorf("native customer email auth requires the database; ARENA_DB_OPTIONAL must be false")
-	}
-	if err := validateCustomerEmailSignInURL(cfg.CustomerEmailSignInURL); err != nil {
-		return err
-	}
-	if cfg.CustomerOIDCSessionTTL <= 0 {
-		return fmt.Errorf("ARENA_CUSTOMER_OIDC_SESSION_TTL_HOURS must be positive for customer sessions")
-	}
-	if cfg.CustomerEmailTokenTTLMinutes < 5 || cfg.CustomerEmailTokenTTLMinutes > 60 {
-		return fmt.Errorf("ARENA_CUSTOMER_EMAIL_TOKEN_TTL_MINUTES must be between 5 and 60")
-	}
-	if cfg.CustomerEmailSendCooldownSeconds < 10 || cfg.CustomerEmailSendCooldownSeconds > 3600 {
-		return fmt.Errorf("ARENA_CUSTOMER_EMAIL_SEND_COOLDOWN_SECONDS must be between 10 and 3600")
-	}
-	if cfg.CustomerEmailSendRPM <= 0 || cfg.CustomerEmailSendRPM > 60 {
-		return fmt.Errorf("ARENA_CUSTOMER_EMAIL_SEND_RPM must be between 1 and 60")
-	}
-	if strings.TrimSpace(cfg.SMTPHost) == "" {
-		return fmt.Errorf("ARENA_SMTP_HOST is required")
-	}
-	if cfg.SMTPPort <= 0 || cfg.SMTPPort > 65535 {
-		return fmt.Errorf("ARENA_SMTP_PORT must be between 1 and 65535")
-	}
-	mode := strings.ToLower(strings.TrimSpace(cfg.SMTPTLSMode))
-	if mode != "implicit" && mode != "starttls" {
-		return fmt.Errorf("ARENA_SMTP_TLS_MODE must be implicit or starttls")
-	}
-	if strings.TrimSpace(cfg.SMTPTLSServerName) == "" {
-		return fmt.Errorf("ARENA_SMTP_TLS_SERVER_NAME is required")
-	}
-	username, err := mail.ParseAddress(strings.TrimSpace(cfg.SMTPUsername))
-	if err != nil || username.Address != strings.TrimSpace(cfg.SMTPUsername) {
-		return fmt.Errorf("ARENA_SMTP_USERNAME must be a mailbox address")
-	}
-	if strings.TrimSpace(cfg.SMTPPassword) == "" {
-		return fmt.Errorf("ARENA_SMTP_PASSWORD is required")
-	}
-	from, err := mail.ParseAddress(strings.TrimSpace(cfg.SMTPFrom))
-	if err != nil || from.Address == "" || !strings.EqualFold(from.Address, username.Address) {
-		return fmt.Errorf("ARENA_SMTP_FROM must use the authenticated ARENA_SMTP_USERNAME mailbox")
-	}
-	return nil
-}
-
-func validateCustomerEmailSignInURL(raw string) error {
-	value := strings.TrimSpace(raw)
-	parsed, err := url.Parse(value)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
-		return fmt.Errorf("ARENA_CUSTOMER_EMAIL_SIGN_IN_URL must be an absolute HTTPS Dashboard URL")
-	}
-	cleanPath := strings.TrimSuffix(parsed.EscapedPath(), "/")
-	if cleanPath != "/dashboard" && cleanPath != "/arena/dashboard" {
-		return fmt.Errorf("ARENA_CUSTOMER_EMAIL_SIGN_IN_URL must point to /dashboard/ or /arena/dashboard/")
-	}
-	if strings.EqualFold(parsed.Scheme, "https") {
-		return nil
-	}
-	if strings.EqualFold(parsed.Scheme, "http") && isLoopbackCheckoutHost(parsed.Hostname()) {
-		return nil
-	}
-	return fmt.Errorf("ARENA_CUSTOMER_EMAIL_SIGN_IN_URL must use HTTPS (HTTP is allowed only for loopback hosts)")
-}
-
-// ParseStripeWebhookSecrets converts the comma-separated rotation list into
-// the ordered secrets accepted by the Stripe adapter. Config retains the raw
-// string so Config remains comparable for the existing live-staging checks.
-func ParseStripeWebhookSecrets(raw string) []string {
-	values := strings.Split(raw, ",")
-	secrets := make([]string, 0, len(values))
-	for _, value := range values {
-		if secret := strings.TrimSpace(value); secret != "" {
-			secrets = append(secrets, secret)
-		}
-	}
-	return secrets
-}
-
-func validateCosmeticsCheckoutURL(name, raw string) error {
-	value := strings.TrimSpace(raw)
-	parsed, err := url.Parse(value)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return fmt.Errorf("%s must be an absolute HTTPS URL", name)
-	}
-	if strings.EqualFold(parsed.Scheme, "https") {
-		return nil
-	}
-	if strings.EqualFold(parsed.Scheme, "http") && isLoopbackCheckoutHost(parsed.Hostname()) {
-		return nil
-	}
-	return fmt.Errorf("%s must use HTTPS (HTTP is allowed only for loopback hosts)", name)
-}
-
-func isLoopbackCheckoutHost(host string) bool {
-	host = strings.ToLower(strings.TrimSpace(host))
-	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
 }
 
 // ValidateMovementConfig prevents a malformed floating-point environment
@@ -864,6 +700,28 @@ func ValidateMovementConfig(cfg Config) error {
 // unexpectedly short timeout when the server tick rate changes. In particular,
 // it fails closed on the historical 30-tick value, which is only three seconds
 // at the default 10 Hz cadence.
+// ValidateSizeConfig refuses the sizes that are used as slice bounds or
+// divisors. A negative ARENA_CHAT_HISTORY_SIZE reached `ring[over:]` and
+// panicked on every chat post (each poster's socket died, quietly), and a
+// zero cell size divides by zero in the spatial index.
+func ValidateSizeConfig(cfg Config) error {
+	if cfg.ChatHistorySize <= 0 {
+		return fmt.Errorf("ARENA_CHAT_HISTORY_SIZE must be positive, got %d", cfg.ChatHistorySize)
+	}
+	if cfg.SpatialCellSize <= 0 {
+		return fmt.Errorf("ARENA_SPATIAL_CELL_SIZE must be positive, got %v", cfg.SpatialCellSize)
+	}
+	if cfg.PathfindingCellSize <= 0 {
+		return fmt.Errorf("ARENA_PATHFINDING_CELL_SIZE must be positive, got %v", cfg.PathfindingCellSize)
+	}
+	switch cfg.DBSSLMode {
+	case "disable", "allow", "prefer", "require", "verify-ca", "verify-full":
+	default:
+		return fmt.Errorf("ARENA_DB_SSLMODE must be a libpq sslmode, got %q", cfg.DBSSLMode)
+	}
+	return nil
+}
+
 func ValidateAFKConfig(cfg Config) error {
 	if cfg.TickRate <= 0 {
 		return fmt.Errorf("ARENA_AFK_TIMEOUT_TICKS requires ARENA_TICK_RATE to be greater than 0")
@@ -935,12 +793,12 @@ func Load() {
 		slog.Error("invalid AFK configuration", "error", err)
 		panic(err)
 	}
-	if err := ValidateCustomerEmailAuthConfig(C); err != nil {
-		slog.Error("invalid customer email auth configuration", "error", err)
+	if err := ValidateSizeConfig(C); err != nil {
+		slog.Error("invalid size configuration", "error", err)
 		panic(err)
 	}
-	if err := ValidateCosmeticsCheckoutConfig(C); err != nil {
-		slog.Error("invalid cosmetics checkout configuration", "error", err)
+	if err := ValidateCosmeticsConfig(C); err != nil {
+		slog.Error("invalid cosmetics configuration", "error", err)
 		panic(err)
 	}
 	slog.Info("config loaded",
@@ -971,7 +829,8 @@ func warnInsecureDefaults() {
 		} else {
 			slog.Warn("SECURITY: ARENA_ADMIN_TOKEN is not set and " +
 				"ARENA_ADMIN_LOCALHOST_BYPASS is disabled — the admin API cannot " +
-				"be authenticated at all unless OIDC or a DB-issued token is configured")
+				"be authenticated at all unless a DB-issued admin token exists or " +
+				"an Angel Accounts support-desk sign-in is configured")
 		}
 	}
 }

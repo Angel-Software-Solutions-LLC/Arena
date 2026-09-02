@@ -501,7 +501,7 @@ class ArenaBot:
                         "radius": state.get("zone_radius", 100),
                         "in_safe_zone": state.get("in_safe_zone", True),
                         "distance_to_edge": state.get("distance_to_zone_edge", 0),
-                        "fog_radius": state.get("fog_radius", 0),
+                        "fog_radius": msg.get("fog_radius", 0),
                     }
                     try:
                         action = await self.on_tick(state, nearby, safe_zone)

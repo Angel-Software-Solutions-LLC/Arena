@@ -218,66 +218,7 @@ body.shop-embedded .shop-open-new-tab {
   color: var(--shop-success);
 }
 
-.shop-license-rules {
-  display: grid;
-  grid-template-columns: minmax(260px, 0.75fr) minmax(0, 1.25fr);
-  align-items: center;
-  gap: 28px;
-  margin-bottom: 18px;
-  padding: 20px 22px;
-  border: 1px solid var(--shop-gold-border);
-  border-radius: var(--shop-radius);
-  background:
-    radial-gradient(circle at 100% 0%, var(--shop-gold-wash), transparent 38%),
-    var(--shop-surface);
-}
-
-.shop-license-rules h2 {
-  margin: 0;
-  color: var(--text-primary);
-  font-size: clamp(1.05rem, 2vw, 1.45rem);
-  line-height: 1.2;
-  letter-spacing: -0.025em;
-  /* letter-spacing is applied after every character INCLUDING the space, so
-     negative tracking shrinks the word gap as well as the letter fit. This
-     restores exactly what the tracking removed from the space, leaving the
-     letterforms as tight as designed. */
-  word-spacing: 0.025em;
-}
-
-.shop-license-rules ul {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.shop-license-rules li {
-  position: relative;
-  min-width: 0;
-  padding: 10px 12px 10px 28px;
-  border: 1px solid var(--shop-border);
-  border-radius: var(--shop-radius-small);
-  background: rgba(255, 255, 255, 0.025);
-  color: var(--text-soft);
-  font-size: 0.85rem;
-  line-height: 1.5;
-}
-
-.shop-license-rules li::before {
-  content: '';
-  position: absolute;
-  top: 15px;
-  left: 12px;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--accent-gold);
-}
-
-.shop-all-access {
+.shop-subscription {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(250px, auto);
   align-items: center;
@@ -289,11 +230,11 @@ body.shop-embedded .shop-open-new-tab {
   background: var(--shop-surface-strong);
 }
 
-.shop-all-access-copy {
+.shop-subscription-copy {
   min-width: 0;
 }
 
-.shop-all-access-copy h2 {
+.shop-subscription-copy h2 {
   margin: 0 0 7px;
   color: var(--text-primary);
   font-size: clamp(1.65rem, 3vw, 2.5rem);
@@ -306,7 +247,7 @@ body.shop-embedded .shop-open-new-tab {
   word-spacing: 0.045em;
 }
 
-.shop-all-access-copy > p:not(.shop-kicker) {
+.shop-subscription-copy > p:not(.shop-kicker) {
   max-width: 78ch;
   margin: 0;
   color: var(--text-secondary);
@@ -314,13 +255,13 @@ body.shop-embedded .shop-open-new-tab {
   line-height: 1.55;
 }
 
-.shop-all-access-copy .shop-all-access-removal {
+.shop-subscription-copy .shop-subscription-note {
   margin-top: 7px;
   color: var(--text-muted);
   font: 0.68rem/1.55 var(--font-mono);
 }
 
-.shop-all-access-offer {
+.shop-subscription-offer {
   display: grid;
   justify-items: end;
   gap: 9px;
@@ -328,23 +269,23 @@ body.shop-embedded .shop-open-new-tab {
   text-align: right;
 }
 
-.shop-all-access-offer p {
+.shop-subscription-offer p {
   margin: 0;
   color: var(--shop-success);
   font: 600 0.66rem/1.35 var(--font-mono);
 }
 
-.shop-all-access-offer strong {
+.shop-subscription-offer strong {
   color: var(--accent-gold);
   font: 700 clamp(1.3rem, 2.5vw, 2rem)/1 var(--font-mono);
   white-space: nowrap;
 }
 
-.shop-all-access-offer .btn {
+.shop-subscription-offer .btn {
   min-height: 46px;
 }
 
-.shop-all-access-offer [hidden] {
+.shop-subscription-offer [hidden] {
   display: none !important;
 }
 
@@ -641,7 +582,7 @@ body.shop-embedded .shop-open-new-tab {
 }
 
 .shop-preview-help,
-.shop-purchase-note {
+.shop-access-note {
   margin: 10px 2px 0;
   color: var(--text-muted);
   font: 0.68rem/1.55 var(--font-mono);
@@ -790,10 +731,11 @@ body.shop-embedded .shop-open-new-tab {
   overflow-wrap: anywhere;
 }
 
-.shop-pack-price {
+.shop-pack-access {
   flex: none;
   color: var(--accent-gold);
-  font: 700 1rem/1.2 var(--font-mono);
+  font: 700 0.8rem/1.2 var(--font-mono);
+  text-align: right;
 }
 
 .shop-pack-description {
@@ -871,13 +813,13 @@ body.shop-embedded .shop-open-new-tab {
   white-space: nowrap;
 }
 
-.shop-purchase {
+.shop-access {
   width: 100%;
   min-height: 50px;
   margin-top: 18px;
 }
 
-.shop-purchase[aria-disabled="true"] {
+.shop-access[aria-disabled="true"] {
   pointer-events: none;
   filter: saturate(0.25);
   opacity: 0.55;
@@ -983,11 +925,6 @@ body.shop-embedded .shop-open-new-tab {
     width: min(920px, calc(100% - 36px));
   }
 
-  .shop-license-rules {
-    grid-template-columns: 1fr;
-    gap: 15px;
-  }
-
   .shop-toolbar {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1059,23 +996,18 @@ body.shop-embedded .shop-open-new-tab {
     white-space: normal;
   }
 
-  .shop-license-rules {
-    padding: 17px;
-  }
-
-  .shop-all-access {
+  .shop-subscription {
     grid-template-columns: minmax(0, 1fr);
     gap: 18px;
     padding: 17px;
   }
 
-  .shop-all-access-offer {
+  .shop-subscription-offer {
     justify-items: start;
     min-width: 0;
     text-align: left;
   }
 
-  .shop-license-rules ul,
   .shop-toolbar {
     grid-template-columns: 1fr;
   }
@@ -1210,8 +1142,7 @@ body.shop-embedded .shop-open-new-tab {
   .shop-preview-panel,
   .shop-pack-detail,
   .shop-toolbar,
-  .shop-license-rules,
-  .shop-all-access {
+  .shop-subscription {
     border: 1px solid CanvasText;
   }
 

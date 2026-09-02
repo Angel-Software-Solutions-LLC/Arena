@@ -276,15 +276,10 @@ func EnsureCoreSchema(ctx context.Context) error {
 	if err := EnsureCosmeticsSchema(ctx); err != nil {
 		return fmt.Errorf("EnsureCoreSchema cosmetics: %w", err)
 	}
-	if err := EnsureCosmeticOrdersSchema(ctx); err != nil {
-		return fmt.Errorf("EnsureCoreSchema cosmetic orders: %w", err)
-	}
-	if err := EnsureCosmeticSubscriptionsSchema(ctx); err != nil {
-		return fmt.Errorf("EnsureCoreSchema cosmetic subscriptions: %w", err)
-	}
-	if err := EnsureCosmeticAdminMembershipsSchema(ctx); err != nil {
-		return fmt.Errorf("EnsureCoreSchema cosmetic admin memberships: %w", err)
-	}
+	// The Stripe order, subscription, admin-membership and Accounts-grant
+	// ledgers are retired: Arena sells nothing itself and keeps no per-item
+	// ownership. Their tables are neither created nor dropped here; see the
+	// note on bot_cosmetic_loadout in EnsureCosmeticsSchema.
 	if err := EnsurePlatformAuthoritySchema(ctx); err != nil {
 		return fmt.Errorf("EnsureCoreSchema platform authority: %w", err)
 	}

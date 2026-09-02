@@ -8,10 +8,10 @@
   "exports": "./src/ArenaBot.js",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ablac/Arena.git",
+    "url": "https://github.com/Angel-Software-Solutions-LLC/Arena.git",
     "directory": "sdk/nodejs"
   },
   "dependencies": {
-    "ws": "^8.21.0"
+    "ws": "^8.21.3"
   }
 }

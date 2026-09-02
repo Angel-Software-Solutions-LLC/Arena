@@ -110,15 +110,18 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 	// Create dashboard handler.
 	dashboardHandler := NewDashboardHandler(bus, adminHandler)
 	cosmeticsHandler := newCosmeticsHandlerWithStores(platformAuthority, databaseCosmeticsStore{}, engine)
-	commerceHandler := NewCosmeticCommerceHandler(engine)
 	accountKeysHandler := NewAccountKeysHandler(engine)
 
-	// Initialise OIDC handler (nil if disabled/misconfigured).
-	oidcHandler := NewOIDCHandler()
+	// Angel Accounts is the only sign-in Arena has, for customers and for
+	// administrators alike (nil if disabled/misconfigured). It is also the
+	// only source of the Arena subscription: when a sign-in flips the flag,
+	// the connected bots of that account are re-read here.
 	customerOIDCHandler := newCustomerOIDCHandlerWithAuthority(platformAuthority)
-	checkoutReady := commerceHandler.Enabled() && customerAccountAuthEnabled(customerOIDCHandler) && security.RedisClient != nil
-	commerceHandler.checkoutEnabled = checkoutReady
-	cosmeticsHandler.checkoutEnabled = checkoutReady
+	if customerOIDCHandler != nil {
+		customerOIDCHandler.onSubscriptionSynced = func(ctx context.Context, botIDs []string) {
+			cosmeticsHandler.refreshBotVisualsFor(ctx, botIDs)
+		}
+	}
 
 	// Developer lobby chat hub. The session resolver maps a request cookie
 	// to a chat identity; it stays nil-safe when customer OIDC is disabled
@@ -158,21 +161,21 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 	}
 	adminHandler.ChatHub = chatHub
 
-	// --- OIDC routes (mounted OUTSIDE admin auth — these handle pre-auth flow) ---
-	if oidcHandler != nil {
-		// Rate-limited per IP so an attacker can't grow the in-memory CSRF
-		// state/session maps unbounded by hammering /admin/login before the
-		// 5-minute cleanup loop runs.
-		oidcEntry := security.RateLimitMiddleware(config.C.AdminRateLimitRPM)
-		r.With(oidcEntry).Get("/admin/login", oidcHandler.LoginHandler)
-		r.With(oidcEntry).Get("/admin/callback", oidcHandler.CallbackHandler)
-		r.Get("/admin/logout", oidcHandler.LogoutHandler)
-		r.Get("/api/v1/admin/session", oidcHandler.SessionInfoHandler)
-		// Mirror under /arena prefix
-		r.With(oidcEntry).Get("/arena/admin/login", oidcHandler.LoginHandler)
-		r.With(oidcEntry).Get("/arena/admin/callback", oidcHandler.CallbackHandler)
-		r.Get("/arena/admin/logout", oidcHandler.LogoutHandler)
-		r.Get("/arena/api/v1/admin/session", oidcHandler.SessionInfoHandler)
+	/*
+	 * --- Sign-in routes (mounted OUTSIDE admin auth — these handle pre-auth
+	 * flow) ---
+	 *
+	 * There is no /admin/login, /admin/callback or /admin/logout any more.
+	 * The Arena-operated admin SSO application those served, and the
+	 * ARENA_OIDC_ADMIN_EMAILS allowlist that admitted people to it, are
+	 * retired: a human administrator signs in at Angel Accounts like any
+	 * other customer and is admitted by the support-desk role on that
+	 * sign-in. /api/v1/admin/session stays, because the Admin Panel reads it
+	 * to decide what to draw — it now reports that desk claim.
+	 */
+	if customerOIDCHandler != nil {
+		r.Get("/api/v1/admin/session", customerOIDCHandler.AdminSessionInfoHandler)
+		r.Get("/arena/api/v1/admin/session", customerOIDCHandler.AdminSessionInfoHandler)
 	} else {
 		r.Get("/api/v1/admin/session", AdminSessionUnavailableHandler)
 		r.Get("/arena/api/v1/admin/session", AdminSessionUnavailableHandler)
@@ -206,8 +209,6 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 		api.With(security.RateLimitMiddleware(config.C.ClientErrorReportRPM)).
 			Post("/client-errors", ClientErrorHandler(bus))
 		api.Get("/cosmetics/catalog", cosmeticsHandler.Catalog)
-		api.Get("/cosmetics/checkout/config", commerceHandler.CheckoutConfig)
-		api.Post("/cosmetics/webhooks/stripe", commerceHandler.StripeWebhook)
 		if customerOIDCHandler != nil {
 			if customerOIDCHandler.oauth2Config != nil {
 				customerOIDCEntry := security.RateLimitMiddleware(config.C.AdminRateLimitRPM)
@@ -217,7 +218,6 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 			}
 			api.With(MakeCustomerAuthMiddleware(customerOIDCHandler)).Post("/dashboard/logout", customerOIDCHandler.LogoutHandler)
 			api.Get("/account/session", customerOIDCHandler.SessionInfoHandler)
-			registerCustomerEmailAuthRoutes(api, customerOIDCHandler)
 		} else {
 			api.Get("/dashboard/login", CustomerLoginUnavailableHandler)
 			api.Post("/dashboard/logout", CustomerLoginUnavailableHandler)
@@ -228,7 +228,6 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 			account.With(
 				security.RateLimitMiddleware(config.C.CosmeticsAccountReadRPM),
 			).Get("/cosmetics", cosmeticsHandler.AccountInventory)
-			registerCustomerCosmeticCommerceRoutes(account, commerceHandler)
 			account.Get("/keys", accountKeysHandler.List)
 			account.With(
 				security.FailClosedRateLimitMiddleware(config.C.CustomerAPIKeyMutationRPM),
@@ -240,9 +239,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 				security.FailClosedRateLimitMiddleware(config.C.CustomerBotLinkRPM),
 			).Post("/bots", cosmeticsHandler.LinkAccountBot)
 			account.Delete("/bots/{bot_id}", cosmeticsHandler.UnlinkAccountBot)
-			account.Put("/cosmetic-licenses/{license_id}/assignment", cosmeticsHandler.AssignAccountLicense)
-			account.Delete("/cosmetic-licenses/{license_id}/assignment", cosmeticsHandler.AssignAccountLicense)
-			account.Put("/bots/{bot_id}/cosmetics", cosmeticsHandler.EquipAccountLicense)
+			account.Put("/bots/{bot_id}/cosmetics", cosmeticsHandler.EquipAccountCosmetic)
 			account.With(
 				security.FailClosedRateLimitMiddleware(config.C.CustomerAPIKeyMutationRPM),
 			).Patch("/profile", UpdateAccountProfileHandler)
@@ -300,10 +297,9 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 			// guesses skip the limiter entirely, since the auth middleware
 			// returns without calling next on every rejection path.
 			admin.Use(security.RateLimitMiddleware(config.C.AdminRateLimitRPM))
-			admin.Use(MakeAdminAuthMiddlewareWithOIDC(adminHandler, oidcHandler))
+			admin.Use(MakeAdminAuthMiddlewareWithPlatformAdmins(adminHandler, customerOIDCHandler))
 			adminHandler.Routes(admin)
 			registerCosmeticsAdminRoutes(admin, cosmeticsHandler)
-			admin.Get("/cosmetics/orders", commerceHandler.AdminOrders)
 
 			// Dashboard API endpoints.
 			admin.Route("/dashboard", func(dash chi.Router) {
@@ -331,14 +327,12 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 			api.Get("/bot-setup", BotSetup())
 			api.Get("/content", PublicContentBlocks)
 			api.Get("/service-status", serviceStatus.publicStatus)
-		// Browser error intake (public, rate limited, bounded in-memory only).
-		// Reports land in the admin Errors tab so a silent client-side
-		// breakage stops being invisible; see client_errors.go.
-		api.With(security.RateLimitMiddleware(config.C.ClientErrorReportRPM)).
-			Post("/client-errors", ClientErrorHandler(bus))
+			// Browser error intake (public, rate limited, bounded in-memory only).
+			// Reports land in the admin Errors tab so a silent client-side
+			// breakage stops being invisible; see client_errors.go.
+			api.With(security.RateLimitMiddleware(config.C.ClientErrorReportRPM)).
+				Post("/client-errors", ClientErrorHandler(bus))
 			api.Get("/cosmetics/catalog", cosmeticsHandler.Catalog)
-			api.Get("/cosmetics/checkout/config", commerceHandler.CheckoutConfig)
-			api.Post("/cosmetics/webhooks/stripe", commerceHandler.StripeWebhook)
 			if customerOIDCHandler != nil {
 				if customerOIDCHandler.oauth2Config != nil {
 					customerOIDCEntry := security.RateLimitMiddleware(config.C.AdminRateLimitRPM)
@@ -348,7 +342,6 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 				}
 				api.With(MakeCustomerAuthMiddleware(customerOIDCHandler)).Post("/dashboard/logout", customerOIDCHandler.LogoutHandler)
 				api.Get("/account/session", customerOIDCHandler.SessionInfoHandler)
-				registerCustomerEmailAuthRoutes(api, customerOIDCHandler)
 			} else {
 				api.Get("/dashboard/login", CustomerLoginUnavailableHandler)
 				api.Post("/dashboard/logout", CustomerLoginUnavailableHandler)
@@ -359,7 +352,6 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 				account.With(
 					security.RateLimitMiddleware(config.C.CosmeticsAccountReadRPM),
 				).Get("/cosmetics", cosmeticsHandler.AccountInventory)
-				registerCustomerCosmeticCommerceRoutes(account, commerceHandler)
 				account.Get("/keys", accountKeysHandler.List)
 				account.With(
 					security.FailClosedRateLimitMiddleware(config.C.CustomerAPIKeyMutationRPM),
@@ -371,9 +363,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 					security.FailClosedRateLimitMiddleware(config.C.CustomerBotLinkRPM),
 				).Post("/bots", cosmeticsHandler.LinkAccountBot)
 				account.Delete("/bots/{bot_id}", cosmeticsHandler.UnlinkAccountBot)
-				account.Put("/cosmetic-licenses/{license_id}/assignment", cosmeticsHandler.AssignAccountLicense)
-				account.Delete("/cosmetic-licenses/{license_id}/assignment", cosmeticsHandler.AssignAccountLicense)
-				account.Put("/bots/{bot_id}/cosmetics", cosmeticsHandler.EquipAccountLicense)
+				account.Put("/bots/{bot_id}/cosmetics", cosmeticsHandler.EquipAccountCosmetic)
 				account.With(
 					security.FailClosedRateLimitMiddleware(config.C.CustomerAPIKeyMutationRPM),
 				).Patch("/profile", UpdateAccountProfileHandler)
@@ -409,10 +399,9 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 				// rate limiting must wrap OUTSIDE auth or failed-auth guesses
 				// bypass it entirely.
 				admin.Use(security.RateLimitMiddleware(config.C.AdminRateLimitRPM))
-				admin.Use(MakeAdminAuthMiddlewareWithOIDC(adminHandler, oidcHandler))
+				admin.Use(MakeAdminAuthMiddlewareWithPlatformAdmins(adminHandler, customerOIDCHandler))
 				adminHandler.Routes(admin)
 				registerCosmeticsAdminRoutes(admin, cosmeticsHandler)
-				admin.Get("/cosmetics/orders", commerceHandler.AdminOrders)
 
 				admin.Route("/dashboard", func(dash chi.Router) {
 					dashboardHandler.DashboardRoutes(dash)
@@ -426,6 +415,9 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 		ar.Handle("/*", noCacheStaticHandler(fileServerArena))
 	})
 
+	// --- Canonical legal documents ---
+	registerLegalRedirects(r)
+
 	// --- Static file serving ---
 	// Serve the frontend directory at the root path with no-cache for JS/CSS.
 	frontendDir := resolveFrontendDir()
@@ -435,21 +427,43 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 	return r
 }
 
-func registerCustomerEmailAuthRoutes(api chi.Router, handler *CustomerOIDCHandler) {
-	if handler == nil || handler.emailSender == nil || handler.emailStore == nil {
-		return
-	}
-	api.With(security.FailClosedRateLimitMiddleware(config.C.CustomerEmailSendRPM)).Post("/account/email/start", handler.EmailStartHandler)
-	api.With(security.RateLimitMiddleware(config.C.AdminRateLimitRPM)).Post("/account/email/verify", handler.EmailVerifyHandler)
+// accountsLegalBase is where the one copy of each shared document lives.
+const accountsLegalBase = "https://accounts.angel-serv.com/legal"
+
+// canonicalLegalRedirects maps Arena's own legal paths to the corpus.
+//
+// Only the documents the corpus actually covers. The Acceptable Use Policy
+// names Arena by name and carries a per-product clause for it; the Terms are
+// company-wide on their face. Both are better maintained in one place than in
+// a copy here that drifts.
+//
+// The Privacy Policy is deliberately absent from this table. Arena's local one
+// discloses processing the corpus does not mention at all — developer-lobby
+// chat content, bot source and configuration, hashed bot API keys, match
+// telemetry and leaderboard standings, and that spectating needs no account.
+// Redirecting it would delete those disclosures from the web rather than move
+// them, so it stays and says what it is. See docs/build/footer-integration.md
+// §4.2 on the Support repo, which is the rule this follows.
+var canonicalLegalRedirects = map[string]string{
+	"/legal/terms.html":          accountsLegalBase + "/terms",
+	"/legal/terms":               accountsLegalBase + "/terms",
+	"/legal/acceptable-use.html": accountsLegalBase + "/acceptable-use",
+	"/legal/acceptable-use":      accountsLegalBase + "/acceptable-use",
 }
 
-func registerCustomerCosmeticCommerceRoutes(account chi.Router, handler *CosmeticCommerceHandler) {
-	account.Get("/cosmetics/orders", handler.CustomerOrders)
-	checkoutQuota := security.FailClosedRateLimitMiddleware(config.C.CosmeticsCheckoutRPM)
-	account.With(checkoutQuota).Post("/cosmetics/checkout", handler.Checkout)
-	account.With(checkoutQuota).Post("/cosmetics/orders/{order_id}/checkout", handler.ResumeCheckout)
-	account.With(checkoutQuota).Post("/cosmetics/subscription/checkout", handler.SubscriptionCheckout)
-	account.With(checkoutQuota).Post("/cosmetics/subscription/portal", handler.SubscriptionPortal)
+// registerLegalRedirects sends Arena's copies to the canonical documents.
+//
+// 301 rather than 302: the canonical URL is permanent and the old one is not
+// coming back. A temporary redirect leaves both in search indexes competing,
+// which is the duplicate-content version of the problem the shared corpus
+// exists to solve.
+func registerLegalRedirects(r chi.Router) {
+	for path, target := range canonicalLegalRedirects {
+		destination := target
+		r.Get(path, func(w http.ResponseWriter, req *http.Request) {
+			http.Redirect(w, req, destination, http.StatusMovedPermanently)
+		})
+	}
 }
 
 // healthHandler returns a handler for GET /api/v1/health.
@@ -474,7 +488,7 @@ func versionHandler() http.HandlerFunc {
 			CommitShort: version.ShortCommit(),
 			BuildTime:   version.BuildTime,
 			GoVersion:   runtime.Version(),
-			Repo:        "https://github.com/ablac/Arena",
+			Repo:        "https://github.com/Angel-Software-Solutions-LLC/Arena",
 		})
 	}
 }

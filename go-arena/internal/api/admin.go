@@ -136,6 +136,20 @@ func (h *AdminHandler) reloadTokenHashes() {
 	h.tokenMu.Unlock()
 }
 
+// hasDatabaseTokens reports whether any database-issued admin token is
+// loaded, under the same lock reloadTokenHashes writes under. The middleware
+// read this slice bare while a concurrent token issue reloaded it, which the
+// race detector flags and which could answer "not configured" to a caller
+// whose token was merely wrong.
+func (h *AdminHandler) hasDatabaseTokens() bool {
+	if h == nil {
+		return false
+	}
+	h.tokenMu.RLock()
+	defer h.tokenMu.RUnlock()
+	return len(h.tokenHashes) > 0
+}
+
 // IsValidAdminToken checks if the given token is either the env var token or
 // one of the database-stored tokens.
 func (h *AdminHandler) IsValidAdminToken(token string) bool {
@@ -170,16 +184,41 @@ func adminPrincipalFromContext(ctx context.Context) string {
 }
 
 // MakeAdminAuthMiddleware creates an admin auth middleware that checks both the
-// env var token and any dynamically created tokens via the handler.
-// If an OIDCHandler is provided and OIDC is enabled, valid session cookies are
-// also accepted.
+// env var token and any dynamically created tokens via the handler. These are
+// the machine paths; a human administrator arrives through
+// MakeAdminAuthMiddlewareWithPlatformAdmins.
 func MakeAdminAuthMiddleware(handler *AdminHandler) func(http.Handler) http.Handler {
-	return MakeAdminAuthMiddlewareWithOIDC(handler, nil)
+	return MakeAdminAuthMiddlewareWithPlatformAdmins(handler, nil)
 }
 
-// MakeAdminAuthMiddlewareWithOIDC is like MakeAdminAuthMiddleware but also
-// accepts OIDC session cookies when oidcHandler is non-nil.
-func MakeAdminAuthMiddlewareWithOIDC(handler *AdminHandler, oidcHandler *OIDCHandler) func(http.Handler) http.Handler {
+/*
+ * MakeAdminAuthMiddlewareWithPlatformAdmins is the whole admin guard: the
+ * machine credentials, plus the one thing the customer cookie is allowed to
+ * say.
+ *
+ * That cookie used to be refused here unconditionally, and the reason still
+ * holds for every session that does not carry the Angel Accounts
+ * platform-administrator claim: a customer session means "signed in", not
+ * "trusted". What changed is that Accounts now states, inside a token Arena
+ * verifies, which identities administer the platform — so the refusal narrows
+ * from "this cookie" to "this cookie without that claim". A session that never
+ * carried it, or whose grant has lapsed, is exactly as unwelcome as before;
+ * TestCustomerCookieNeverAuthorizesAdmin still holds.
+ *
+ * There used to be a third way in: an Arena-operated admin SSO application
+ * with its own arena_admin_session cookie, admitted by an email allowlist
+ * (ARENA_OIDC_ADMIN_EMAILS). It is retired. Two places deciding who
+ * administers the platform is one too many, and the second one was a list of
+ * addresses maintained by hand in Arena's environment — nothing revoked it
+ * when somebody left the desk. The support-desk role in Accounts is now the
+ * single source of HUMAN admin authority.
+ *
+ * What is deliberately NOT retired is everything below that authenticates a
+ * machine: ARENA_ADMIN_TOKEN, database-issued admin tokens, and the loopback
+ * bypass. Those are automation credentials, not identities, and they are also
+ * the break-glass path if Accounts is unreachable.
+ */
+func MakeAdminAuthMiddlewareWithPlatformAdmins(handler *AdminHandler, customerHandler *CustomerOIDCHandler) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			cfg := &config.C
@@ -190,20 +229,32 @@ func MakeAdminAuthMiddlewareWithOIDC(handler *AdminHandler, oidcHandler *OIDCHan
 				return
 			}
 
-			// Check OIDC session cookie.
-			if oidcHandler != nil {
-				if session := oidcHandler.GetSession(r); session != nil {
-					next.ServeHTTP(w, r.WithContext(withAdminPrincipal(r.Context(), "oidc:"+session.Email)))
-					return
-				}
+			// Check an Angel Accounts sign-in that carries the verified
+			// platform-administrator claim. This is the only human path.
+			principal, authorized, denyReason := customerHandler.platformAdminPrincipal(r)
+			if authorized {
+				next.ServeHTTP(w, r.WithContext(withAdminPrincipal(r.Context(), principal)))
+				return
 			}
 
 			token := r.Header.Get("X-Admin-Token")
+			/*
+			 * An administrator's mutation that failed the same-origin or CSRF
+			 * check is answered with what actually went wrong — but only when
+			 * there is no token to fall back on. A client presenting a token
+			 * asked to be authenticated by that token; it must reach the token
+			 * paths below exactly as it did before this cookie was consulted.
+			 */
+			if denyReason != "" && token == "" {
+				writeError(w, http.StatusForbidden, denyReason)
+				return
+			}
 			if token == "" {
-				// If OIDC is enabled but no token and no session, return 401
-				// with a hint to use SSO login.
-				if oidcHandler != nil {
-					writeError(w, http.StatusUnauthorized, "not authenticated — use SSO login or provide X-Admin-Token")
+				// No credential of any kind. Where a human can sign in, say
+				// so; otherwise the only answer is the machine header.
+				if customerAccountAuthEnabled(customerHandler) {
+					writeError(w, http.StatusUnauthorized,
+						"not authenticated — sign in with Angel Accounts or provide X-Admin-Token")
 					return
 				}
 				writeError(w, http.StatusUnauthorized, "missing X-Admin-Token header")
@@ -227,7 +278,7 @@ func MakeAdminAuthMiddlewareWithOIDC(handler *AdminHandler, oidcHandler *OIDCHan
 			}
 
 			// If no token configured at all.
-			if cfg.AdminToken == "" && (handler == nil || len(handler.tokenHashes) == 0) {
+			if cfg.AdminToken == "" && !handler.hasDatabaseTokens() {
 				writeError(w, http.StatusServiceUnavailable, "admin token not configured")
 				return
 			}
