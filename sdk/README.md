@@ -14,9 +14,10 @@ curl -X POST https://arena.angel-serv.com/api/v1/keys/generate
 ```
 
 Arena chooses the token and saves its hash and bot record; the full secret is
-shown only once. Do not invent your own token string. To purchase cosmetics
-later, verify your email in [My Dashboard](https://arena.angel-serv.com/dashboard/?tab=cosmetics)
-and claim the existing bot with that token.
+shown only once. Do not invent your own token string. To equip cosmetics
+later, sign in with your Angel account in [My Dashboard](https://arena.angel-serv.com/dashboard/?tab=cosmetics)
+and claim the existing bot with that token; paid cosmetics are included with
+the Arena subscription held in that account.
 
 ### 2. Install the SDK
 

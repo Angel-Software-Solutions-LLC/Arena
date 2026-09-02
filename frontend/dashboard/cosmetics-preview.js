@@ -143,7 +143,7 @@ export class DashboardCosmeticsPreview {
     }
     if (!verified) {
       this._teardownPreview();
-      this._showStatus('Verify your email account to preview cosmetics.');
+      this._showStatus('Verify your Angel account to preview cosmetics.');
       return false;
     }
     if (!bot?.id) {

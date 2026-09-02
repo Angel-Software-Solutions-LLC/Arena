@@ -49,13 +49,13 @@ var versionInfoCache struct {
 
 const versionCacheTTL = 60 * time.Second
 
-// splitRepo parses "owner/repo" into its parts, falling back to ablac/Arena.
+// splitRepo parses "owner/repo" into its parts, falling back to the canonical Arena repository.
 func splitRepo(repo string) (owner, name string) {
 	parts := strings.SplitN(strings.TrimSpace(repo), "/", 2)
 	if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
 		return parts[0], parts[1]
 	}
-	return "ablac", "Arena"
+	return "Angel-Software-Solutions-LLC", "Arena"
 }
 
 // adminVersionInfo reports the running commit alongside the latest commit on the

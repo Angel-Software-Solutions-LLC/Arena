@@ -90,23 +90,29 @@ func (e *GameEngine) GetServiceStatus() ServiceStatus {
 func (e *GameEngine) BroadcastServiceStatus() {
 	status := e.GetServiceStatus()
 
-	e.mu.RLock()
-	bots := make([]*BotState, 0, len(e.Bots)+len(e.WaitingBots))
-	for _, bot := range e.Bots {
-		bots = append(bots, bot)
-	}
-	for _, bot := range e.WaitingBots {
-		bots = append(bots, bot)
-	}
-	e.mu.RUnlock()
-	for _, bot := range bots {
-		SendToBot(bot, status)
-	}
-
 	data, err := marshalJSON(status)
 	if err != nil {
 		slog.Error("failed to marshal service status", "error", err)
 		return
+	}
+	// The channels are captured while the engine lock is held: DetachBotSession
+	// nils SendChan under the same lock, and reading it afterwards raced with
+	// a bot dropping mid-round. One marshal serves every recipient.
+	e.mu.RLock()
+	channels := make([]chan []byte, 0, len(e.Bots)+len(e.WaitingBots))
+	for _, bot := range e.Bots {
+		if bot.SendChan != nil {
+			channels = append(channels, bot.SendChan)
+		}
+	}
+	for _, bot := range e.WaitingBots {
+		if bot.SendChan != nil {
+			channels = append(channels, bot.SendChan)
+		}
+	}
+	e.mu.RUnlock()
+	for _, ch := range channels {
+		safeSend(ch, data)
 	}
 	e.spectatorsMu.RLock()
 	spectators := append([]*SpectatorConn(nil), e.Spectators...)

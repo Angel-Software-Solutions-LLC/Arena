@@ -42,7 +42,7 @@ async function installLocalRuntimeRoutes(page, diagnostics) {
   });
 }
 
-test('local modular runtime boots mobile spectator and Shop', async ({ page }) => {
+test('local modular runtime boots mobile spectator and Shop', { tag: '@phone-only' }, async ({ page }) => {
   const diagnostics = { pageErrors: [], requestFailures: [], httpErrors: [] };
   const requested = [];
   page.on('request', (request) => requested.push(request.url()));

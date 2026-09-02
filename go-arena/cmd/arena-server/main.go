@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"arena-server/internal/accounts"
 	"arena-server/internal/api"
 	"arena-server/internal/config"
 	"arena-server/internal/db"
@@ -24,8 +26,9 @@ import (
 type commandMode string
 
 const (
-	commandServe   commandMode = "serve"
-	commandMigrate commandMode = "migrate"
+	commandServe     commandMode = "serve"
+	commandMigrate   commandMode = "migrate"
+	commandCheckOIDC commandMode = "check-oidc"
 )
 
 var databaseRolePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_$]{0,62}$`)
@@ -70,39 +73,14 @@ const managedSchemaPreflightQuery = `
 			('cosmetic_catalog_audit', 'id'),
 			('cosmetic_entitlements', 'bot_id'),
 			('customer_accounts', 'id'),
+			('customer_accounts', 'subscription_active'),
+			('customer_accounts', 'subscription_synced_at'),
 			('customer_email_verifications', 'email'),
 			('customer_email_verifications', 'token_hash'),
 			('customer_email_verifications', 'expires_at'),
 			('account_bot_links', 'account_id'),
 			('account_api_keys', 'account_id'),
-			('cosmetic_licenses', 'id'),
-			('cosmetic_license_assignments', 'license_id'),
-			('bot_cosmetic_loadout', 'license_id'),
-			('bot_cosmetic_loadout', 'account_id'),
-			('cosmetic_orders', 'account_id'),
-			('cosmetic_orders', 'pack_description'),
-			('cosmetic_orders', 'expected_subtotal_cents'),
-			('cosmetic_orders', 'cumulative_charge_refunded_cents'),
-			('cosmetic_orders', 'stripe_checkout_session_id'),
-			('cosmetic_orders', 'stripe_payment_intent_id'),
-			('cosmetic_order_items', 'item_id'),
-			('cosmetic_order_licenses', 'license_id'),
-			('cosmetic_payment_events', 'payload_hash'),
-			('cosmetic_order_refunds', 'refund_id'),
-			('cosmetic_subscriptions', 'id'),
-			('cosmetic_subscriptions', 'stripe_subscription_id'),
-			('cosmetic_subscriptions', 'last_provider_event_created_at'),
-			('cosmetic_subscriptions', 'last_provider_state_observed_at'),
-			('cosmetic_subscription_licenses', 'license_id'),
-			('cosmetic_subscription_events', 'payload_hash'),
-			('cosmetic_admin_memberships', 'id'),
-			('cosmetic_admin_memberships', 'account_id'),
-			('cosmetic_admin_memberships', 'status'),
-			('cosmetic_admin_memberships', 'expires_at'),
-			('cosmetic_admin_memberships', 'granted_by'),
-			('cosmetic_admin_membership_licenses', 'membership_id'),
-			('cosmetic_admin_membership_licenses', 'item_id'),
-			('cosmetic_admin_membership_licenses', 'license_id'),
+			('bot_cosmetic_loadout', 'cosmetic_id'),
 			('platform_account_metadata', 'account_id'),
 			('platform_account_metadata', 'status'),
 			('platform_account_metadata', 'maximum_agents'),
@@ -166,6 +144,9 @@ func main() {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+	if mode == commandCheckOIDC {
+		os.Exit(runCustomerOIDCCheck(ctx, os.Stdout))
+	}
 	if mode == commandMigrate {
 		if err := runDatabaseMigrations(ctx); err != nil {
 			slog.Error("database migration failed", "error", err)
@@ -247,7 +228,8 @@ func main() {
 	}
 
 	// Initialise Redis for rate limiting. General routes degrade gracefully;
-	// email delivery and checkout fail closed until Redis is available.
+	// the fail-closed quotas (registration, key mutation) refuse until Redis
+	// is available.
 	if err := security.InitRedis(); err != nil {
 		slog.Warn("redis rate limiting initialisation failed", "error", err)
 	}
@@ -300,9 +282,6 @@ func main() {
 	}
 	game.GameEventHook = func(eventName string, data map[string]interface{}) {
 		api.EmitGameEvent(api.GlobalEventBus, eventName, data)
-	}
-	if db.Pool != nil {
-		go api.RunCosmeticAdminMembershipExpiryLoop(ctx, engine)
 	}
 	go engine.Run(ctx)
 
@@ -361,7 +340,44 @@ func parseCommand(args []string) (commandMode, error) {
 	if len(args) == 1 && args[0] == string(commandMigrate) {
 		return commandMigrate, nil
 	}
-	return "", fmt.Errorf("usage: arena-server [migrate]")
+	if len(args) == 1 && args[0] == string(commandCheckOIDC) {
+		return commandCheckOIDC, nil
+	}
+	return "", fmt.Errorf("usage: arena-server [migrate|check-oidc]")
+}
+
+// runCustomerOIDCCheck asks Angel Accounts whether it accepts the customer
+// OIDC credential this Arena is configured with, and prints the verdict.
+//
+// It is the first thing to run after the Arena client is reinstated, restored
+// or rotated in the Accounts console — before a customer is asked to try.
+// It needs no database and touches nothing; the secret is never printed.
+func runCustomerOIDCCheck(ctx context.Context, out io.Writer) int {
+	cfg := &config.C
+	if !cfg.CustomerOIDCEnabled {
+		fmt.Fprintln(out, "FAIL disabled")
+		fmt.Fprintln(out, "customer OIDC is not enabled here (ARENA_CUSTOMER_OIDC_ENABLED), so there is no credential to check")
+		return 1
+	}
+	verdict := accounts.VerifyClientCredential(ctx, cfg.CustomerOIDCIssuer, cfg.CustomerOIDCClientID, cfg.CustomerOIDCClientSecret, nil)
+	status := "FAIL"
+	if verdict.OK {
+		status = "OK"
+	}
+	fmt.Fprintf(out, "%s %s\n", status, verdict.Outcome)
+	fmt.Fprintf(out, "issuer    %s\n", verdict.Issuer)
+	fmt.Fprintf(out, "client id %s\n", verdict.ClientID)
+	if verdict.Product != "" {
+		fmt.Fprintf(out, "product   %s\n", verdict.Product)
+	}
+	if verdict.Scope != "" {
+		fmt.Fprintf(out, "scope     %s\n", verdict.Scope)
+	}
+	fmt.Fprintln(out, verdict.Message)
+	if verdict.OK {
+		return 0
+	}
+	return 1
 }
 
 func runDatabaseMigrations(ctx context.Context) error {

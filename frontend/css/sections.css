@@ -2649,7 +2649,7 @@ body.no-fx-killFeedGlow .killfeed-entry.killfeed-new::before {
   max-width: 68ch;
 }
 
-.cosmetics-checkout-state {
+.cosmetics-catalog-state {
   flex: 0 0 auto;
   border: 1px solid rgba(255, 206, 84, 0.25);
   border-radius: 999px;
@@ -2678,6 +2678,19 @@ body.no-fx-killFeedGlow .killfeed-entry.killfeed-new::before {
 
 .cosmetics-account-cta strong { color: var(--text-primary); }
 .cosmetics-account-cta span { color: var(--text-soft); font-size: 0.84rem; }
+
+.cosmetics-account-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.cosmetics-account-register {
+  color: var(--text-soft);
+  font-size: 0.84rem;
+}
+
+.cosmetics-account-register a { color: var(--accent-blue); }
 
 .cosmetics-auth input {
   width: 100%;
@@ -2810,18 +2823,9 @@ body.no-fx-killFeedGlow .killfeed-entry.killfeed-new::before {
   min-width: max-content;
 }
 
-.cosmetic-purchase-link,
 .cosmetics-show-more,
 .cosmetics-empty-state button {
   min-height: 44px;
-}
-
-.cosmetic-purchase-link {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding-inline: 14px;
-  white-space: nowrap;
 }
 
 .cosmetics-show-more {
@@ -2910,6 +2914,7 @@ body.no-fx-killFeedGlow .killfeed-entry.killfeed-new::before {
   .cosmetics-intro { flex-direction: column; }
   .cosmetics-auth { grid-template-columns: 1fr; }
   .cosmetics-auth .btn { width: 100%; }
+  .cosmetics-account-actions .btn { width: 100%; }
   .cosmetics-browser { grid-template-columns: 1fr; }
   .cosmetic-pack { grid-template-columns: 68px minmax(0, 1fr); gap: 12px; }
   .cosmetic-pack-swatch { width: 68px; }
@@ -2921,7 +2926,6 @@ body.no-fx-killFeedGlow .killfeed-entry.killfeed-new::before {
     justify-items: start;
     min-width: 0;
   }
-  .cosmetic-purchase-link { min-width: 148px; }
   .cosmetic-pack-offer .cosmetic-state { justify-self: end; }
 }
 

@@ -2,17 +2,51 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
+    # ready_for_review is not among the default pull_request types, so without
+    # naming all four a draft PR marked ready would never get a CI run.
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
 jobs:
-  backend:
-    name: Go tests
+  # Draft PRs run no CI. Guard on every job without needs; jobs with needs
+  # skip when their dependencies skip, and review handles skips itself.
+  policy:
+    name: PR policy
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validate the pull request route
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          if [[ "$EVENT_NAME" == "pull_request" && "$BASE_REF" == "main" && "$HEAD_REF" != "develop" ]]; then
+            echo "Pull requests to main must come from develop." >&2
+            exit 1
+          fi
+          echo "PR route is valid."
+
+  backend:
+    name: Go quality and tests
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
     services:
       postgres:
         image: postgres:16-alpine
@@ -40,27 +74,84 @@ jobs:
       ARENA_TEST_DATABASE_URL: postgres://arena:arena@localhost:5432/arena_test?sslmode=disable
       ARENA_TEST_REDIS_ADDR: localhost:6379
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go-arena/go.mod
           cache-dependency-path: go-arena/go.sum
+      - name: Run go vet
+        working-directory: go-arena
+        run: go vet ./...
       - name: Test backend
         working-directory: go-arena
         run: go test ./...
+
+  # The race detector instruments and compiles every package a second time and
+  # then runs the whole suite (Postgres tests included) again, so it was the
+  # longest single step in the workflow. It shares nothing with the plain run
+  # except the checkout, so it runs beside it rather than after it.
+  backend-race:
+    name: Go race detector
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: arena
+          POSTGRES_PASSWORD: arena
+          POSTGRES_DB: arena_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U arena -d arena_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ARENA_TEST_DATABASE_URL: postgres://arena:arena@localhost:5432/arena_test?sslmode=disable
+      ARENA_TEST_REDIS_ADDR: localhost:6379
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go-arena/go.mod
+          cache-dependency-path: go-arena/go.sum
       - name: Race detector
         working-directory: go-arena
         run: go test -race ./...
 
   frontend-and-sdks:
-    name: Syntax and SDK checks
+    name: Frontend and SDK validation
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
-      - uses: actions/setup-python@v5
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            sdk/nodejs/package-lock.json
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
       - name: Install frontend build dependencies
@@ -85,11 +176,13 @@ jobs:
           node scripts/test-admin-sse-reconnect.mjs
           node scripts/test-admin-connection-diagnostics.mjs
           node scripts/test-dashboard-startup.mjs
+          node scripts/test-dashboard-elo-history.mjs
           node scripts/test-dashboard-account-cosmetics.mjs
           node scripts/test-dashboard-cosmetics-preview.mjs
-          node scripts/test-dashboard-email-auth.mjs
-          node scripts/test-dashboard-cosmetics-checkout.mjs
-          node scripts/test-embedded-stripe-checkout.mjs
+          node scripts/test-dashboard-accounts-login.mjs
+          node scripts/test-one-click-sign-in.mjs
+          node scripts/test-site-footer.mjs
+          node scripts/test-subscription-unlocks-cosmetics.mjs
           node scripts/test-cosmetic-themes.mjs
           node scripts/test-cosmetics-renderer.mjs
           node scripts/test-cosmetics-launch-ui.mjs
@@ -126,7 +219,9 @@ jobs:
           node scripts/test-key-generator.mjs
           node scripts/test-admin-cosmetics-ui.mjs
           node scripts/test-admin-broadcast-ui.mjs
+          node scripts/test-admin-desk-sign-in.mjs
           node scripts/test-public-paths.mjs
+          node scripts/test-repository-links.mjs
           node scripts/test-spectator-client.mjs
           node scripts/test-responsive-site-shell.mjs
           node scripts/test-safe-viewport.mjs
@@ -147,43 +242,96 @@ jobs:
           node --test sdk/nodejs/test/*.test.js
           python -m pytest sdk/python/tests
       - name: Check whitespace
-        run: git diff --check
+        # Compare the complete checked-in source tree with Git's empty tree.
+        # The vendored Babylon bundle is hash-verified above and contains
+        # upstream shader whitespace that cannot be normalized safely.
+        run: git diff --check 4b825dc642cb6eb9a060e54bf8d69288fbee4904 HEAD -- . ':(exclude)frontend/assets/vendor/**'
 
-  browser-smoke:
-    name: Spectator browser smoke
-    needs: frontend-and-sdks
+  # The smoke suite runs one test at a time under software WebGL (see
+  # tests/browser/playwright.config.mjs), so its wall time is the sum of every
+  # test in every viewport: over eleven minutes on one runner. Each viewport
+  # project is split into two Playwright shards on its own runner; every test
+  # lands in exactly one shard, so coverage is unchanged and the job takes as
+  # long as its slowest shard instead of the whole sum.
+  browser-smoke-matrix:
+    name: Spectator browser smoke (${{ matrix.project }}, ${{ matrix.shard }}/2)
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      # One viewport failing must not cancel the others: their diagnostics
+      # are the difference between a fix and a guess.
+      fail-fast: false
+      matrix:
+        project: [phone-375, tablet-768, desktop-1440]
+        shard: [1, 2]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: tests/browser/package-lock.json
       - name: Install browser test dependencies
         run: npm ci --prefix tests/browser --ignore-scripts
+      - name: Restore the Playwright browser download
+        # Keyed on the lockfile, which pins @playwright/test and therefore the
+        # exact Chromium build it wants. On a hit the install step below finds
+        # the build already present and only refreshes system packages.
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('tests/browser/package-lock.json') }}
       - name: Install functional Chromium runtime
         run: npm exec --prefix tests/browser -- playwright install --with-deps chromium
       - name: Run spectator browser smoke
-        run: npm test --prefix tests/browser
+        env:
+          PROJECT: ${{ matrix.project }}
+          SHARD: ${{ matrix.shard }}
+        run: npm test --prefix tests/browser -- --project="$PROJECT" --shard="$SHARD/2"
       - name: Retain browser diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: spectator-browser-smoke
+          name: spectator-browser-smoke-${{ matrix.project }}-${{ matrix.shard }}
           path: |
             tests/browser/test-results
             tests/browser/playwright-report
           if-no-files-found: warn
           retention-days: 14
 
+  browser-smoke:
+    name: Spectator browser smoke
+    # Fans the shards back in under the name the suite has always reported,
+    # so anything keyed on that check keeps working. always() so a failed
+    # shard is reported rather than skipped; a draft PR skips this too.
+    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
+    needs: browser-smoke-matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Confirm every viewport shard passed
+        env:
+          MATRIX_RESULT: ${{ needs.browser-smoke-matrix.result }}
+        run: |
+          if [[ "$MATRIX_RESULT" != "success" ]]; then
+            echo "At least one spectator browser smoke shard did not pass ($MATRIX_RESULT)." >&2
+            exit 1
+          fi
+          echo "Every spectator browser smoke shard passed."
+
   python-sdk-310:
     name: Python SDK (3.10 compatibility)
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.10"
       - name: Install SDK test dependencies
@@ -193,3 +341,37 @@ jobs:
           python -m compileall sdk/python/arena_sdk sdk/python/examples
           python scripts/test_sdk_service_status.py
           python -m pytest sdk/python/tests
+
+  review:
+    name: CI review
+    # always() so upstream failures still get reported, but a draft PR skips
+    # this too — with every needs skipped it would otherwise fail the draft.
+    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
+    needs: [policy, backend, backend-race, frontend-and-sdks, browser-smoke, python-sdk-310]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Confirm every validation job passed
+        env:
+          POLICY_RESULT: ${{ needs.policy.result }}
+          BACKEND_RESULT: ${{ needs.backend.result }}
+          RACE_RESULT: ${{ needs.backend-race.result }}
+          FRONTEND_RESULT: ${{ needs.frontend-and-sdks.result }}
+          BROWSER_RESULT: ${{ needs.browser-smoke.result }}
+          PYTHON_RESULT: ${{ needs.python-sdk-310.result }}
+        run: |
+          results=(
+            "$POLICY_RESULT"
+            "$BACKEND_RESULT"
+            "$RACE_RESULT"
+            "$FRONTEND_RESULT"
+            "$BROWSER_RESULT"
+            "$PYTHON_RESULT"
+          )
+          for result in "${results[@]}"; do
+            if [[ "$result" != "success" ]]; then
+              echo "At least one required validation job did not pass." >&2
+              exit 1
+            fi
+          done
+          echo "All required validation jobs passed."

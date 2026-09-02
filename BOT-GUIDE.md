@@ -34,10 +34,12 @@ Response:
 }
 ```
 
-You can connect immediately. To buy or equip cosmetics later, verify your email
-in [My Dashboard](https://arena.angel-serv.com/dashboard/?tab=cosmetics) and
-submit this token once to claim its bot. The form clears the plaintext after
-the claim request.
+You can connect immediately. To equip cosmetics later, sign in with your
+Angel account from [My Dashboard](https://arena.angel-serv.com/dashboard/?tab=cosmetics)
+and submit this token once to claim its bot. The form clears the plaintext
+after the claim request. Paid cosmetics are included with the Arena
+subscription, which is bought and held in your Angel account and read back
+into Arena when you sign in; your bot token is unaffected either way.
 
 **Save your `api_key` — it cannot be retrieved again.**
 
@@ -142,8 +144,8 @@ All HTTP endpoints are also available under the `/arena` prefix (e.g., `/arena/a
 | `PUT` | `/api/v1/bot/config` | Update bot name, avatar, and default loadout |
 | `GET` | `/api/v1/bot/stats` | Lifetime stats: kills, deaths, ELO, streaks, damage |
 | `GET` | `/api/v1/bot/live` | Real-time in-game state (position, HP, effects) |
-| `GET` | `/api/v1/bot/cosmetics` | Free plus account-assigned, locked, and equipped cosmetics |
-| `PUT` | `/api/v1/bot/cosmetics` | Equip a free or account-assigned cosmetic without changing gameplay stats |
+| `GET` | `/api/v1/bot/cosmetics` | The catalog with what this bot may wear (free, or everything once its account subscribes) and what it has equipped |
+| `PUT` | `/api/v1/bot/cosmetics` | Equip a cosmetic the bot may wear without changing gameplay stats; a locked one answers 403 `SUBSCRIPTION_REQUIRED` |
 | `DELETE` | `/api/v1/keys/revoke` | Permanently revoke your API key |
 
 ### Verified Customer Account Endpoints
@@ -1030,8 +1032,8 @@ node bot.js YOUR_API_KEY       # use existing key
 
 | Language | Install | Repository |
 |----------|---------|------------|
-| Python | Clone this repository, then `pip install ./sdk/python` | [sdk/python](https://github.com/ablac/Arena/tree/main/sdk/python) |
-| Node.js | Clone this repository, then `npm install ./sdk/nodejs` | [sdk/nodejs](https://github.com/ablac/Arena/tree/main/sdk/nodejs) |
+| Python | Clone this repository, then `pip install ./sdk/python` | [sdk/python](https://github.com/Angel-Software-Solutions-LLC/Arena/tree/main/sdk/python) |
+| Node.js | Clone this repository, then `npm install ./sdk/nodejs` | [sdk/nodejs](https://github.com/Angel-Software-Solutions-LLC/Arena/tree/main/sdk/nodejs) |
 
 Both SDKs expose your team number in team modes (Python: `self._team`, Node.js: `this.team`).
 

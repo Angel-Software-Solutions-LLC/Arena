@@ -1,6 +1,21 @@
 (function attachArenaAccountCosmetics(root) {
   'use strict';
 
+  /*
+   * The Dashboard's cosmetics model, and nothing else.
+   *
+   * Arena sells one thing, and does not sell it itself: the Arena
+   * subscription, bought and held in Angel Accounts. So there is no per-item
+   * ownership here — no licences to assign, no orders to resume, no checkout
+   * to open. A signed-in account either holds an active subscription, in
+   * which case every cosmetic in the catalog is unlocked for every linked
+   * bot, or it does not, in which case every paid cosmetic reads "Included
+   * with an Arena subscription" and points at where to get one.
+   *
+   * Everything in this file is a pure function of server data so it can be
+   * exercised without a browser (scripts/test-dashboard-account-cosmetics.mjs).
+   */
+
   function escapeHTML(value) {
     return String(value ?? '')
       .replaceAll('&', '&amp;')
@@ -14,6 +29,27 @@
     return typeof value === 'string' ? value.trim() : '';
   }
 
+  /**
+   * A URL this page is willing to navigate somebody to, or ''.
+   *
+   * Everything that reaches here comes from Arena's own server, so this is not
+   * a defence against a hostile catalogue — it is a floor under a
+   * configuration mistake. An operator who sets the subscription address to a
+   * path, or leaves a placeholder in it, gets a link that is not offered
+   * rather than one that navigates somewhere unintended. `javascript:` is
+   * refused by the same rule that refuses everything else: only https is an
+   * address.
+   */
+  function httpsURL(value) {
+    const raw = cleanText(value);
+    if (!raw.startsWith('https://') || raw.length <= 'https://'.length) return '';
+    // Whitespace and quotes cannot appear in a URL that was not built wrong,
+    // and both are how a value ends up escaping the attribute it is written
+    // into. Refuse rather than encode: there is no correct address that needs
+    // either, so a value carrying one is a mistake to surface, not to repair.
+    return /[\s"'<>]/.test(raw) ? '' : raw;
+  }
+
   const PREVIEW_SLOT_DEFAULTS = Object.freeze({
     bot_skin: 'standard',
     weapon_skin: 'standard',
@@ -22,6 +58,7 @@
   });
   const PREVIEW_SLOTS = Object.freeze(Object.keys(PREVIEW_SLOT_DEFAULTS));
   const PREVIEW_ASSET_KEY_PATTERN = /^[a-z0-9][a-z0-9_-]{0,79}$/;
+  const COLLECTION_PAGE_SIZE = 24;
 
   function emptyPreviewLoadout() {
     return {...PREVIEW_SLOT_DEFAULTS};
@@ -38,6 +75,8 @@
       ? source.account
       : source;
     const email = cleanText(rawAccount.email).toLowerCase();
+    const displayName = cleanText(rawAccount.display_name);
+    const legacyName = cleanText(rawAccount.name);
     const emailVerified = rawAccount.email_verified === true || Boolean(cleanText(rawAccount.email_verified_at));
     const authenticated = typeof source.authenticated === 'boolean'
       ? source.authenticated
@@ -49,15 +88,33 @@
       oidc_login_enabled: source.oidc_login_enabled === true,
       login_url: cleanText(source.login_url),
       logout_url: cleanText(source.logout_url),
-      email_start_url: cleanText(source.email_start_url),
-      email_verify_url: cleanText(source.email_verify_url),
       account: {
         id: cleanText(rawAccount.id),
         email,
         email_verified: emailVerified,
-        name: cleanText(rawAccount.name || rawAccount.display_name),
+        name: displayName || legacyName,
       },
     };
+  }
+
+  function isVerifiedAccount(rawAccount) {
+    const account = rawAccount && typeof rawAccount === 'object' ? rawAccount : {};
+    return Boolean(cleanText(account.id)) && account.email_verified === true;
+  }
+
+  function hasVerifiedAccount(rawSession) {
+    const source = rawSession && typeof rawSession === 'object' ? rawSession : {};
+    const session = normalizeSession(source);
+    return source.authenticated === true && isVerifiedAccount(session.account);
+  }
+
+  function accountLabel(rawAccount) {
+    const account = rawAccount && typeof rawAccount === 'object' ? rawAccount : {};
+    const displayName = cleanText(account.display_name);
+    const legacyName = cleanText(account.name);
+    return displayName || legacyName
+      || cleanText(account.email).toLowerCase()
+      || 'Angel account';
   }
 
   function normalizeBot(raw) {
@@ -79,37 +136,38 @@
       id: cleanText(item.id || item.cosmetic_id),
       name: cleanText(item.name) || 'Unnamed cosmetic',
       description: cleanText(item.description),
+      category_id: cleanText(item.category_id),
       slot: cleanText(item.slot),
       asset_key: cleanText(item.asset_key),
       rarity: cleanText(item.rarity) || 'common',
+      is_free: item.is_free === true,
       is_active: item.is_active !== false,
     };
   }
 
-  function normalizeLicense(raw) {
-    const license = raw && typeof raw === 'object' ? raw : {};
-    const item = normalizeItem(license.item || license.cosmetic || {
-      id: license.cosmetic_id,
-      name: license.name,
-      description: license.description,
-      slot: license.slot,
-      asset_key: license.asset_key,
-      rarity: license.rarity,
-    });
-    const assignment = license.assignment && typeof license.assignment === 'object'
-      ? license.assignment
-      : {};
+  function normalizeSubscription(payload) {
+    const source = payload && typeof payload === 'object' ? payload : {};
     return {
-      id: cleanText(license.id || license.license_id || license.entitlement_id),
-      cosmetic_id: cleanText(license.cosmetic_id || item.id),
-      item,
-      assigned_bot_id: cleanText(license.assigned_bot_id || assignment.bot_id),
-      assigned_bot_name: cleanText(license.assigned_bot_name || assignment.bot_name),
-      assigned_at: cleanText(license.assigned_at || assignment.assigned_at),
-      equipped: license.equipped === true || license.is_equipped === true,
-      equipped_bot_id: cleanText(license.equipped_bot_id),
-      status: cleanText(license.status).toLowerCase() || 'active',
+      active: source.active === true,
+      synced_at: cleanText(source.synced_at),
+      url: httpsURL(source.url),
     };
+  }
+
+  function normalizeLoadouts(payload) {
+    const source = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
+    const loadouts = {};
+    for (const [botID, rawSlots] of Object.entries(source)) {
+      const id = cleanText(botID);
+      const slots = rawSlots && typeof rawSlots === 'object' ? rawSlots : {};
+      if (!id) continue;
+      loadouts[id] = {};
+      for (const slot of PREVIEW_SLOTS) {
+        const itemID = cleanText(slots[slot]);
+        if (itemID) loadouts[id][slot] = itemID;
+      }
+    }
+    return loadouts;
   }
 
   function normalizeSnapshot(payload) {
@@ -119,60 +177,71 @@
       account: source.account || {},
     });
     const bots = Array.isArray(source.bots) ? source.bots.map(normalizeBot).filter(bot => bot.id) : [];
-    const licensesSource = Array.isArray(source.licenses)
-      ? source.licenses
-      : (Array.isArray(source.entitlements) ? source.entitlements : []);
+    const items = Array.isArray(source.items) ? source.items.map(normalizeItem).filter(item => item.id) : [];
     return {
       account: session.account,
       bots,
-      licenses: licensesSource.map(normalizeLicense).filter(license => license.id),
-      checkout_enabled: source.checkout_enabled === true,
-      subscription: source.subscription && typeof source.subscription === 'object'
-        ? normalizeSubscription(source.subscription)
-        : null,
-      subscription_offer: normalizeSubscriptionOffer(source.subscription_offer),
-      membership: normalizeMembership(source.membership),
+      subscription: normalizeSubscription(source.subscription),
+      items,
+      loadouts: normalizeLoadouts(source.loadouts),
     };
   }
 
-  // An admin-granted "All Access" membership is a distinct entitlement from
-  // the Stripe subscription: it grants the same catalog access without a
-  // recurring charge. Only "active" is ever surfaced -- expired/revoked
-  // memberships have already been synced away from the license list, so
-  // showing them here would just contradict the license grid below.
-  function normalizeMembership(payload) {
-    const source = payload && typeof payload === 'object' ? payload : null;
-    if (!source || cleanText(source.status).toLowerCase() !== 'active') return null;
+  function normalizeCatalog(payload) {
+    const source = payload && typeof payload === 'object' ? payload : {};
+    const subscription = source.subscription && typeof source.subscription === 'object' ? source.subscription : {};
     return {
-      id: cleanText(source.id),
-      status: 'active',
-      granted_at: cleanText(source.granted_at),
-      expires_at: cleanText(source.expires_at),
-      note: cleanText(source.note),
+      categories: Array.isArray(source.categories) ? source.categories : [],
+      items: Array.isArray(source.items) ? source.items : [],
+      packs: Array.isArray(source.packs) ? source.packs.filter(pack => pack && typeof pack === 'object') : [],
+      // Where the subscription is bought. Only ever an absolute https URL
+      // from the server, read as such: a relative or javascript: value would
+      // be a destination this page then navigates to, so anything that is
+      // not plainly an https origin is treated as absent rather than
+      // sanitised into something plausible.
+      // Also read back the normalised shape, so a catalog that has already
+      // been through here (the Dashboard keeps that one) keeps its address.
+      subscription_url: httpsURL(subscription.url) || httpsURL(source.subscription_url),
     };
+  }
+
+  /** The address to subscribe at, from whichever document carried it. */
+  function subscriptionURL(rawSnapshot, rawCatalog) {
+    const snapshot = rawSnapshot && typeof rawSnapshot === 'object' ? normalizeSnapshot(rawSnapshot) : null;
+    const catalog = rawCatalog && typeof rawCatalog === 'object' ? normalizeCatalog(rawCatalog) : null;
+    return snapshot?.subscription.url || catalog?.subscription_url || '';
+  }
+
+  /** Whether an item is available to this account: free, or subscribed. */
+  function itemUnlocked(snapshot, item) {
+    return item.is_active && (item.is_free || snapshot.subscription.active);
+  }
+
+  function itemsByID(snapshot) {
+    const index = new Map();
+    for (const item of snapshot.items) index.set(item.id, item);
+    return index;
   }
 
   function currentPreviewState(snapshot, botID) {
     const loadout = emptyPreviewLoadout();
-    const licenses = {};
-    if (!snapshot.bots.some(bot => bot.id === botID)) return {loadout, licenses};
-
-    for (const license of snapshot.licenses) {
-      const slot = license.item.slot;
-      if (!PREVIEW_SLOTS.includes(slot) || licenses[slot]) continue;
-      const equippedBotID = cleanText(license.equipped_bot_id || license.assigned_bot_id);
-      const assetKey = previewAssetKey(license.item);
-      if (license.status !== 'active' || license.item.is_active !== true || license.equipped !== true ||
-          equippedBotID !== botID || !assetKey) continue;
+    const items = {};
+    if (!snapshot.bots.some(bot => bot.id === botID)) return {loadout, items};
+    const index = itemsByID(snapshot);
+    const equipped = snapshot.loadouts[botID] || {};
+    for (const slot of PREVIEW_SLOTS) {
+      const item = index.get(cleanText(equipped[slot]));
+      const assetKey = previewAssetKey(item);
+      if (!item || item.slot !== slot || !item.is_active || !assetKey) continue;
       loadout[slot] = assetKey;
-      licenses[slot] = license;
+      items[slot] = item;
     }
-    return {loadout, licenses};
+    return {loadout, items};
   }
 
-  // Returns the server-authoritative visual loadout for one linked bot. A
-  // loadout entry can only come from an active, equipped license in the
-  // account snapshot; caller-provided asset keys are never accepted here.
+  // Returns the server-authoritative visual loadout for one linked bot. The
+  // server already withheld any paid look the account may not render right
+  // now, so what is here is exactly what the arena shows.
   function equippedLoadout(rawSnapshot, rawBotID) {
     const snapshot = normalizeSnapshot(rawSnapshot);
     const botID = cleanText(rawBotID);
@@ -180,9 +249,11 @@
   }
 
   // Builds a visual-only staged loadout. stagedBySlot must map a known slot to
-  // an owned license ID. Each choice is resolved again from the latest account
+  // a catalog item id. Each choice is resolved again from the latest account
   // snapshot, which prevents stale, inactive, wrong-slot, or arbitrary asset
   // values from reaching the renderer or being mistaken for equip authority.
+  // Previewing is free for everybody; equipping is what the subscription
+  // gates, and canEquip says so per slot.
   function previewModel(rawSnapshot, rawBotID, rawStagedBySlot) {
     const snapshot = normalizeSnapshot(rawSnapshot);
     const botID = cleanText(rawBotID);
@@ -190,36 +261,37 @@
     const current = currentPreviewState(snapshot, bot?.id || '');
     const previewLoadout = {...current.loadout};
     const stagedBySlot = {};
-    const stagedLicenses = {};
+    const stagedItems = {};
     const requested = rawStagedBySlot && typeof rawStagedBySlot === 'object' && !Array.isArray(rawStagedBySlot)
       ? rawStagedBySlot
       : {};
 
     if (bot) {
+      const index = itemsByID(snapshot);
       for (const slot of PREVIEW_SLOTS) {
-        const licenseID = cleanText(requested[slot]);
-        if (!licenseID) continue;
-        const license = snapshot.licenses.find(entry => entry.id === licenseID);
-        const assetKey = previewAssetKey(license?.item);
-        if (!license || license.status !== 'active' || license.item.is_active !== true ||
-            license.item.slot !== slot || !assetKey) continue;
-        stagedBySlot[slot] = license.id;
-        stagedLicenses[slot] = license;
+        const itemID = cleanText(requested[slot]);
+        if (!itemID) continue;
+        const item = index.get(itemID);
+        const assetKey = previewAssetKey(item);
+        if (!item || !item.is_active || item.slot !== slot || !assetKey) continue;
+        stagedBySlot[slot] = item.id;
+        stagedItems[slot] = item;
         previewLoadout[slot] = assetKey;
       }
     }
 
     const slots = {};
     for (const slot of PREVIEW_SLOTS) {
-      const stagedLicense = stagedLicenses[slot] || null;
-      const currentLicense = current.licenses[slot] || null;
+      const stagedItem = stagedItems[slot] || null;
+      const currentItem = current.items[slot] || null;
       slots[slot] = {
-        currentLicense,
-        stagedLicense,
+        currentItem,
+        stagedItem,
         assetKey: previewLoadout[slot],
+        unlocked: Boolean(stagedItem && itemUnlocked(snapshot, stagedItem)),
         canEquip: Boolean(
-          bot?.key_is_active && stagedLicense && stagedLicense.assigned_bot_id === bot.id &&
-          !(stagedLicense.equipped && (!stagedLicense.equipped_bot_id || stagedLicense.equipped_bot_id === bot.id)),
+          bot?.key_is_active && stagedItem && itemUnlocked(snapshot, stagedItem) &&
+          stagedItem.id !== currentItem?.id,
         ),
       };
     }
@@ -228,49 +300,12 @@
       bot,
       currentLoadout: current.loadout,
       previewLoadout,
-      currentLicenses: current.licenses,
-      stagedLicenses,
+      currentItems: current.items,
+      stagedItems,
       stagedBySlot,
       slots,
       hasStaged: Object.keys(stagedBySlot).length > 0,
       isDirty: PREVIEW_SLOTS.some(slot => previewLoadout[slot] !== current.loadout[slot]),
-    };
-  }
-
-  function normalizeSubscriptionOffer(payload) {
-    const source = payload && typeof payload === 'object' ? payload : {};
-    const rawPrice = Number(source.price_cents);
-    const rawLimit = Number(source.max_api_keys);
-    return {
-      enabled: source.enabled === true,
-      price_cents: Number.isFinite(rawPrice) && rawPrice >= 0 ? Math.round(rawPrice) : 1999,
-      currency: cleanText(source.currency).toUpperCase() || 'USD',
-      interval: cleanText(source.interval).toLowerCase() || 'month',
-      includes_future_sets: source.includes_future_sets === true,
-      max_api_keys: Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(5, Math.floor(rawLimit)) : 5,
-    };
-  }
-
-  function normalizeSubscription(payload) {
-    const source = payload && typeof payload === 'object' ? payload : {};
-    const offer = normalizeSubscriptionOffer({...source, enabled: true});
-	const checkoutPresentation = cleanText(source.checkout_presentation).toLowerCase();
-    return {
-      id: cleanText(source.id),
-      status: cleanText(source.status).toLowerCase() || 'unknown',
-      has_access: source.has_access === true,
-	  terminal: source.terminal === true,
-      cancel_at_period_end: source.cancel_at_period_end === true,
-      current_period_end: cleanText(source.current_period_end),
-      can_manage: source.can_manage === true,
-		checkout_presentation: ['embedded', 'hosted'].includes(checkoutPresentation) ? checkoutPresentation : '',
-      price_cents: offer.price_cents,
-      currency: offer.currency,
-      interval: offer.interval,
-      includes_future_sets: offer.includes_future_sets,
-      max_api_keys: offer.max_api_keys,
-      created_at: cleanText(source.created_at),
-      updated_at: cleanText(source.updated_at),
     };
   }
 
@@ -297,40 +332,6 @@
     return {keys, active_count: activeCount, limit};
   }
 
-  function normalizeCatalog(payload) {
-    const source = payload && typeof payload === 'object' ? payload : {};
-    return {
-      checkout_enabled: source.checkout_enabled === true,
-      categories: Array.isArray(source.categories) ? source.categories : [],
-      items: Array.isArray(source.items) ? source.items : [],
-      packs: Array.isArray(source.packs) ? source.packs.filter(pack => pack && typeof pack === 'object') : [],
-      subscription_offer: normalizeSubscriptionOffer(source.subscription_offer),
-    };
-  }
-
-  function assignmentIntent(snapshot, licenseID, botID) {
-    const state = normalizeSnapshot(snapshot);
-    if (!state.account.email || state.account.email_verified !== true) {
-      return {ok: false, reason: 'verified-email-required'};
-    }
-    const license = state.licenses.find(entry => entry.id === licenseID);
-    if (!license) return {ok: false, reason: 'license-not-found'};
-    if (license.status !== 'active') return {ok: false, reason: 'license-inactive'};
-    const bot = state.bots.find(entry => entry.id === botID);
-    if (!bot) return {ok: false, reason: 'bot-not-linked'};
-    if (!bot.key_is_active) return {ok: false, reason: 'bot-key-inactive'};
-    if (license.assigned_bot_id === bot.id) {
-      return {ok: false, reason: 'already-assigned'};
-    }
-    return {
-      ok: true,
-      kind: license.assigned_bot_id ? 'move' : 'assign',
-      license_id: license.id,
-      bot_id: bot.id,
-      previous_bot_id: license.assigned_bot_id || null,
-    };
-  }
-
   function slotLabel(slot) {
     const labels = {
       bot_skin: 'Bot skins',
@@ -346,53 +347,45 @@
     const routes = {
       session: '/account/session',
       cosmetics: '/account/cosmetics',
-      checkout: '/account/cosmetics/checkout',
-      orders: '/account/cosmetics/orders',
-      orderCheckout: `/account/cosmetics/orders/${encoded}/checkout`,
-      subscriptionCheckout: '/account/cosmetics/subscription/checkout',
-      subscriptionPortal: '/account/cosmetics/subscription/portal',
       keys: '/account/keys',
       key: `/account/keys/${encoded}`,
       bots: '/account/bots',
       bot: `/account/bots/${encoded}`,
       equip: `/account/bots/${encoded}/cosmetics`,
-      assignment: `/account/cosmetic-licenses/${encoded}/assignment`,
     };
     if (!Object.hasOwn(routes, name)) throw new Error(`unknown account route: ${name}`);
     return routes[name];
   }
 
-  function checkoutIntent(rawCatalog, packID) {
-    const catalog = normalizeCatalog(rawCatalog);
-    const normalizedID = cleanText(packID);
-    if (!catalog.checkout_enabled) return {ok: false, reason: 'checkout-disabled'};
-    if (!normalizedID) return {ok: false, reason: 'pack-not-found'};
-    const pack = catalog.packs.find(entry => cleanText(entry.id) === normalizedID);
-    if (!pack) return {ok: false, reason: 'pack-not-found'};
-    if (pack.is_purchasable !== true) return {ok: false, reason: 'pack-not-purchasable'};
+  /**
+   * Whether this bot may put on this item right now, and the request that
+   * does it. Every refusal names a reason the Dashboard can explain; the
+   * server makes the same decision again with the account row locked.
+   */
+  function equipIntent(rawSnapshot, rawBotID, rawItemID) {
+    const snapshot = normalizeSnapshot(rawSnapshot);
+    if (!isVerifiedAccount(snapshot.account)) {
+      return {ok: false, reason: 'verified-account-required'};
+    }
+    const bot = snapshot.bots.find(entry => entry.id === cleanText(rawBotID));
+    if (!bot) return {ok: false, reason: 'bot-not-linked'};
+    if (!bot.key_is_active) return {ok: false, reason: 'bot-key-inactive'};
+    const item = snapshot.items.find(entry => entry.id === cleanText(rawItemID));
+    if (!item) return {ok: false, reason: 'item-not-found'};
+    if (!item.is_active || !PREVIEW_SLOTS.includes(item.slot)) return {ok: false, reason: 'item-inactive'};
+    if (!itemUnlocked(snapshot, item)) {
+      return {ok: false, reason: 'subscription-required', url: snapshot.subscription.url};
+    }
+    if ((snapshot.loadouts[bot.id] || {})[item.slot] === item.id) {
+      return {ok: false, reason: 'already-equipped'};
+    }
     return {
       ok: true,
-      path: accountRoute('checkout'),
-      body: {pack_id: normalizedID, quantity: 1},
+      path: accountRoute('equip', bot.id),
+      body: {slot: item.slot, cosmetic_id: item.id},
+      bot_id: bot.id,
+      slot: item.slot,
     };
-  }
-
-  function subscriptionIntent(rawOffer, rawSubscription) {
-    const offer = normalizeSubscriptionOffer(rawOffer);
-    const subscription = rawSubscription && typeof rawSubscription === 'object'
-      ? normalizeSubscription(rawSubscription)
-      : null;
-    const checkoutStatuses = new Set(['created', 'checkout_pending', 'canceled', 'expired']);
-    if (subscription?.can_manage) {
-      return {ok: true, kind: 'portal', path: accountRoute('subscriptionPortal')};
-    }
-    if (subscription && checkoutStatuses.has(subscription.status)) {
-      if (!offer.enabled) return {ok: false, reason: 'subscription-disabled'};
-      return {ok: true, kind: 'checkout', path: accountRoute('subscriptionCheckout')};
-    }
-    if (subscription) return {ok: false, reason: 'subscription-unmanageable'};
-    if (!offer.enabled) return {ok: false, reason: 'subscription-disabled'};
-    return {ok: true, kind: 'checkout', path: accountRoute('subscriptionCheckout')};
   }
 
   function keyCreateIntent(rawBotName, rawCollection) {
@@ -423,134 +416,175 @@
     return headers;
   }
 
-  function renderBotOption(bot, currentlyAssigned) {
-    const disabled = currentlyAssigned || !bot.key_is_active;
-    const suffix = currentlyAssigned ? ' (currently assigned)' : (!bot.key_is_active ? ' (key inactive)' : '');
-    const identity = bot.key_prefix ? ` - ${bot.key_prefix}...` : ` - ${bot.id.slice(0, 8)}`;
-    return `<option value="${escapeHTML(bot.id)}"${disabled ? ' disabled' : ''}>${escapeHTML(bot.name + identity)}${suffix}</option>`;
-  }
-
-  function renderLicense(license, snapshot, busyLicenseID) {
-    const assignedBot = snapshot.bots.find(bot => bot.id === license.assigned_bot_id);
-    const assignedName = assignedBot?.name || license.assigned_bot_name || '';
-    const assignedIdentity = assignedBot
-      ? `${assignedName} (${assignedBot.key_prefix ? assignedBot.key_prefix + '...' : assignedBot.id.slice(0, 8)})`
-      : assignedName;
-    const isBusy = busyLicenseID === license.id;
-    const activeLicense = license.status === 'active';
-    const assignableBots = snapshot.bots.filter(bot => bot.id !== license.assigned_bot_id && bot.key_is_active);
-    const options = snapshot.bots.map(bot => renderBotOption(bot, bot.id === license.assigned_bot_id)).join('');
-    const assignedCopy = assignedIdentity
-      ? `Assigned to <strong>${escapeHTML(assignedIdentity)}</strong>`
-      : 'Not assigned to a bot';
-    const actionLabel = license.assigned_bot_id ? 'Move to bot' : 'Assign to bot';
-    const assignedBotActive = assignedBot?.key_is_active === true;
-    const equipped = license.equipped === true && (!license.equipped_bot_id || license.equipped_bot_id === license.assigned_bot_id);
-    const previewable = activeLicense && license.item.is_active && snapshot.bots.length > 0;
-    const equippedCopy = !activeLicense
-      ? `License ${escapeHTML(license.status)}; it cannot be assigned or equipped`
-      : equipped
-      ? `Equipped on <strong>${escapeHTML(assignedIdentity || 'linked bot')}</strong>`
-      : (license.assigned_bot_id ? 'Assigned, not equipped' : 'Assign this license before equipping it');
-    const statusLabel = activeLicense ? 'Account owned' : license.status.charAt(0).toUpperCase() + license.status.slice(1);
-
-    return `<article class="cosmetic-license" data-license-id="${escapeHTML(license.id)}">
-      <div class="cosmetic-license-head">
-        <div>
-          <div class="cosmetic-kicker">${escapeHTML(slotLabel(license.item.slot))} - ${escapeHTML(license.item.rarity)}</div>
-          <h3>${escapeHTML(license.item.name)}</h3>
-        </div>
-        <span class="ownership-badge${activeLicense ? '' : ' inactive'}">${escapeHTML(statusLabel)}</span>
-      </div>
-      <p>${escapeHTML(license.item.description || 'Visual customization only. No gameplay advantage.')}</p>
-      <div class="cosmetic-assignment${license.assigned_bot_id ? ' assigned' : ''}">${assignedCopy}</div>
-      <div class="cosmetic-equip-state${equipped ? ' equipped' : ''}">${equippedCopy}</div>
-      <div class="cosmetic-license-actions">
-        ${activeLicense && license.item.is_active ? `<button class="sm cosmetic-preview" type="button" data-license-preview="${escapeHTML(license.id)}" aria-label="Preview ${escapeHTML(license.item.name)} on the selected bot"${previewable && !isBusy ? '' : ' disabled'}>${snapshot.bots.length ? 'Preview' : 'Link a bot to preview'}</button>` : ''}
-        <select data-license-target="${escapeHTML(license.id)}" aria-label="Bot for ${escapeHTML(license.item.name)}"${activeLicense && assignableBots.length && !isBusy ? '' : ' disabled'}>
-          ${snapshot.bots.length ? `<option value="">${license.assigned_bot_id ? 'Choose another bot...' : 'Choose a linked bot...'}</option>${options}` : '<option value="">Link a bot first</option>'}
-        </select>
-        <button class="sm" data-license-assign="${escapeHTML(license.id)}" disabled>${isBusy ? 'Saving...' : actionLabel}</button>
-        ${activeLicense && license.assigned_bot_id && !equipped ? `<button class="sm cosmetic-equip" data-license-equip="${escapeHTML(license.id)}"${isBusy || !license.item.is_active || !assignedBotActive ? ' disabled' : ''}>${isBusy ? 'Saving...' : (assignedBotActive ? 'Equip on bot' : 'Bot key inactive')}</button>` : ''}
-        ${activeLicense && license.assigned_bot_id ? `<button class="sm danger" data-license-unassign="${escapeHTML(license.id)}"${isBusy ? ' disabled' : ''}>Remove from bot</button>` : ''}
-      </div>
-      <div class="cosmetic-license-id">License ${escapeHTML(license.id)}</div>
-    </article>`;
-  }
-
-  function formatPrice(item) {
-    if (item?.is_free === true) return 'Free';
-    const rawCents = Number(item?.price_cents || 0);
-    const cents = Number.isFinite(rawCents) && rawCents >= 0 ? Math.round(rawCents) : 0;
-    const currency = cleanText(item?.currency) || 'USD';
-    try {
-      return new Intl.NumberFormat(undefined, {style: 'currency', currency}).format(cents / 100);
-    } catch (_) {
-      return `$${(cents / 100).toFixed(2)}`;
-    }
-  }
-
-  function subscriptionPeriodLabel(rawTime) {
+  function subscriptionDateLabel(rawTime) {
     const raw = cleanText(rawTime);
     const date = new Date(raw);
     if (!raw || Number.isNaN(date.getTime())) return '';
-    return date.toLocaleDateString(undefined, {year: 'numeric', month: 'short', day: 'numeric'});
+    return date.toLocaleString(undefined, {
+      year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+    });
   }
 
-  function renderAllAccessPlan(snapshot, view) {
-    const catalogOffer = view.catalog ? normalizeCatalog(view.catalog).subscription_offer : null;
-    const offer = snapshot.subscription_offer.enabled ? snapshot.subscription_offer : (catalogOffer || snapshot.subscription_offer);
+  /*
+   * The subscription card: the one commerce fact on the page.
+   *
+   * Arena reads whether the account subscribes at the moment they sign in,
+   * and holds no credential to ask again later (see customer_entitlements.go
+   * on the server for why that is the deliberate choice). So a subscription
+   * started in the Angel account a minute ago is genuinely not here yet, and
+   * the honest thing is to say when it was last read and offer the one action
+   * that reads it again — a sign-in, which on a live Angel session is one
+   * press and a window that closes itself.
+   */
+  function renderSubscriptionCard(snapshot, view) {
     const subscription = snapshot.subscription;
-    const membership = snapshot.membership;
-    const intent = subscriptionIntent(offer, subscription);
-    const periodEnd = subscriptionPeriodLabel(subscription?.current_period_end);
-    const membershipEnd = subscriptionPeriodLabel(membership?.expires_at);
-    let status = 'Available';
-    let statusClass = '';
-    let grantNote = '';
-    if (subscription?.has_access) {
-      status = subscription.cancel_at_period_end
-        ? (periodEnd ? `Access active until ${periodEnd}` : 'Access active until period end')
-        : 'Access active';
-      statusClass = ' is-active';
-    } else if (membership) {
-      // A staff-granted membership materializes the same per-item licenses a
-      // paid subscription would, but it lives in a separate table with no
-      // Stripe record -- without this branch the status above would say
-      // "Available" even though the account already has every set.
-      status = membershipEnd ? `Access active until ${membershipEnd}` : 'Access active';
-      statusClass = ' is-active';
-      grantNote = 'Granted by Arena staff. Subscribing keeps access going after the grant ends.';
-    } else if (subscription) {
-      if (subscription.status === 'billing_mismatch') status = 'Billing needs attention';
-      else if (['created', 'checkout_pending'].includes(subscription.status)) status = 'Checkout pending';
-      else if (['past_due', 'unpaid', 'paused'].includes(subscription.status)) status = 'Access paused';
-      else status = 'Access ended';
-      statusClass = ' is-warning';
+    const url = subscription.url || httpsURL(view.catalog?.subscription?.url) || subscriptionURL(null, view.catalog);
+    const syncedAt = subscriptionDateLabel(subscription.synced_at);
+    const refresh = `<button type="button" class="sm" data-subscription-refresh${view.entitlementsBusy ? ' disabled' : ''}>` +
+      `${view.entitlementsBusy ? 'Reading your account...' : 'Refresh subscription'}</button>`;
+    const status = subscription.active
+      ? '<span class="subscription-status is-active">Subscription active</span>'
+      : '<span class="subscription-status">Not subscribed</span>';
+    const copy = subscription.active
+      ? 'Every cosmetic in the catalog is unlocked for every bot linked to this account. Equip anything on any bot; nothing to assign, nothing to buy per item.'
+      : 'Paid cosmetics are included with an Arena subscription. Subscribe in your Angel account and every set, full-body skin and trail unlocks for all your linked bots.';
+    const manage = url
+      ? `<a class="sm subscription-action" href="${escapeHTML(url)}" target="_blank" rel="noopener" data-subscription-link>${subscription.active ? 'Manage in your Angel account' : 'Subscribe in your Angel account'}</a>`
+      : `<span class="subscription-unavailable">${subscription.active ? 'Managed in your Angel account.' : 'Ask the Arena operator where to subscribe.'}</span>`;
+    const read = syncedAt
+      ? `Last read from your Angel account ${escapeHTML(syncedAt)}.`
+      : 'Not read from your Angel account yet.';
+    return `<section class="subscription-card${subscription.active ? ' is-active' : ''}" aria-labelledby="subscription-title" data-subscription-active="${subscription.active}">
+      <div class="subscription-copy">
+        <div class="cosmetic-kicker">Arena subscription</div>
+        <h2 id="subscription-title">${subscription.active ? 'Everything unlocked' : 'Included with an Arena subscription'}</h2>
+        <p>${copy}</p>
+        <p class="subscription-read">${read} Just subscribed? <b>Refresh subscription</b> reads your account again.</p>
+      </div>
+      <div class="subscription-offer">
+        ${status}
+        ${manage}
+        ${refresh}
+      </div>
+    </section>`;
+  }
+
+  function normalizeCollectionFilter(rawFilter) {
+    const filter = rawFilter && typeof rawFilter === 'object' ? rawFilter : {};
+    const rawVisible = Number(filter.visible);
+    return {
+      query: cleanText(filter.query).toLowerCase(),
+      slot: PREVIEW_SLOTS.includes(cleanText(filter.slot)) ? cleanText(filter.slot) : 'all',
+      visible: Number.isFinite(rawVisible) && rawVisible > 0 ? Math.floor(rawVisible) : COLLECTION_PAGE_SIZE,
+    };
+  }
+
+  function searchText(item) {
+    return [item.id, item.name, item.description, item.rarity, item.slot, item.category_id]
+      .filter(Boolean).join(' ').toLowerCase().replace(/[-_\s]+/g, ' ');
+  }
+
+  /** The items the collection shows for one filter, in catalog order. */
+  function collectionItems(rawSnapshot, rawFilter) {
+    const snapshot = normalizeSnapshot(rawSnapshot);
+    const filter = normalizeCollectionFilter(rawFilter);
+    const query = filter.query.replace(/[-_\s]+/g, ' ');
+    return snapshot.items.filter(item => {
+      if (!item.is_active || !PREVIEW_SLOTS.includes(item.slot)) return false;
+      if (filter.slot !== 'all' && item.slot !== filter.slot) return false;
+      return !query || searchText(item).includes(query);
+    });
+  }
+
+  function wearersOf(snapshot, item) {
+    return snapshot.bots.filter(bot => (snapshot.loadouts[bot.id] || {})[item.slot] === item.id);
+  }
+
+  function renderCosmeticCard(item, snapshot, view, selectedBot) {
+    const unlocked = itemUnlocked(snapshot, item);
+    const busy = cleanText(view.busyCosmeticID) === item.id;
+    const wearers = wearersOf(snapshot, item);
+    const wornBySelected = Boolean(selectedBot && wearers.some(bot => bot.id === selectedBot.id));
+    const badge = item.is_free
+      ? '<span class="ownership-badge">Free</span>'
+      : unlocked
+        ? '<span class="ownership-badge">Included</span>'
+        : '<span class="ownership-badge locked">Subscription</span>';
+    const wornCopy = wearers.length
+      ? `Equipped on <strong>${escapeHTML(wearers.map(bot => bot.name).join(', '))}</strong>`
+      : 'Not equipped on any bot';
+    const previewable = snapshot.bots.length > 0;
+    let equipControl = '';
+    if (!selectedBot) {
+      equipControl = '<span class="cosmetic-equip-hint">Link a bot to equip</span>';
+    } else if (!unlocked) {
+      equipControl = '<span class="cosmetic-equip-hint">Included with an Arena subscription</span>';
+    } else if (wornBySelected) {
+      equipControl = `<span class="cosmetic-equip-hint">Equipped on ${escapeHTML(selectedBot.name)}</span>`;
+    } else if (!selectedBot.key_is_active) {
+      equipControl = `<button class="sm cosmetic-equip" type="button" data-cosmetic-equip="${escapeHTML(item.id)}" disabled>Bot key inactive</button>`;
+    } else {
+      equipControl = `<button class="sm cosmetic-equip" type="button" data-cosmetic-equip="${escapeHTML(item.id)}"${busy ? ' disabled' : ''}>${busy ? 'Saving...' : `Equip on ${escapeHTML(selectedBot.name)}`}</button>`;
     }
-    const action = intent.ok && intent.kind === 'portal'
-      ? '<button type="button" class="sm all-access-action" data-subscription-portal>Manage subscription</button>'
-      : intent.ok
-        ? `<button type="button" class="sm all-access-action" data-subscription-checkout>${membership ? 'Subscribe to keep access' : 'Subscribe for $19.99 / month'}</button>`
-        : '<span class="all-access-unavailable">Subscription checkout is not open yet</span>';
-    const pending = view.subscriptionState?.status === 'pending';
-    const feedback = view.subscriptionState?.status === 'error'
-      ? `<p class="all-access-feedback is-error" role="alert">${escapeHTML(view.subscriptionState.message || 'Subscription management is temporarily unavailable.')}</p>`
+    return `<article class="cosmetic-card${unlocked ? '' : ' locked'}" data-cosmetic-id="${escapeHTML(item.id)}">
+      <div class="cosmetic-card-head">
+        <div>
+          <div class="cosmetic-kicker">${escapeHTML(slotLabel(item.slot))} - ${escapeHTML(item.rarity)}</div>
+          <h3>${escapeHTML(item.name)}</h3>
+        </div>
+        ${badge}
+      </div>
+      <p>${escapeHTML(item.description || 'Visual customization only. No gameplay advantage.')}</p>
+      <div class="cosmetic-equip-state${wearers.length ? ' equipped' : ''}">${wornCopy}</div>
+      <div class="cosmetic-card-actions">
+        <button class="sm cosmetic-preview" type="button" data-cosmetic-preview="${escapeHTML(item.id)}" aria-label="Preview ${escapeHTML(item.name)} on the selected bot"${previewable && !busy ? '' : ' disabled'}>${previewable ? 'Preview' : 'Link a bot to preview'}</button>
+        ${equipControl}
+      </div>
+    </article>`;
+  }
+
+  function renderCollection(snapshot, view) {
+    const filter = normalizeCollectionFilter(view.filter);
+    const matches = collectionItems(snapshot, filter);
+    const shown = matches.slice(0, filter.visible);
+    const selectedBot = snapshot.bots.find(bot => bot.id === cleanText(view.selectedBotID)) || snapshot.bots[0] || null;
+    const groups = new Map();
+    for (const item of shown) {
+      if (!groups.has(item.slot)) groups.set(item.slot, []);
+      groups.get(item.slot).push(item);
+    }
+    const body = groups.size
+      ? [...groups.entries()].map(([slot, items]) => `<section class="cosmetic-group">
+          <h3>${escapeHTML(slotLabel(slot))}</h3>
+          <div class="cosmetic-card-grid">${items.map(item => renderCosmeticCard(item, snapshot, view, selectedBot)).join('')}</div>
+        </section>`).join('')
+      : '<div class="cosmetic-empty cosmetic-empty-inventory">No cosmetics match. Try another name or clear the filter.</div>';
+    const more = matches.length > shown.length
+      ? `<button type="button" class="sm cosmetic-show-more" data-collection-more>Show ${Math.min(COLLECTION_PAGE_SIZE, matches.length - shown.length)} more</button>`
       : '';
-    return `<section class="all-access-plan" aria-labelledby="all-access-title">
-      <div class="all-access-copy">
-        <div class="cosmetic-kicker">Monthly collection pass</div>
-        <h2 id="all-access-title">All Access</h2>
-        <p>Every current and future cosmetic set, full-body skin, and trail, with up to 5 active API keys.</p>
-        <p class="all-access-removal">Cancellation keeps access through the paid period. When service ends, subscription cosmetics are removed from your account and any bots using them.</p>
-        ${grantNote ? `<p class="all-access-grant-note">${escapeHTML(grantNote)}</p>` : ''}
+    const live = snapshot.items.filter(item => item.is_active && PREVIEW_SLOTS.includes(item.slot));
+    const unlockedCount = live.filter(item => itemUnlocked(snapshot, item)).length;
+    const summary = snapshot.subscription.active
+      ? `${live.length} cosmetics, all unlocked`
+      : `${unlockedCount} of ${live.length} unlocked`;
+    const slotOptions = ['all', ...PREVIEW_SLOTS].map(slot =>
+      `<option value="${escapeHTML(slot)}"${filter.slot === slot ? ' selected' : ''}>${slot === 'all' ? 'All slots' : escapeHTML(slotLabel(slot))}</option>`).join('');
+    const target = selectedBot
+      ? `Equip puts a cosmetic on <strong>${escapeHTML(selectedBot.name)}</strong> right now; choose another bot in the outfitter above.`
+      : 'Link a bot from the Profile tab to equip anything.';
+    return `<section class="cosmetic-inventory" data-cosmetic-collection>
+      <div class="cosmetic-inventory-head">
+        <div><div class="cosmetic-kicker">Your collection</div><h2>Cosmetics</h2></div>
+        <span>${escapeHTML(summary)}</span>
       </div>
-      <div class="all-access-offer">
-        <span class="all-access-status${statusClass}">${escapeHTML(status)}</span>
-        <strong>${escapeHTML(formatPrice(offer))}<small> / ${escapeHTML(offer.interval || 'month')}</small></strong>
-        <div${pending ? ' aria-busy="true"' : ''}>${pending ? '<button type="button" class="sm all-access-action" disabled>Opening...</button>' : action}</div>
-        ${feedback}
-      </div>
+      <p class="cosmetic-rule">Every set, full-body skin and trail is included with the Arena subscription; free items are always open. ${target}</p>
+      <form class="cosmetic-collection-filter" role="search" aria-label="Filter cosmetics">
+        <label>Find a cosmetic<input type="search" name="query" data-collection-query value="${escapeHTML(filter.query)}" placeholder="Name, set, rarity" autocomplete="off"></label>
+        <label>Slot<select name="slot" data-collection-slot>${slotOptions}</select></label>
+        <span class="cosmetic-collection-count" role="status">Showing ${shown.length} of ${matches.length}</span>
+      </form>
+      ${body}
+      ${more}
     </section>`;
   }
 
@@ -601,7 +635,7 @@
         <div><div class="cosmetic-kicker">Account credentials</div><h2 id="account-keys-title">API keys</h2></div>
         <span>${collection.active_count} of ${collection.limit} active</span>
       </div>
-      <p class="cosmetic-rule">Keys are generated and stored against this verified email account. You can keep up to 5 active keys and revoke any one without affecting purchases.</p>
+      <p class="cosmetic-rule">Keys are generated and stored with this verified account. You can keep up to 5 active keys and revoke any one without affecting your subscription or cosmetics.</p>
       ${generatedPanel}
       <form id="accountKeyForm" class="account-key-form">
         <label for="accountKeyBotName">Bot name</label>
@@ -613,213 +647,23 @@
     </section>`;
   }
 
-  function shopSwatch(pack) {
-    const firstItem = Array.isArray(pack?.items) ? pack.items[0] : null;
-    const helper = root.ArenaCosmeticThemes;
-    if (!helper || typeof helper.swatchStyle !== 'function') return '';
-    return helper.swatchStyle(cleanText(firstItem?.asset_key));
-  }
-
-  function renderShopPack(pack, catalog, checkoutState) {
-    const packID = cleanText(pack.id);
-    const pending = checkoutState?.status === 'pending' && checkoutState.packID === packID;
-    const purchasable = catalog.checkout_enabled && pack.is_purchasable === true;
-    const isTrail = pack.category_id === 'trails' && pack.items?.length === 1 && pack.items[0]?.slot === 'trail';
-    const items = Array.isArray(pack.items) ? pack.items.slice(0, 3) : [];
-    const contents = items.length
-      ? items.map(item => `<span>${escapeHTML(item.name || item.id || 'Cosmetic')}</span>`).join('')
-      : `<span>${isTrail ? 'Individual trail' : 'Coordinated set'}</span>`;
-    const swatch = shopSwatch(pack);
-    const swatchAttribute = swatch ? ` style="background:${escapeHTML(swatch)}"` : '';
-    const action = purchasable
-      ? `<button type="button" class="sm cosmetic-shop-buy" data-pack-checkout="${escapeHTML(packID)}"${pending ? ' disabled' : ''}>${pending ? 'Opening checkout...' : `Buy ${escapeHTML(formatPrice(pack))}`}</button>`
-      : '<span class="cosmetic-shop-state">Checkout coming soon</span>';
-    return `<article class="cosmetic-shop-pack" data-shop-pack="${escapeHTML(packID)}">
-      <div class="cosmetic-shop-swatch" aria-hidden="true"${swatchAttribute}></div>
-      <div class="cosmetic-shop-pack-copy">
-        <div class="cosmetic-kicker">${isTrail ? 'Individual trail' : 'Coordinated set'}</div>
-        <h3>${escapeHTML(pack.name || packID || (isTrail ? 'Arena trail' : 'Arena set'))}</h3>
-        <p>${escapeHTML(pack.description || (isTrail
-          ? 'A presentation-only movement trail with no gameplay advantage.'
-          : 'Three presentation-only cosmetics with no gameplay advantage.'))}</p>
-        <div class="cosmetic-shop-contents">${contents}</div>
-      </div>
-      <div class="cosmetic-shop-offer"><strong>${escapeHTML(formatPrice(pack))}</strong>${action}</div>
-    </article>`;
-  }
-
-  // The Dashboard shows only what an account owns; browsing and buying live
-  // in the Shop (frontend/shop/) so there is exactly one place to shop. The
-  // one exception is a purchase already in flight: the Shop's "Buy" link
-  // hands off here with the chosen pack's id (see dashboardPurchasePath in
-  // js/cosmetics-shop.js) so the customer lands on a single ready-to-pay
-  // card instead of re-finding the same item in a duplicate catalog.
-  function renderPendingPurchase(view) {
-    const pendingPackID = cleanText(view.pendingPackID);
-    if (!pendingPackID) return '';
-    const catalog = view.catalog ? normalizeCatalog(view.catalog) : null;
-    const checkoutState = view.checkoutState || {status: 'idle', packID: '', message: ''};
-    let feedback = '';
-    if (checkoutState.status === 'success') {
-      feedback = `<div class="tip" role="status"><b>Checkout returned.</b> Payment is still processing. New licenses appear only after Arena verifies Stripe's signed payment event.</div>`;
-    } else if (checkoutState.status === 'reconciling') {
-      feedback = `<div class="tip" role="status"><b>Checkout is reconciling.</b> ${escapeHTML(checkoutState.message || "Arena is confirming Stripe's signed payment event before changing your collection.")}</div>`;
-    } else if (checkoutState.status === 'paused') {
-      feedback = `<div class="tip" role="status"><b>Checkout saved.</b> ${escapeHTML(checkoutState.message || 'Resume the same Stripe session from Recent purchases when you are ready.')}</div>`;
-    } else if (checkoutState.status === 'cancelled') {
-      feedback = `<div class="tip" role="status"><b>Checkout cancelled.</b> Your collection was not changed.</div>`;
-    } else if (checkoutState.status === 'error') {
-      feedback = `<div class="tip warn" role="alert"><b>Checkout could not start:</b> ${escapeHTML(checkoutState.message || 'Try again in a moment.')}</div>`;
-    } else if (checkoutState.status === 'disabled') {
-      feedback = `<div class="tip" role="status"><b>Checkout is not open yet.</b> Return to the Shop and try again once sales are enabled.</div>`;
-    }
-    const head = `<div class="cosmetic-inventory-head"><div><div class="cosmetic-kicker">From the Shop</div><h2 id="cosmetic-pending-title">Complete your purchase</h2></div></div>`;
-    if (view.catalogError) {
-      return `<section class="cosmetic-shop cosmetic-pending-purchase" aria-labelledby="cosmetic-pending-title">
-        ${head}${feedback}<div class="tip warn" role="alert"><b>Could not load that item:</b> ${escapeHTML(view.catalogError)}</div>
-      </section>`;
-    }
-    if (!catalog) {
-      return `<section class="cosmetic-shop cosmetic-pending-purchase" aria-labelledby="cosmetic-pending-title">
-        ${head}${feedback}<div class="cosmetic-loading">Loading your selection...</div>
-      </section>`;
-    }
-    const pack = catalog.packs.find(entry => cleanText(entry.id) === pendingPackID);
-    if (!pack) {
-      return `<section class="cosmetic-shop cosmetic-pending-purchase" aria-labelledby="cosmetic-pending-title">
-        ${head}${feedback}<div class="cosmetic-empty cosmetic-empty-inventory">That item is no longer available in the Shop.</div>
-      </section>`;
-    }
-    return `<section class="cosmetic-shop cosmetic-pending-purchase" aria-labelledby="cosmetic-pending-title">
-      ${head}
-      <p class="cosmetic-rule">Buying a pack grants one license for every included item. Each purchased item copy can be assigned to one bot at a time; items from the same pack can be assigned to different bots.</p>
-      ${feedback}
-      <div class="cosmetic-shop-grid">${renderShopPack(pack, catalog, checkoutState)}</div>
-    </section>`;
-  }
-
   function renderShopLink() {
     return `<section class="cosmetic-shop cosmetic-shop-link" aria-labelledby="cosmetic-shop-link-title">
       <div class="cosmetic-inventory-head">
-        <div><div class="cosmetic-kicker">Looking for more?</div><h2 id="cosmetic-shop-link-title">Browse the Shop</h2></div>
+        <div><div class="cosmetic-kicker">Looking around?</div><h2 id="cosmetic-shop-link-title">Browse the Shop</h2></div>
       </div>
-      <p class="cosmetic-rule">Preview and buy new sets, full-body skins, and trails on your linked bots before you commit.</p>
+      <p class="cosmetic-rule">Preview every set, full-body skin and trail on a full-size bot before you equip it here.</p>
       <button type="button" class="sm" data-open-shop>Open the Shop</button>
     </section>`;
   }
 
-  function formatOrderUSD(rawCents) {
-    const amount = Number(rawCents);
-    const cents = Number.isFinite(amount) && amount >= 0 ? Math.round(amount) : 0;
-    try {
-      return new Intl.NumberFormat('en-US', {style: 'currency', currency: 'USD'}).format(cents / 100);
-    } catch (_) {
-      return `$${(cents / 100).toFixed(2)}`;
-    }
-  }
-
-  function orderStatusMeta(rawStatus) {
-    const status = cleanText(rawStatus).toLowerCase() || 'created';
-    const labels = {
-      created: 'Checkout pending',
-      checkout_pending: 'Checkout pending',
-      processing: 'Processing',
-      paid: 'Paid',
-      refund_review: 'Refund review',
-      refunded: 'Refunded',
-      disputed: 'Disputed',
-      expired: 'Expired',
-      payment_failed: 'Failed',
-      failed: 'Failed',
-    };
-    const warnings = new Set(['refund_review', 'refunded', 'disputed', 'expired', 'payment_failed', 'failed']);
-    return {
-      status,
-      label: labels[status] || 'Unknown',
-      className: status === 'paid' ? ' is-paid' : (warnings.has(status) ? ' is-warning' : ''),
-    };
-  }
-
-  function orderCreatedTime(rawTime) {
-    const raw = cleanText(rawTime);
-    const date = new Date(raw);
-    if (!raw || Number.isNaN(date.getTime())) return {iso: '', label: 'Time unavailable'};
-    return {
-      iso: date.toISOString(),
-      label: date.toLocaleString(undefined, {
-        year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
-      }),
-    };
-  }
-
-  function renderPurchaseOrder(rawOrder, busyOrderID) {
-    const order = rawOrder && typeof rawOrder === 'object' ? rawOrder : {};
-    const status = orderStatusMeta(order.status);
-    const rawQuantity = Number(order.quantity);
-    const quantity = Number.isFinite(rawQuantity) && rawQuantity >= 0 ? Math.floor(rawQuantity) : 0;
-    const rawFulfilled = Number(order.fulfilled_license_count);
-    const fulfilled = Number.isFinite(rawFulfilled) && rawFulfilled >= 0 ? Math.floor(rawFulfilled) : 0;
-    const orderID = cleanText(order.id) || 'Unknown order';
-	const checkoutSessionID = cleanText(order.checkout_session_id);
-	const checkoutPresentation = cleanText(order.checkout_presentation).toLowerCase();
-	const attachedSession = status.status === 'checkout_pending' && Boolean(checkoutSessionID);
-	const retryableReservation = ['created', 'payment_failed'].includes(status.status) && !checkoutSessionID &&
-		['embedded', 'hosted'].includes(checkoutPresentation);
-	const resumable = attachedSession || retryableReservation;
-    const resumeBusy = resumable && cleanText(busyOrderID) === orderID;
-	const actionLabel = retryableReservation ? 'Retry checkout' : 'Resume checkout';
-	const busyLabel = retryableReservation ? 'Retrying...' : 'Reopening...';
-	const actionCopy = retryableReservation
-		? 'Retries this same reserved Stripe checkout.'
-		: 'Reopens this same Stripe session.';
-    const packName = cleanText(order.pack_name || order.pack_id) || 'Unknown pack';
-    const created = orderCreatedTime(order.created_at);
-    const createdHTML = created.iso
-      ? `<time datetime="${escapeHTML(created.iso)}">${escapeHTML(created.label)}</time>`
-      : escapeHTML(created.label);
-    return `<article class="cosmetic-purchase" data-purchase-order="${escapeHTML(orderID)}" data-order-status="${escapeHTML(status.status)}">
-      <div class="cosmetic-purchase-head">
-        <div><div class="cosmetic-kicker">Order <code>${escapeHTML(orderID)}</code></div><h3>${escapeHTML(packName)}</h3></div>
-        <span class="cosmetic-purchase-status${status.className}">${escapeHTML(status.label)}</span>
-      </div>
-      <div class="cosmetic-purchase-facts"><span>Quantity ${quantity}</span><span>${fulfilled} ${fulfilled === 1 ? 'license' : 'licenses'} fulfilled</span>${createdHTML}</div>
-      <div class="cosmetic-purchase-money">
-        <span>Expected <strong>${escapeHTML(formatOrderUSD(order.expected_subtotal_cents))}</strong></span>
-        <span>Received <strong>${escapeHTML(formatOrderUSD(order.amount_received_cents))}</strong></span>
-        <span>Refunded <strong>${escapeHTML(formatOrderUSD(order.amount_refunded_cents))}</strong></span>
-      </div>
-      ${resumable ? `<div class="cosmetic-purchase-actions"><button type="button" class="sm" data-order-resume="${escapeHTML(orderID)}"${resumeBusy ? ' disabled' : ''}>${resumeBusy ? busyLabel : actionLabel}</button><span>${actionCopy}</span></div>` : ''}
-    </article>`;
-  }
-
-  function renderRecentPurchases(view) {
-    let body = '';
-    if (view.ordersError) {
-      body = `<div class="tip warn" role="alert"><b>Recent purchases unavailable:</b> ${escapeHTML(view.ordersError)} Owned cosmetics and the shop are unaffected.</div>`;
-    } else if (!Array.isArray(view.orders)) {
-      body = '<div class="cosmetic-loading" aria-busy="true">Loading recent purchases...</div>';
-    } else if (!view.orders.length) {
-      body = '<div class="cosmetic-empty cosmetic-empty-inventory">No purchases yet.</div>';
-    } else {
-      body = `<div class="cosmetic-purchase-list">${view.orders.slice(0, 20).map(order => renderPurchaseOrder(order, view.busyOrderID)).join('')}</div>`;
-    }
-    return `<section class="cosmetic-purchases" aria-labelledby="cosmetic-purchases-title">
-      <div class="cosmetic-inventory-head">
-        <div><div class="cosmetic-kicker">Account ledger</div><h2 id="cosmetic-purchases-title">Recent purchases</h2></div>
-        <span>Latest 20</span>
-      </div>
-      <p class="cosmetic-rule">Statuses come from Arena's signed payment ledger. Returning from checkout does not mark an order paid.</p>
-      ${body}
-    </section>`;
-  }
-
-  // Bot linking lives on the Profile tab now (it's account/credential
+  // Bot linking lives on the Profile tab (it's account/credential
   // management, not a cosmetics concern), rendered separately by index.html
   // via window.ArenaAccountCosmetics.renderLinkedBots -- kept here because
   // the underlying data (snapshot.bots) is still fetched alongside cosmetic
   // inventory, not through account-profile.js's own data flow.
   function renderLinkedBots(snapshot, view) {
-    const email = snapshot.account.email || 'your verified email';
+    const owner = accountLabel(snapshot.account);
     const botRows = snapshot.bots.length
       ? snapshot.bots.map(bot => `<li data-linked-bot-id="${escapeHTML(bot.id)}">
           <span><strong>${escapeHTML(bot.name)}</strong>${bot.key_prefix ? `<small>${escapeHTML(bot.key_prefix)}...</small>` : ''}</span>
@@ -830,7 +674,7 @@
       <div class="cosmetic-inventory-head">
         <div><div class="cosmetic-kicker">Your bots</div><h2 id="linked-bots-title">Linked bots</h2></div>
       </div>
-      <p class="cosmetic-rule">Claim a bot you started anonymously by proving its server-issued token. Linking does not transfer cosmetic ownership to the token -- purchases always stay with ${escapeHTML(email)}.</p>
+      <p class="cosmetic-rule">Claim a bot you started anonymously by proving its server-issued token. Linking does not transfer anything to the token -- the subscription always stays with ${escapeHTML(owner)}, and every linked bot shares it.</p>
       <ul class="linked-bot-list">${botRows}</ul>
       <form id="linkBotForm" class="link-bot-form">
         <label for="linkBotKey">Claim or link an existing bot</label>
@@ -844,54 +688,32 @@
   function renderPanel(rawSnapshot, options) {
     const snapshot = normalizeSnapshot(rawSnapshot);
     const view = options && typeof options === 'object' ? options : {};
-    const email = snapshot.account.email || 'your verified email';
-
-    const groups = new Map();
-    snapshot.licenses.forEach(license => {
-      const slot = license.item.slot || 'other';
-      if (!groups.has(slot)) groups.set(slot, []);
-      groups.get(slot).push(license);
-    });
-    const inventory = groups.size
-      ? [...groups.entries()].map(([slot, licenses]) => `<section class="cosmetic-group">
-          <h3>${escapeHTML(slotLabel(slot))}</h3>
-          <div class="cosmetic-license-grid">${licenses.map(license => renderLicense(license, snapshot, view.busyLicenseID)).join('')}</div>
-        </section>`).join('')
-      : '<div class="cosmetic-empty cosmetic-empty-inventory">No cosmetic licenses are on this account yet.</div>';
-    const activeCount = snapshot.licenses.filter(license => license.status === 'active').length;
-    const inactiveCount = snapshot.licenses.length - activeCount;
-    const licenseSummary = `${activeCount} active${inactiveCount ? ` / ${inactiveCount} inactive` : ''}`;
-
+    const owner = accountLabel(snapshot.account);
     return `<div class="cosmetic-account-summary">
       <div>
-        <div class="cosmetic-kicker">Verified owner</div>
-        <h2>${escapeHTML(email)}</h2>
-        <p>What this account owns, and which linked bot wears each item. Purchases stay with this account even if a bot API key is rotated, revoked, or lost. Link a bot and manage API keys from the Profile tab.</p>
+        <div class="cosmetic-kicker">Verified account</div>
+        <h2>${escapeHTML(owner)}</h2>
+        <p>Your Arena subscription, and which linked bot wears what. The subscription stays with this account even if a bot API key is rotated, revoked, or lost. Link a bot and manage API keys from the Profile tab.</p>
       </div>
-      <span class="verified-email-badge">Email verified</span>
+      <span class="verified-email-badge">Account verified</span>
     </div>
     ${view.error ? `<div class="tip warn" role="alert"><b>Could not update cosmetics:</b> ${escapeHTML(view.error)}</div>` : ''}
     ${view.notice ? `<div class="tip good" role="status"><b>Saved:</b> ${escapeHTML(view.notice)}</div>` : ''}
-    ${renderAllAccessPlan(snapshot, view)}
-    ${renderPendingPurchase(view)}
-    <section class="cosmetic-inventory">
-      <div class="cosmetic-inventory-head">
-        <div><div class="cosmetic-kicker">Your collection</div><h2>Cosmetic licenses</h2></div>
-        <span>${escapeHTML(licenseSummary)}</span>
-      </div>
-      <p class="cosmetic-rule">Every purchased pack item appears here as its own license, assignable to one linked bot at a time. <b>Assign</b> puts a license on a bot so it's available to that bot; <b>Equip</b> makes it the bot's active look in that slot right now.</p>
-      ${inventory}
-    </section>
-    ${renderShopLink()}
-    ${renderRecentPurchases(view)}`;
+    ${renderSubscriptionCard(snapshot, view)}
+    ${renderCollection(snapshot, view)}
+    ${renderShopLink()}`;
   }
 
   root.ArenaAccountCosmetics = Object.freeze({
+    COLLECTION_PAGE_SIZE,
+    accountLabel,
     accountRoute,
-    assignmentIntent,
-    checkoutIntent,
+    collectionItems,
+    equipIntent,
     equippedLoadout,
     escapeHTML,
+    hasVerifiedAccount,
+    isVerifiedAccount,
     keyCreateIntent,
     keyRevokeIntent,
     normalizeCatalog,
@@ -899,13 +721,12 @@
     normalizeSession,
     normalizeSnapshot,
     normalizeSubscription,
-    normalizeSubscriptionOffer,
     previewModel,
     renderAccountKeys,
     renderLinkedBots,
     renderPanel,
     requestHeaders,
     slotLabel,
-    subscriptionIntent,
+    subscriptionURL,
   });
 })(typeof globalThis !== 'undefined' ? globalThis : window);

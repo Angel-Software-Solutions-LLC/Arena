@@ -1063,12 +1063,6 @@ tr:hover td{background:rgba(88,166,255,0.07)}
 .cosmetics-item-picker{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:6px;max-block-size:min(48vh,520px);overflow:auto;scrollbar-gutter:stable;margin-top:8px;padding:6px;border:1px solid var(--border);border-radius:7px}
 .cosmetics-item-picker label{display:flex;grid-template-columns:none;align-items:center;gap:7px;min-height:36px}
 .cosmetics-item-picker input{width:18px!important;height:18px}
-.cosmetics-order-controls{display:grid;grid-template-columns:minmax(220px,2fr) minmax(170px,1fr) auto auto;gap:8px;align-items:end;margin-top:12px}
-.cosmetics-order-controls label{display:grid;gap:5px;color:var(--text2);font-size:10px}
-.cosmetics-order-controls :is(input,select){width:100%;min-width:0}
-.cosmetics-order-list{max-block-size:min(48vh,560px);overflow:auto;scrollbar-gutter:stable;padding-right:4px}
-.cosmetics-order-provider-line{display:flex;gap:10px;align-items:center;flex-wrap:wrap;color:var(--text2);font-size:10px}
-.cosmetics-order-provider-id{display:inline-block;max-width:210px;padding:2px 5px;overflow:hidden;color:var(--cyan);text-overflow:ellipsis;white-space:nowrap;user-select:all}
 .cosmetics-form-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .cosmetics-admin-audit{display:grid;gap:7px;max-height:420px;margin-top:10px;overflow:auto;scrollbar-gutter:stable}
 .cosmetics-workspace-tabs{
@@ -1090,7 +1084,6 @@ tr:hover td{background:rgba(88,166,255,0.07)}
 .cosmetics-workspace-panel[hidden],
 [data-cosmetic-entity-panel][hidden],
 [data-cosmetic-editor][hidden]{display:none!important}
-.cosmetics-grant-form [hidden]{display:none!important}
 .cosmetics-entity-tabs{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
 .cosmetics-entity-tabs button{min-width:112px}
 .cosmetics-entity-tabs button[aria-selected="true"]{border-color:var(--green);color:var(--green);background:rgba(63,185,80,.10)}
@@ -1108,18 +1101,6 @@ tr:hover td{background:rgba(88,166,255,0.07)}
 .cosmetics-editor-empty strong{color:var(--text);font-size:14px}
 .cosmetics-admin-editor{margin-top:0}
 .cosmetics-admin-editor summary{cursor:pointer}
-.cosmetics-access-layout{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(360px,.85fr);gap:14px;align-items:start}
-.cosmetics-access-grants{display:grid;gap:14px;min-width:0}
-.cosmetics-access-lookup{display:grid;grid-template-columns:minmax(220px,1fr) auto;gap:8px;align-items:end;margin-top:12px}
-.cosmetics-access-lookup label,.cosmetics-grant-form label{display:grid;gap:5px;color:var(--text2);font-size:11px}
-.cosmetics-access-lookup input,.cosmetics-grant-form :is(input,select,textarea){width:100%;min-width:0}
-.cosmetics-access-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:11px;border:1px solid var(--border);border-radius:7px;background:var(--bg)}
-.cosmetics-access-row-main{display:grid;gap:4px;min-width:0}
-.cosmetics-access-row-title{color:var(--text);font-weight:800;overflow-wrap:anywhere}
-.cosmetics-access-row-meta{color:var(--text2);font-size:11px;line-height:1.45;overflow-wrap:anywhere}
-.cosmetics-access-section{display:grid;gap:7px}
-.cosmetics-access-section+.cosmetics-access-section{margin-top:12px;padding-top:12px;border-top:1px solid var(--border)}
-.cosmetics-access-section h4{color:var(--accent);font-size:11px;text-transform:uppercase;letter-spacing:.08em}
 #panel-cosmetics :is(button,input,select,textarea):focus-visible{outline:2px solid var(--accent);outline-offset:2px;box-shadow:none}
 @media(max-width:980px){
   #app.admin-shell{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}
@@ -1144,22 +1125,17 @@ tr:hover td{background:rgba(88,166,255,0.07)}
   #panel-controls .builder-layout,
   #panel-controls .map-workshop,
   #panel-broadcasts .broadcast-layout,
-  .cosmetics-catalog-workspace,
-  .cosmetics-access-layout{grid-template-columns:1fr}
+  .cosmetics-catalog-workspace{grid-template-columns:1fr}
   .cosmetics-catalog-workspace{grid-template-areas:"master" "detail"}
   .cosmetics-catalog-detail{position:static;max-height:none;overflow:visible}
   .cosmetics-filter-toolbar{grid-template-columns:repeat(2,minmax(0,1fr))}
   .cosmetics-picker-controls{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .cosmetics-order-controls{grid-template-columns:repeat(2,minmax(0,1fr))}
   #panel-cosmetics button,
   .cosmetics-check,
   .cosmetics-item-picker label{min-height:44px}
   .cosmetics-admin-form :is(input:not([type="checkbox"]),select,textarea),
   .cosmetics-filter-toolbar :is(input,select),
-  .cosmetics-picker-controls :is(input,select),
-  .cosmetics-order-controls :is(input,select),
-  .cosmetics-access-lookup input,
-  .cosmetics-grant-form :is(input,select,textarea){min-height:44px;font-size:16px}
+  .cosmetics-picker-controls :is(input,select){min-height:44px;font-size:16px}
 }
 @media(pointer:coarse){
   #panel-cosmetics button,
@@ -1167,10 +1143,7 @@ tr:hover td{background:rgba(88,166,255,0.07)}
   .cosmetics-item-picker label{min-height:44px}
   .cosmetics-admin-form :is(input:not([type="checkbox"]),select,textarea),
   .cosmetics-filter-toolbar :is(input,select),
-  .cosmetics-picker-controls :is(input,select),
-  .cosmetics-order-controls :is(input,select),
-  .cosmetics-access-lookup input,
-  .cosmetics-grant-form :is(input,select,textarea){min-height:44px;font-size:16px}
+  .cosmetics-picker-controls :is(input,select){min-height:44px;font-size:16px}
 }
 @media(max-width:640px){
   .cosmetics-admin-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -1183,14 +1156,11 @@ tr:hover td{background:rgba(88,166,255,0.07)}
   .cosmetics-form-actions button{min-height:44px}
   .cosmetics-admin-row{grid-template-columns:1fr}
   .cosmetics-admin-row-actions{justify-content:flex-start}
-  .cosmetics-filter-toolbar,.cosmetics-picker-controls,.cosmetics-order-controls{grid-template-columns:1fr}
+  .cosmetics-filter-toolbar,.cosmetics-picker-controls{grid-template-columns:1fr}
   .cosmetics-admin-form{grid-template-columns:1fr;padding:12px}
   .cosmetics-form-wide{grid-column:auto}
   .cosmetics-admin-form :is(input:not([type="checkbox"]),select,textarea){min-height:44px;font-size:16px}
   .cosmetics-admin-form textarea{min-height:96px}
-  .cosmetics-access-lookup{grid-template-columns:1fr}
-  .cosmetics-access-row{grid-template-columns:1fr}
-  .cosmetics-access-row button{width:100%}
 }
 @media(prefers-reduced-motion:reduce){
   #panel-cosmetics *,#panel-cosmetics *::before,#panel-cosmetics *::after{
@@ -1212,7 +1182,8 @@ tr:hover td{background:rgba(88,166,255,0.07)}
   <button onclick="doLogin()">Authenticate</button>
   <div id="ssoSection" style="display:none;margin-top:8px">
     <div style="color:var(--text2);font-size:11px;margin-bottom:6px">— or —</div>
-    <button onclick="window.location.href=ssoLoginUrl()" style="background:var(--accent);color:#fff;border-color:var(--accent);padding:8px 24px">SSO Login</button>
+    <button onclick="startDeskSignIn()" style="background:var(--accent);color:#fff;border-color:var(--accent);padding:8px 24px">Sign in with Angel Accounts</button>
+    <div style="color:var(--text2);font-size:10px;margin-top:6px">Requires a support-desk role on your account.</div>
   </div>
   <div class="error" id="loginError"></div>
 </div>
@@ -1299,7 +1270,7 @@ tr:hover td{background:rgba(88,166,255,0.07)}
         <span id="botsCount">0 bots</span>
         <span id="sessionTimer">0:00</span>
         <span id="ssoUser" style="display:none;color:var(--green);font-size:11px"></span>
-        <button id="ssoLogoutBtn" onclick="window.location.href=ssoLogoutUrl()" style="display:none;font-size:10px;padding:2px 8px">Logout</button>
+        <button id="ssoLogoutBtn" onclick="deskSignOut()" style="display:none;font-size:10px;padding:2px 8px">Sign out</button>
         <label style="font-size:10px;cursor:pointer"><input type="checkbox" id="soundToggle" style="margin-right:3px" onchange="localStorage.setItem('arena_sound',this.checked)">Sound</label>
         <div class="admin-utility-actions">
           <button onclick="shareTab()" title="Copy link to current tab">Share</button>
@@ -1944,14 +1915,12 @@ tr:hover td{background:rgba(88,166,255,0.07)}
           <div class="cosmetics-admin-metric"><span>Categories</span><strong id="cosmeticCategoryCount">--</strong></div>
           <div class="cosmetics-admin-metric"><span>Sets</span><strong id="cosmeticPackCount">--</strong></div>
           <div class="cosmetics-admin-metric"><span>Items</span><strong id="cosmeticItemCount">--</strong></div>
-          <div class="cosmetics-admin-metric"><span>Checkout</span><strong id="cosmeticCheckoutState">Disabled</strong></div>
+          <div class="cosmetics-admin-metric"><span>Unlocked by</span><strong id="cosmeticSubscriptionState">Arena subscription</strong></div>
         </section>
         <div id="cosmeticCatalogStatus" class="cosmetics-catalog-status muted" role="status" aria-live="polite">Open Cosmetics to load catalog readiness.</div>
 
         <div id="cosmeticsWorkspaceNav" class="cosmetics-workspace-tabs" role="tablist" aria-label="Cosmetics workspaces">
           <button id="cosmeticsWorkspaceTabCatalog" type="button" role="tab" aria-selected="true" aria-controls="cosmeticsWorkspaceCatalog" data-cosmetics-workspace-tab="catalog" onclick="switchCosmeticsWorkspace('catalog', this)">Catalog</button>
-          <button id="cosmeticsWorkspaceTabAccess" type="button" role="tab" aria-selected="false" aria-controls="cosmeticsWorkspaceAccess" tabindex="-1" data-cosmetics-workspace-tab="access" onclick="switchCosmeticsWorkspace('access', this)">Customer Access</button>
-          <button id="cosmeticsWorkspaceTabOrders" type="button" role="tab" aria-selected="false" aria-controls="cosmeticsWorkspaceOrders" tabindex="-1" data-cosmetics-workspace-tab="orders" onclick="switchCosmeticsWorkspace('orders', this)">Orders</button>
           <button id="cosmeticsWorkspaceTabActivity" type="button" role="tab" aria-selected="false" aria-controls="cosmeticsWorkspaceActivity" tabindex="-1" data-cosmetics-workspace-tab="activity" onclick="switchCosmeticsWorkspace('activity', this)">Activity</button>
         </div>
 
@@ -2006,7 +1975,7 @@ tr:hover td{background:rgba(88,166,255,0.07)}
                     <div id="cosmeticPackItems" class="cosmetics-item-picker">Load the catalog to choose items.</div>
                   </fieldset>
                   <label class="cosmetics-check"><input id="cosmeticPackFree" type="checkbox"> Free pack</label>
-                  <label class="cosmetics-check"><input id="cosmeticPackPurchasable" type="checkbox"> Sale-ready metadata</label>
+                  <label class="cosmetics-check"><input id="cosmeticPackPurchasable" type="checkbox"> Subscription item (catalog metadata)</label>
                   <label class="cosmetics-check"><input id="cosmeticPackActive" type="checkbox" checked> Active in catalog</label>
                   <div class="cosmetics-form-actions cosmetics-form-wide">
                     <button class="btn-success" type="submit">Save product</button>
@@ -2030,7 +1999,7 @@ tr:hover td{background:rgba(88,166,255,0.07)}
                   <label>Sort order<input id="cosmeticItemSort" type="number" min="0" max="1000000" value="0" required></label>
                   <label class="cosmetics-form-wide">Description<textarea id="cosmeticItemDescription" maxlength="500" rows="3"></textarea></label>
                   <label class="cosmetics-check"><input id="cosmeticItemFree" type="checkbox" onchange="syncCosmeticItemPrice()"> Free item</label>
-                  <label class="cosmetics-check"><input id="cosmeticItemPurchasable" type="checkbox"> Sale-ready metadata</label>
+                  <label class="cosmetics-check"><input id="cosmeticItemPurchasable" type="checkbox"> Subscription item (catalog metadata)</label>
                   <label class="cosmetics-check"><input id="cosmeticItemActive" type="checkbox" checked> Active in catalog</label>
                   <div class="cosmetics-form-actions cosmetics-form-wide">
                     <button class="btn-success" type="submit">Save item</button>
@@ -2074,64 +2043,6 @@ tr:hover td{background:rgba(88,166,255,0.07)}
               </section>
             </div>
           </div>
-        </section>
-
-        <section id="cosmeticsWorkspaceAccess" class="cosmetics-workspace-panel" role="tabpanel" aria-labelledby="cosmeticsWorkspaceTabAccess" data-cosmetics-workspace-panel="access" hidden>
-          <div class="cosmetics-access-layout">
-            <section class="ops-card cosmetics-access-account">
-              <div class="cosmetics-admin-heading"><div><h3>Customer Access</h3><p class="muted">Look up an email before granting or removing cosmetic access.</p></div></div>
-              <form id="cosmeticAccessLookupForm" class="cosmetics-access-lookup" onsubmit="lookupCosmeticCustomerAccess(event)">
-                <label>Customer email<input id="cosmeticAccessEmail" type="email" autocomplete="off" placeholder="customer@example.com" required></label>
-                <button id="cosmeticAccessLookupButton" type="submit">Look up access</button>
-              </form>
-              <div id="cosmeticAccessLookupStatus" class="cosmetics-filter-summary" role="status" aria-live="polite">Enter a customer email to see licenses and memberships.</div>
-              <div id="cosmeticAccessList" class="cosmetics-admin-list" aria-busy="false"><div class="muted">No customer selected.</div></div>
-            </section>
-
-            <div class="cosmetics-access-grants">
-              <section class="ops-card">
-                <h3>Grant one cosmetic</h3>
-                <p class="muted">Grant one account-owned item. Bot assignment remains separate and combat stats never change.</p>
-                <div class="form-stack cosmetics-grant-form">
-                  <label>Selected customer<input id="cosmeticGrantEmail" type="email" readonly required placeholder="Look up an email first"></label>
-                  <label>Find cosmetic<input id="cosmeticGrantSearch" type="search" autocomplete="off" placeholder="Type at least 2 characters" oninput="renderCosmeticGrantPicker()"></label>
-                  <label>Cosmetic<select id="cosmeticGrantItem" disabled><option value="">Search to choose a cosmetic</option></select></label>
-                  <div id="cosmeticGrantSearchCount" class="muted" role="status" aria-live="polite">Search by name, ID, slot, or category.</div>
-                  <label>Reference<input id="cosmeticGrantReference" placeholder="Support ticket or unique grant reference" maxlength="160" required></label>
-                  <button class="btn-success" type="button" id="cosmeticGrantButton" onclick="grantCosmeticLicense()">Grant cosmetic</button>
-                </div>
-                <div class="ctrl-result" id="cosmeticGrantResult" role="status" aria-live="polite"></div>
-              </section>
-
-              <section class="ops-card">
-                <h3>Grant timed membership</h3>
-                <p class="muted">Cosmetics-only access includes all current and future purchasable sets, full-body skins, and trails until automatic expiry. It does not create billing, change payment status, or change API-key access or limits.</p>
-                <form id="cosmeticMembershipForm" class="form-stack cosmetics-grant-form" onsubmit="grantCosmeticMembership(event)">
-                  <label>Selected customer<input id="cosmeticMembershipEmail" type="email" readonly required placeholder="Look up an email first"></label>
-                  <label>Duration preset<select id="cosmeticMembershipPreset" onchange="setCosmeticMembershipPreset(this.value)"><option value="7">7 days</option><option value="30" selected>30 days</option><option value="90">90 days</option><option value="365">1 year</option><option value="custom">Custom expiry</option></select></label>
-                  <label id="cosmeticMembershipDurationField">Duration in days<input id="cosmeticMembershipDurationDays" type="number" min="1" max="1825" value="30" required></label>
-                  <label id="cosmeticMembershipExpiryField" hidden>Expires at<input id="cosmeticMembershipExpiresAt" type="datetime-local"><span class="muted">Uses this browser's local time.</span></label>
-                  <label>Internal note<textarea id="cosmeticMembershipNote" maxlength="500" rows="3" placeholder="Why this access was granted"></textarea></label>
-                  <button class="btn-success" id="cosmeticMembershipGrantButton" type="submit">Grant membership</button>
-                </form>
-                <div class="ctrl-result" id="cosmeticMembershipResult" role="status" aria-live="polite"></div>
-              </section>
-            </div>
-          </div>
-        </section>
-
-        <section id="cosmeticsWorkspaceOrders" class="cosmetics-workspace-panel" role="tabpanel" aria-labelledby="cosmeticsWorkspaceTabOrders" data-cosmetics-workspace-panel="orders" hidden>
-          <section class="ops-card">
-            <div class="cosmetics-admin-heading"><div><h3>Commerce Orders</h3><p class="muted">Read-only support history for the latest 50 orders.</p></div></div>
-            <form class="cosmetics-order-controls" aria-label="Filter commerce orders" onsubmit="loadCosmeticOrders(event)">
-              <label>Search orders<input id="cosmeticOrderSearch" type="search" maxlength="120" placeholder="Order, email, set, Stripe ID..."></label>
-              <label>Status<select id="cosmeticOrderStatusFilter"><option value="">All statuses</option><option value="created">Created</option><option value="checkout_pending">Checkout pending</option><option value="processing">Processing</option><option value="paid">Paid</option><option value="payment_failed">Payment failed</option><option value="expired">Expired</option><option value="refund_review">Refund review</option><option value="refunded">Refunded</option><option value="disputed">Disputed</option></select></label>
-              <button type="submit">Apply filters</button>
-              <button type="button" id="cosmeticOrderRefresh" onclick="loadCosmeticOrders()">Refresh</button>
-            </form>
-            <div id="cosmeticOrderStatus" class="cosmetics-filter-summary" role="status" aria-live="polite">Orders load when this workspace opens.</div>
-            <div id="cosmeticOrderList" class="cosmetics-admin-list cosmetics-order-list" aria-busy="false">Open Orders to load commerce history.</div>
-          </section>
         </section>
 
         <section id="cosmeticsWorkspaceActivity" class="cosmetics-workspace-panel" role="tabpanel" aria-labelledby="cosmeticsWorkspaceTabActivity" data-cosmetics-workspace-panel="activity" hidden>
@@ -2218,7 +2129,7 @@ tr:hover td{background:rgba(88,166,255,0.07)}
               <div class="ctrl-result" id="configResult"></div>
             </section>
 
-            
+
 
             <section class="ops-card">
               <h3>Map Workshop</h3>
@@ -2460,8 +2371,27 @@ const kfWeapons = {};
 const kfKillers = {};
 const kfDeaths = {};
 
+/*
+ * How a human reaches this panel.
+ *
+ * Arena used to run its own admin SSO application: a separate login, a
+ * separate arena_admin_session cookie, and an allowlist of addresses in the
+ * server's environment. That is retired. An administrator now signs in at
+ * Angel Accounts exactly as a customer does, and the support-desk role on that
+ * sign-in is what opens this panel — so the browser is carrying the ordinary
+ * arena_customer_session cookie, which it sends to every page of the site.
+ *
+ * That is why deskCsrfToken exists. A cookie a browser attaches on its own
+ * cannot be the whole of a mutation's authorization, so the server holds admin
+ * mutations made on this cookie to a CSRF token, and hands this panel the
+ * session's token when it says the panel may be drawn. Reads do not need it.
+ *
+ * The X-Admin-Token path below is untouched and unrelated: it is how a machine
+ * authenticates, and how a human gets in if Accounts is unreachable.
+ */
 let ssoEnabled = false;
 let ssoSession = null;
+let deskCsrfToken = '';
 
 // ========== API ==========
 const API_BASE = getAPIBase();
@@ -2478,16 +2408,45 @@ function getPublicAPIBase() {
   return '/api/v1';
 }
 
-function ssoLoginUrl() {
+// Where this panel lives, so a sign-in can be asked to return to it. The
+// server accepts only its own apps as a return target.
+function adminPanelPath() {
   const p = location.pathname;
-  if (p.startsWith('/arena/')) return '/arena/admin/login';
-  return '/admin/login';
+  if (p.startsWith('/arena/')) return '/arena/admin/';
+  return '/admin/';
 }
 
-function ssoLogoutUrl() {
-  const p = location.pathname;
-  if (p.startsWith('/arena/')) return '/arena/admin/logout';
-  return '/admin/logout';
+// The Accounts sign-in. The bootstrap read below supplies this; the fallback
+// is only for the case where it could not be reached at all.
+function deskLoginUrl() {
+  if (ssoSession && ssoSession.login_url) return ssoSession.login_url;
+  return getPublicAPIBase() + '/dashboard/login?return_to=' + encodeURIComponent(adminPanelPath());
+}
+
+function startDeskSignIn() {
+  window.location.href = deskLoginUrl();
+}
+
+/*
+ * Signing out is a mutation on the customer session, so it is a POST carrying
+ * the CSRF token — and it signs the person out of the whole site, not just
+ * this panel, because there is only one session now.
+ */
+async function deskSignOut() {
+  const url = (ssoSession && ssoSession.logout_url) || (getPublicAPIBase() + '/dashboard/logout');
+  try {
+    await fetch(url, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {'X-CSRF-Token': deskCsrfToken, 'Content-Type': 'application/json'},
+    });
+  } catch (e) {
+    // Nothing useful to do; reloading still lands on the sign-in screen, and
+    // the session either went or the next bootstrap read will say it did not.
+  }
+  ssoSession = null;
+  deskCsrfToken = '';
+  window.location.reload();
 }
 
 function getSessionUrl() {
@@ -2497,9 +2456,14 @@ function getSessionUrl() {
 }
 
 async function api(path, opts={}) {
+  const headers = {'X-Admin-Token': token, 'Content-Type':'application/json'};
+  // Only a desk session needs this, and only on mutations. Sending it on a
+  // read is harmless and keeps the call site from having to know the method.
+  if (deskCsrfToken) headers['X-CSRF-Token'] = deskCsrfToken;
   const res = await fetch(API_BASE + path, {
     ...opts,
-    headers: {'X-Admin-Token': token, 'Content-Type':'application/json', ...(opts.headers||{})}
+    credentials: 'same-origin',
+    headers: {...headers, ...(opts.headers||{})}
   });
   if (res.status === 401 || res.status === 403) { logout(); throw new Error('unauthorized'); }
   if (res.status === 429) {
@@ -2543,6 +2507,10 @@ async function testAuth() {
 function logout() {
   token = '';
   localStorage.removeItem('arena_admin_token');
+  // Only forgets what this tab was using. The Accounts session itself is
+  // ended by deskSignOut(); a lapsed or refused desk grant lands here too.
+  ssoSession = null;
+  deskCsrfToken = '';
   stopSSE();
   sseLastEventId = 0;
   if (overviewInterval) clearInterval(overviewInterval);
@@ -2553,14 +2521,20 @@ function logout() {
   stopDebugAuto();
   document.getElementById('app').style.display = 'none';
   document.getElementById('login').style.display = 'flex';
+  // A desk grant that lapsed or was refused mid-session lands here, and the
+  // panel may have gone straight in at boot without ever drawing the sign-in.
+  // Put the way back in on screen wherever there is one.
+  if (ssoEnabled) document.getElementById('ssoSection').style.display = '';
 }
 
 function showApp() {
   document.getElementById('login').style.display = 'none';
   document.getElementById('app').style.display = 'grid';
-  // Show SSO user info if logged in via OIDC
+  // Name whoever the desk claim says is here, and their role if Accounts
+  // named one. Never an address: the server does not send one.
   if (ssoSession && ssoSession.authenticated) {
-    document.getElementById('ssoUser').textContent = '🔑 ' + (ssoSession.name || ssoSession.email);
+    const who = ssoSession.name || ssoSession.account_id || 'signed in';
+    document.getElementById('ssoUser').textContent = '🔑 ' + who + (ssoSession.role ? ' (' + ssoSession.role + ')' : '');
     document.getElementById('ssoUser').style.display = '';
     document.getElementById('ssoLogoutBtn').style.display = '';
   }
@@ -2658,6 +2632,7 @@ async function startFetchSSE(url, controller) {
     const streamUrl = new URL(url, location.origin);
     if (sseLastEventId > 0) streamUrl.searchParams.set('since_id', String(sseLastEventId));
     const res = await fetch(streamUrl, {
+      credentials: 'same-origin',
       headers: {'X-Admin-Token': token, 'Accept': 'text/event-stream'},
       signal: controller.signal,
     });
@@ -4245,12 +4220,10 @@ const OPS_CONFIG_GROUPS = [
 ];
 const OPS_CONFIG_FIELDS = OPS_CONFIG_GROUPS.flatMap(g => g.fields);
 let opsMapSettings = null;
-let cosmeticAdminCatalog = {categories:[], packs:[], items:[], checkout_enabled:false};
+let cosmeticAdminCatalog = {categories:[], packs:[], items:[], subscription:null};
 let cosmeticPublicProjection = {available:false, categories:new Set(), packs:new Set(), items:new Set()};
-let cosmeticGrantCatalogItems = [];
 let cosmeticPackSelection = new Set();
 let cosmeticCatalogEntity = 'pack';
-let cosmeticOrderRequestGeneration = 0;
 let activeConfigGroup = 'all';
 
 async function loadOpsConsole() {
@@ -4964,33 +4937,6 @@ function clearCosmeticPublicProjection() {
   cosmeticPublicProjection = {available:false, categories:new Set(), packs:new Set(), items:new Set()};
 }
 
-function populateCosmeticGrantCatalog(data) {
-  cosmeticGrantCatalogItems = Array.isArray(data?.items) ? data.items : [];
-  renderCosmeticGrantPicker();
-}
-
-function renderCosmeticGrantPicker() {
-  const select = document.getElementById('cosmeticGrantItem');
-  if (!select) return;
-  const search = String(document.getElementById('cosmeticGrantSearch')?.value || '').trim().toLowerCase();
-  const count = document.getElementById('cosmeticGrantSearchCount');
-  const selected = select.value;
-  const items = search.length >= 2 ? cosmeticGrantCatalogItems.filter(item =>
-    [item.id, item.name, item.slot, item.category_id].join(' ').toLowerCase().includes(search)
-  ).slice(0,60) : [];
-  select.innerHTML = `<option value="">${search.length < 2 ? 'Type at least 2 characters' : 'Select a cosmetic'}</option>` + items.map(item => {
-    const state = item.is_free ? 'free' : (item.is_purchasable ? 'sale-ready' : 'preview');
-    return `<option value="${escAttr(item.id||'')}">${esc(item.name||item.id||'Unknown')} · ${esc(item.slot||'')} · ${state}</option>`;
-  }).join('');
-  if (items.some(item => item.id === selected)) select.value = selected;
-  select.disabled = items.length === 0;
-  if (count) {
-    count.textContent = search.length < 2
-      ? `Search ${cosmeticGrantCatalogItems.length} catalog items by name, ID, slot, or category.`
-      : `${items.length}${items.length === 60 ? '+' : ''} matching cosmetics.`;
-  }
-}
-
 function setupCosmeticTabKeys(tabs, activate) {
   tabs.forEach((tab, index) => {
     tab.addEventListener('keydown', event => {
@@ -5038,7 +4984,6 @@ function switchCosmeticsWorkspace(workspace, sourceTab) {
     panel.hidden = !selected;
   });
   if (sourceTab && typeof sourceTab.focus === 'function') sourceTab.focus({preventScroll:true});
-  if (workspace === 'orders') void loadCosmeticOrders();
   if (workspace === 'activity') void loadCosmeticCatalogAudit();
 }
 
@@ -5112,11 +5057,8 @@ async function loadCosmeticsAdmin() {
 
   if (publicResult.status === 'fulfilled') {
     setCosmeticPublicProjection(publicResult.value);
-    populateCosmeticGrantCatalog(publicResult.value);
   } else {
     clearCosmeticPublicProjection();
-    cosmeticGrantCatalogItems = [];
-    renderCosmeticGrantPicker();
   }
 
   if (adminResult.status === 'fulfilled') {
@@ -5125,7 +5067,7 @@ async function loadCosmeticsAdmin() {
       categories: Array.isArray(data.categories) ? data.categories : [],
       packs: Array.isArray(data.packs) ? data.packs : [],
       items: Array.isArray(data.items) ? data.items : [],
-      checkout_enabled: data.checkout_enabled === true,
+      subscription: data.subscription && typeof data.subscription === 'object' ? data.subscription : null,
     };
     renderCosmeticAdminCatalog();
     if (status) {
@@ -5149,93 +5091,6 @@ async function loadCosmeticsAdmin() {
   }
 }
 
-function cosmeticOrderMoney(cents, currency) {
-  const amount = Number(cents || 0) / 100;
-  const code = String(currency || 'USD').trim().toUpperCase();
-  try {
-    return new Intl.NumberFormat(undefined, {style:'currency', currency:code}).format(amount);
-  } catch (_) {
-    return `${code || 'USD'} ${amount.toFixed(2)}`;
-  }
-}
-
-function cosmeticOrderStatusMeta(rawStatus) {
-  const status = String(rawStatus || 'created').trim().toLowerCase();
-  const labels = {
-    created:'Created', checkout_pending:'Checkout pending', processing:'Processing', paid:'Paid',
-    payment_failed:'Payment failed', expired:'Expired', refund_review:'Refund review',
-    refunded:'Refunded', disputed:'Disputed',
-  };
-  const warning = new Set(['payment_failed','expired','refund_review','refunded','disputed']);
-  return {
-    label: labels[status] || prettyLabel(status || 'unknown'),
-    className: status === 'paid' ? 'is-live' : (warning.has(status) ? 'is-warning' : 'is-inactive'),
-  };
-}
-
-function cosmeticOrderProviderID(value, label) {
-  const full = String(value || '').trim();
-  if (!full) return '<span class="muted">not assigned</span>';
-  const terse = full.length > 22 ? `${full.slice(0,9)}…${full.slice(-7)}` : full;
-  return `<code class="cosmetics-order-provider-id" title="${escAttr(full)}" aria-label="${escAttr(label + ': ' + full)}">${esc(terse)}</code>`;
-}
-
-function renderCosmeticOrders(rawOrders) {
-  const root = document.getElementById('cosmeticOrderList');
-  const orders = Array.isArray(rawOrders) ? rawOrders : [];
-  const visible = orders.slice(0,50);
-  if (!visible.length) {
-    root.textContent = 'No commerce orders match these filters. Checkout may be disabled or no purchases have been made yet.';
-    return {shown:0, total:orders.length};
-  }
-  root.innerHTML = visible.map(order => {
-    const status = cosmeticOrderStatusMeta(order.status);
-    const quantity = Math.max(0, Number(order.quantity || 0));
-    return `<article class="cosmetics-admin-row">
-      <div class="cosmetics-admin-row-main">
-        <div class="cosmetics-admin-row-title">${esc(order.account_email || 'Unknown account')} · ${esc(order.pack_name || 'Unknown pack')} × ${quantity} <span class="cosmetics-admin-badge ${status.className}">${esc(status.label)}</span></div>
-        <div class="cosmetics-admin-row-meta">${esc(order.id || '')} · expected ${esc(cosmeticOrderMoney(order.expected_subtotal_cents, order.currency))} · received ${esc(cosmeticOrderMoney(order.amount_received_cents, order.currency))} · refunded ${esc(cosmeticOrderMoney(order.amount_refunded_cents, order.currency))} · ${Number(order.fulfilled_license_count || 0)} licenses · ${esc(fmtTime(order.created_at || order.updated_at || ''))}</div>
-        <div class="cosmetics-order-provider-line"><span>Checkout ${cosmeticOrderProviderID(order.checkout_session_id, 'Checkout session')}</span><span>Payment ${cosmeticOrderProviderID(order.payment_intent_id, 'Payment intent')}</span></div>
-      </div>
-    </article>`;
-  }).join('');
-  return {shown:visible.length, total:orders.length};
-}
-
-async function loadCosmeticOrders(event) {
-  if (event?.preventDefault) event.preventDefault();
-  const root = document.getElementById('cosmeticOrderList');
-  const status = document.getElementById('cosmeticOrderStatus');
-  if (!root || !status) return;
-  const query = document.getElementById('cosmeticOrderSearch')?.value.trim() || '';
-  const statusFilter = document.getElementById('cosmeticOrderStatusFilter')?.value || '';
-  const params = new URLSearchParams();
-  params.set('limit','50');
-  if (query) params.set('query', query);
-  if (statusFilter) params.set('status', statusFilter);
-  root.setAttribute('aria-busy', 'true');
-  root.textContent = 'Loading commerce orders...';
-  status.textContent = 'Loading up to 50 commerce orders...';
-  status.style.color = 'var(--text2)';
-  const requestGeneration = ++cosmeticOrderRequestGeneration;
-  try {
-    const data = await api('/cosmetics/orders?' + params.toString());
-    if (requestGeneration !== cosmeticOrderRequestGeneration) return;
-    const counts = renderCosmeticOrders(data?.orders);
-    status.textContent = counts.total
-      ? `Showing ${counts.shown} of ${counts.total} orders returned by this filter.`
-      : 'No commerce orders found. Checkout may be disabled or no purchases have been made.';
-    status.style.color = 'var(--text2)';
-  } catch (error) {
-    if (requestGeneration !== cosmeticOrderRequestGeneration) return;
-    root.textContent = 'Orders unavailable. Checkout may be disabled or the support endpoint may be temporarily unavailable.';
-    status.textContent = 'Commerce orders unavailable: ' + (error?.message || 'unknown error') + '. Catalog editing is unaffected.';
-    status.style.color = 'var(--orange)';
-  } finally {
-    if (requestGeneration === cosmeticOrderRequestGeneration) root.setAttribute('aria-busy', 'false');
-  }
-}
-
 function cosmeticPriceLabel(entry) {
   if (entry?.is_free) return 'Free';
   const cents = Number(entry?.price_cents || 0);
@@ -5250,7 +5105,7 @@ function cosmeticPriceLabel(entry) {
 function cosmeticCatalogState(entry) {
   if (entry?.is_active !== true) return 'inactive';
   if (entry?.is_free === true) return 'free';
-  if (entry?.is_purchasable === true) return 'sale-ready';
+  if (entry?.is_purchasable === true) return 'subscription';
   return 'preview';
 }
 
@@ -5411,9 +5266,16 @@ function renderCosmeticAdminCatalog() {
   document.getElementById('cosmeticCategoryCount').textContent = String(categories.length);
   document.getElementById('cosmeticPackCount').textContent = String(packs.length);
   document.getElementById('cosmeticItemCount').textContent = String(items.length);
-  const checkout = document.getElementById('cosmeticCheckoutState');
-  checkout.textContent = cosmeticAdminCatalog.checkout_enabled ? 'Enabled' : 'Disabled';
-  checkout.style.color = cosmeticAdminCatalog.checkout_enabled ? 'var(--green)' : 'var(--orange)';
+  // Arena sells nothing itself: the subscription is sold in Angel Accounts,
+  // and the catalog says where. A missing address is worth a warning colour
+  // because the Dashboard and Shop can then only say "ask the operator".
+  const subscription = document.getElementById('cosmeticSubscriptionState');
+  const subscriptionURL = String(cosmeticAdminCatalog.subscription?.url || '').trim();
+  if (subscription) {
+    subscription.textContent = subscriptionURL ? 'Arena subscription' : 'Subscription (no shop URL)';
+    subscription.title = subscriptionURL ? `Sold at ${subscriptionURL}` : 'ARENA_ACCOUNTS_SHOP_URL is not set; customers are not told where to subscribe.';
+    subscription.style.color = subscriptionURL ? 'var(--green)' : 'var(--orange)';
+  }
 
   const categoryList = document.getElementById('cosmeticCategoryList');
   categoryList.innerHTML = categories.length ? categories.map(category => `
@@ -5849,241 +5711,9 @@ async function loadCosmeticCatalogAudit() {
   }
 }
 
-async function lookupCosmeticCustomerAccess(event) {
-  if (event?.preventDefault) event.preventDefault();
-  const emailInput = document.getElementById('cosmeticAccessEmail');
-  const root = document.getElementById('cosmeticAccessList');
-  const status = document.getElementById('cosmeticAccessLookupStatus');
-  const button = document.getElementById('cosmeticAccessLookupButton');
-  const email = String(emailInput?.value || '').trim().toLowerCase();
-  if (!email || !emailInput.checkValidity()) {
-    emailInput.reportValidity();
-    return;
-  }
-  const params = new URLSearchParams();
-  params.set('email', email);
-  root.setAttribute('aria-busy', 'true');
-  root.textContent = 'Loading customer cosmetic access...';
-  status.textContent = 'Looking up ' + email + '...';
-  status.style.color = 'var(--text2)';
-  button.disabled = true;
-  try {
-    const data = await api('/cosmetics/access?' + params.toString());
-    renderCosmeticCustomerAccess(data, email);
-    document.getElementById('cosmeticGrantEmail').value = email;
-    document.getElementById('cosmeticMembershipEmail').value = email;
-    const licenses = Array.isArray(data?.licenses) ? data.licenses : [];
-    const managedLicenseCount = licenses.filter(license => license.source === 'admin_membership' || license.source === 'stripe_subscription').length;
-    const licenseCount = licenses.length - managedLicenseCount;
-    const membershipCount = Array.isArray(data?.memberships) ? data.memberships.length : 0;
-    status.textContent = `Loaded ${licenseCount} direct licenses, ${managedLicenseCount} membership-managed licenses, and ${membershipCount} timed memberships for ${email}.`;
-    status.style.color = 'var(--green)';
-  } catch (error) {
-    root.textContent = 'Customer access unavailable. Check the email and try again.';
-    status.textContent = 'Access lookup failed: ' + (error?.message || 'unknown error');
-    status.style.color = 'var(--red)';
-    document.getElementById('cosmeticGrantEmail').value = '';
-    document.getElementById('cosmeticMembershipEmail').value = '';
-  } finally {
-    button.disabled = false;
-    root.setAttribute('aria-busy', 'false');
-  }
-}
-
-function renderCosmeticCustomerAccess(data, email) {
-  const root = document.getElementById('cosmeticAccessList');
-  const licenses = Array.isArray(data?.licenses) ? data.licenses : [];
-  const memberships = Array.isArray(data?.memberships) ? data.memberships : [];
-  const managedSources = new Set(['admin_membership','stripe_subscription']);
-  const directLicenses = licenses.filter(license => !managedSources.has(license.source));
-  const managedLicenses = licenses.filter(license => managedSources.has(license.source));
-  const licenseRows = directLicenses.length ? directLicenses.map(license => `
-    <article class="cosmetics-access-row">
-      <div class="cosmetics-access-row-main">
-        <div class="cosmetics-access-row-title">${esc(license.item?.name || license.cosmetic_id || 'Cosmetic license')} <span class="cosmetics-admin-badge ${license.status === 'active' ? 'is-live' : 'is-inactive'}">${esc(license.status || 'active')}</span></div>
-        <div class="cosmetics-access-row-meta">${esc(license.cosmetic_id || '')} · ${esc(prettyLabel(license.source || 'manual'))} · granted ${esc(fmtTime(license.granted_at || ''))}${license.assigned_bot_name || license.assigned_bot_id ? ' · assigned to ' + esc(license.assigned_bot_name || license.assigned_bot_id) : ''}</div>
-      </div>
-      ${license.status === 'active' ? `<button type="button" class="btn-danger" data-license-id="${escAttr(license.id)}" onclick="revokeCosmeticLicense(this.dataset.licenseId)">Revoke license</button>` : '<span class="muted">No action available</span>'}
-    </article>`).join('') : '<div class="muted">No cosmetic item licenses found.</div>';
-  const managedSummary = managedLicenses.length ? ['stripe_subscription','admin_membership'].map(source => {
-    const sourceLicenses = managedLicenses.filter(license => license.source === source);
-    if (!sourceLicenses.length) return '';
-    const activeCount = sourceLicenses.filter(license => license.status === 'active').length;
-    const label = source === 'stripe_subscription' ? 'Paid membership' : 'Timed admin membership';
-    return `<article class="cosmetics-access-row"><div class="cosmetics-access-row-main"><div class="cosmetics-access-row-title">${label}</div><div class="cosmetics-access-row-meta">${activeCount} active of ${sourceLicenses.length} managed item licenses. Revoke access from the membership, not individual generated licenses.</div></div></article>`;
-  }).join('') : '<div class="muted">No membership-managed licenses found.</div>';
-  const membershipRows = memberships.length ? memberships.map(membership => `
-    <article class="cosmetics-access-row">
-      <div class="cosmetics-access-row-main">
-        <div class="cosmetics-access-row-title">Timed cosmetics membership <span class="cosmetics-admin-badge ${membership.status === 'active' ? 'is-live' : 'is-inactive'}">${esc(membership.status || 'active')}</span></div>
-        <div class="cosmetics-access-row-meta">Current and future purchasable sets, full-body skins, and trails · expires ${esc(fmtDateTime(membership.expires_at || ''))}${membership.note ? ' · ' + esc(membership.note) : ''}</div>
-      </div>
-      ${membership.status === 'active' ? `<button type="button" class="btn-danger" data-membership-id="${escAttr(membership.id)}" onclick="revokeCosmeticMembership(this.dataset.membershipId)">Revoke membership</button>` : '<span class="muted">Membership ended</span>'}
-    </article>`).join('') : '<div class="muted">No timed cosmetics memberships found.</div>';
-  root.innerHTML = `
-    <div class="cosmetics-access-section"><h4>Direct item licenses</h4>${licenseRows}</div>
-    <div class="cosmetics-access-section"><h4>Membership-managed items</h4>${managedSummary}</div>
-    <div class="cosmetics-access-section"><h4>Memberships</h4>${membershipRows}</div>`;
-  root.setAttribute('aria-label', 'Cosmetic access for ' + email);
-}
-
-async function grantCosmeticLicense() {
-  const el = document.getElementById('cosmeticGrantResult');
-  const button = document.getElementById('cosmeticGrantButton');
-  if (button.disabled) return;
-  const payload = {
-    email: document.getElementById('cosmeticGrantEmail').value.trim(),
-    cosmetic_id: document.getElementById('cosmeticGrantItem').value,
-    external_reference: document.getElementById('cosmeticGrantReference').value.trim(),
-  };
-  if (!payload.email || !payload.cosmetic_id || !payload.external_reference) {
-    el.textContent = 'Customer email, cosmetic, and a unique external reference are required';
-    el.style.color = 'var(--red)';
-    return;
-  }
-  button.disabled = true;
-  button.textContent = 'Granting...';
-  try {
-    const data = await api('/cosmetics/grants', {method:'POST', body:JSON.stringify(payload)});
-    const licenseID = data.license_id || (data.license && data.license.id) || '';
-    el.textContent = data.granted === false
-      ? 'Grant already applied (idempotent)' + (licenseID ? ' - license ' + licenseID : '')
-      : 'Account license granted' + (licenseID ? ' - license ' + licenseID : '');
-    el.style.color = data.granted === false ? 'var(--text2)' : 'var(--green)';
-    toast(data.granted === false ? 'Cosmetic grant unchanged' : 'Account license granted', data.granted === false ? 'info' : 'success');
-    logAudit('COSMETIC_LICENSE_GRANT', payload.cosmetic_id + ' to account email');
-    await lookupCosmeticCustomerAccess();
-  } catch(e) {
-    el.textContent = 'Cosmetic grant failed: ' + (e.message || 'unknown error');
-    el.style.color = 'var(--red)';
-    toast('Cosmetic grant failed', 'error');
-  } finally {
-    button.disabled = false;
-    button.textContent = 'Grant cosmetic';
-  }
-}
-
-async function revokeCosmeticLicense(licenseID) {
-  const el = document.getElementById('cosmeticGrantResult');
-  const button = Array.from(document.querySelectorAll('[data-license-id]')).find(candidate => candidate.dataset.licenseId === licenseID);
-  if (!button) return;
-  if (button.disabled) return;
-  if (!confirm('Revoke cosmetic license ' + licenseID + '? This removes its bot assignment and equipped use.')) return;
-  button.disabled = true;
-  button.textContent = 'Revoking...';
-  try {
-    const data = await api('/cosmetics/grants', {method:'DELETE', body:JSON.stringify({license_id:licenseID})});
-    el.textContent = data.revoked ? 'License revoked; any assignment and equipped use were removed' : 'License was already inactive or not found';
-    el.style.color = data.revoked ? 'var(--green)' : 'var(--text2)';
-    toast(data.revoked ? 'Cosmetic license revoked' : 'Cosmetic license unchanged', data.revoked ? 'success' : 'info');
-    logAudit('COSMETIC_LICENSE_REVOKE', licenseID);
-    await lookupCosmeticCustomerAccess();
-  } catch(e) {
-    el.textContent = 'Cosmetic revoke failed: ' + (e.message || 'unknown error');
-    el.style.color = 'var(--red)';
-    toast('Cosmetic revoke failed', 'error');
-  } finally {
-    button.disabled = false;
-    button.textContent = 'Revoke license';
-  }
-}
-
-function setCosmeticMembershipPreset(value) {
-  const durationField = document.getElementById('cosmeticMembershipDurationField');
-  const durationInput = document.getElementById('cosmeticMembershipDurationDays');
-  const expiryField = document.getElementById('cosmeticMembershipExpiryField');
-  const expiryInput = document.getElementById('cosmeticMembershipExpiresAt');
-  const custom = value === 'custom';
-  durationField.hidden = custom;
-  durationInput.required = !custom;
-  expiryField.hidden = !custom;
-  expiryInput.required = custom;
-  if (!custom) {
-    durationInput.value = value;
-    expiryInput.value = '';
-  }
-}
-
-async function grantCosmeticMembership(event) {
-  event.preventDefault();
-  const el = document.getElementById('cosmeticMembershipResult');
-  const button = document.getElementById('cosmeticMembershipGrantButton');
-  if (button.disabled) return;
-  const email = document.getElementById('cosmeticMembershipEmail').value.trim();
-  const preset = document.getElementById('cosmeticMembershipPreset').value;
-  const durationDays = preset === 'custom' ? 0 : Number(document.getElementById('cosmeticMembershipDurationDays').value || 0);
-  const rawExpiry = preset === 'custom' ? document.getElementById('cosmeticMembershipExpiresAt').value : '';
-  let expiresAt = '';
-  if (rawExpiry) {
-    const expiry = new Date(rawExpiry);
-    if (!Number.isNaN(expiry.getTime())) expiresAt = expiry.toISOString();
-  }
-  if (!email || (!durationDays && !expiresAt)) {
-    el.textContent = 'Select a customer and enter a positive duration or future expiry.';
-    el.style.color = 'var(--red)';
-    return;
-  }
-  if (expiresAt && new Date(expiresAt).getTime() <= Date.now()) {
-    el.textContent = 'Membership expiry must be in the future.';
-    el.style.color = 'var(--red)';
-    return;
-  }
-  const payload = {
-    email,
-    duration_days: durationDays,
-    expires_at: expiresAt,
-    note: document.getElementById('cosmeticMembershipNote').value.trim(),
-  };
-  button.disabled = true;
-  button.textContent = 'Granting...';
-  el.textContent = 'Granting cosmetics membership...';
-  el.style.color = 'var(--text2)';
-  try {
-    const data = await api('/cosmetics/memberships', {method:'POST', body:JSON.stringify(payload)});
-    const membership = data?.membership || data;
-    el.textContent = 'Membership granted until ' + fmtDateTime(membership?.expires_at || expiresAt);
-    el.style.color = 'var(--green)';
-    toast('Timed cosmetics membership granted', 'success');
-    logAudit('COSMETIC_MEMBERSHIP_GRANT', 'account email until ' + (membership?.expires_at || expiresAt));
-    await lookupCosmeticCustomerAccess();
-  } catch (error) {
-    el.textContent = 'Membership grant failed: ' + (error?.message || 'unknown error');
-    el.style.color = 'var(--red)';
-    toast('Membership grant failed', 'error');
-  } finally {
-    button.disabled = false;
-    button.textContent = 'Grant membership';
-  }
-}
-
-async function revokeCosmeticMembership(membershipID) {
-  const el = document.getElementById('cosmeticMembershipResult');
-  const button = Array.from(document.querySelectorAll('[data-membership-id]')).find(candidate => candidate.dataset.membershipId === membershipID);
-  if (!button) return;
-  if (button.disabled) return;
-  if (!confirm('Revoke cosmetics membership ' + membershipID + '? Access ends immediately.')) return;
-  button.disabled = true;
-  button.textContent = 'Revoking...';
-  try {
-    const data = await api('/cosmetics/memberships', {method:'DELETE', body:JSON.stringify({membership_id:membershipID})});
-    el.textContent = data?.revoked === false ? 'Membership was already inactive or not found.' : 'Membership revoked; cosmetic access ended immediately.';
-    el.style.color = data?.revoked === false ? 'var(--text2)' : 'var(--green)';
-    toast(data?.revoked === false ? 'Membership unchanged' : 'Membership revoked', data?.revoked === false ? 'info' : 'success');
-    logAudit('COSMETIC_MEMBERSHIP_REVOKE', membershipID);
-    await lookupCosmeticCustomerAccess();
-  } catch (error) {
-    el.textContent = 'Membership revoke failed: ' + (error?.message || 'unknown error');
-    el.style.color = 'var(--red)';
-    toast('Membership revoke failed', 'error');
-  } finally {
-    button.disabled = false;
-    button.textContent = 'Revoke membership';
-  }
-}
-
 async function cleanupStale() {
   const days = parseInt(document.getElementById('staleDays').value) || 30;
-  if (!confirm('Deactivate API keys older than ' + days + ' days with no activity? Bot, stats, and cosmetic purchase records will be preserved.')) return;
+  if (!confirm('Deactivate API keys older than ' + days + ' days with no activity? Bot, stats, and account links will be preserved.')) return;
   const el = document.getElementById('dataResult');
   try {
     const data = await api('/db/cleanup-stale', {method:'POST', body:JSON.stringify({days})});
@@ -7414,26 +7044,31 @@ async function banSpectatorIP(ip, index) {
 // Load tab from URL parameter
 const urlTab = new URLSearchParams(window.location.search).get('tab');
 
-// Check SSO session first, then fall back to token auth
+// Ask the server what this browser's Angel Accounts sign-in is worth here,
+// then fall back to token auth.
 (async function init() {
   try {
-    const res = await fetch(getSessionUrl());
+    const res = await fetch(getSessionUrl(), {credentials: 'same-origin', cache: 'no-store'});
     if (res.ok) {
       const data = await res.json();
       if (data.authenticated) {
         ssoEnabled = true;
         ssoSession = data;
+        deskCsrfToken = data.csrf_token || '';
         showApp();
         return;
       }
-      // SSO endpoint exists but not authenticated — show SSO button
+      // Signing in is possible but this browser is not a desk administrator
+      // (signed out, signed in as an ordinary customer, or the grant window
+      // has closed) — offer the sign-in.
       if (data.login_enabled !== false) {
         ssoEnabled = true;
+        ssoSession = data;
         document.getElementById('ssoSection').style.display = '';
       }
     }
   } catch(e) {
-    // SSO endpoint not available (OIDC disabled) — hide SSO button
+    // No customer sign-in configured on this deployment — token auth only.
   }
 
   // Fall back to token auth

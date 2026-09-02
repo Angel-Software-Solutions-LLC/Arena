@@ -20,6 +20,10 @@ func (PostgresAuthority) UpsertVerifiedIdentity(ctx context.Context, email, issu
 	return db.UpsertVerifiedCustomerAccount(ctx, email, issuer, subject, displayName)
 }
 
+func (PostgresAuthority) SetSubscription(ctx context.Context, accountID string, active bool, syncedAt time.Time) (*db.SubscriptionSyncChange, error) {
+	return db.SetCustomerSubscription(ctx, accountID, active, syncedAt)
+}
+
 func (PostgresAuthority) AccountCapacity(ctx context.Context, accountID string) (*db.PlatformAccountCapacity, error) {
 	return db.GetPlatformAccountCapacity(ctx, accountID)
 }
@@ -94,48 +98,4 @@ func (PostgresAuthority) ClaimArenaAgent(ctx context.Context, accountID, control
 
 func (PostgresAuthority) UnlinkAgent(ctx context.Context, accountID, agentID string) (bool, error) {
 	return db.UnlinkBotFromCustomerAccount(ctx, accountID, agentID)
-}
-
-func (PostgresAuthority) AssignLicense(ctx context.Context, accountID, licenseID string, agentID *string) (*db.CosmeticAssignmentChange, error) {
-	return db.AssignCosmeticLicense(ctx, accountID, licenseID, agentID)
-}
-
-func (PostgresAuthority) GrantLicense(ctx context.Context, email, cosmeticID, source, externalReference string) (*db.CosmeticLicense, bool, error) {
-	return db.GrantCosmeticLicense(ctx, email, cosmeticID, source, externalReference)
-}
-
-func (PostgresAuthority) RevokeLicense(ctx context.Context, licenseID string) (*db.CosmeticAssignmentChange, bool, error) {
-	return db.RevokeCosmeticLicense(ctx, licenseID)
-}
-
-func (PostgresAuthority) AssignLicenseExact(ctx context.Context, command db.PlatformLicenseAssignmentCommand) (*db.PlatformCosmeticLicense, error) {
-	return db.AssignPlatformLicense(ctx, command)
-}
-
-func (PostgresAuthority) UnassignLicenseExact(ctx context.Context, command db.PlatformLicenseUnassignmentCommand) (*db.PlatformCosmeticLicense, error) {
-	return db.UnassignPlatformLicense(ctx, command)
-}
-
-func (PostgresAuthority) TransitionLicense(ctx context.Context, command db.PlatformLicenseTransitionCommand) (*db.PlatformCosmeticLicense, error) {
-	return db.TransitionPlatformLicense(ctx, command)
-}
-
-func (PostgresAuthority) LicenseHistory(ctx context.Context, licenseID string, afterEventID int64, limit int) ([]db.PlatformLicenseLifecycleEvent, int64, error) {
-	return db.ListPlatformLicenseLifecycleEvents(ctx, licenseID, afterEventID, limit)
-}
-
-func (PostgresAuthority) AdminAccess(ctx context.Context, email string) (*db.CosmeticAdminAccess, error) {
-	return db.GetCosmeticAdminAccessByEmail(ctx, email)
-}
-
-func (PostgresAuthority) CreateAdminMembership(ctx context.Context, email string, expiresAt time.Time, note, actor string) (*db.CosmeticAdminMembership, int, error) {
-	return db.CreateCosmeticAdminMembership(ctx, email, expiresAt, note, actor)
-}
-
-func (PostgresAuthority) RevokeAdminMembership(ctx context.Context, membershipID, actor, reason string) (*db.CosmeticAdminMembership, []string, bool, error) {
-	return db.RevokeCosmeticAdminMembership(ctx, membershipID, actor, reason)
-}
-
-func (PostgresAuthority) ExpireAdminMembershipsForEmail(ctx context.Context, email string, now time.Time) (int, []string, error) {
-	return db.ExpireCustomerCosmeticAdminMemberships(ctx, email, now)
 }

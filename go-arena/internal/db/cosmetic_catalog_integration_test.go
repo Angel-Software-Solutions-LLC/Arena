@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestPostgresCosmeticCatalogAdministrationAndPublicProjection(t *testing.T) {
@@ -75,7 +76,7 @@ func TestPostgresCosmeticCatalogAdministrationAndPublicProjection(t *testing.T) 
 	}
 }
 
-func TestPostgresInactiveCosmeticCategorySuspendsGrantEquipAndRendering(t *testing.T) {
+func TestPostgresInactiveCosmeticCategorySuspendsEquipAndRendering(t *testing.T) {
 	ctx := useFreshPostgresSchema(t)
 	if err := EnsureCoreSchema(ctx); err != nil {
 		t.Fatalf("EnsureCoreSchema: %v", err)
@@ -95,47 +96,39 @@ func TestPostgresInactiveCosmeticCategorySuspendsGrantEquipAndRendering(t *testi
 	}
 
 	bot := createCustomerCosmeticsTestBot(t, ctx, "inactive-category")
-	legacyBot := createCustomerCosmeticsTestBot(t, ctx, "inactive-category-legacy")
-	if created, err := GrantCosmeticEntitlement(ctx, legacyBot.ID, item.ID, "manual", "inactive-legacy-existing"); err != nil || !created {
-		t.Fatalf("grant active legacy entitlement = (%v, %v), want created", created, err)
+	demoBot := createCustomerCosmeticsTestBot(t, ctx, "inactive-category-demo")
+	if created, err := GrantCosmeticEntitlement(ctx, demoBot.ID, item.ID, "demo", "inactive-demo-grant"); err != nil || !created {
+		t.Fatalf("grant demo entitlement = (%v, %v), want created", created, err)
 	}
-	license, created, err := GrantCosmeticLicense(ctx, "inactive-owner@example.com", item.ID, "manual", "inactive-license")
-	if err != nil || !created {
-		t.Fatalf("grant active category item = (%+v, %v, %v)", license, created, err)
-	}
-	account, err := UpsertVerifiedCustomerAccount(ctx, "inactive-owner@example.com", "https://id.example", "inactive-owner", "Inactive Owner")
+	account, err := UpsertVerifiedCustomerAccount(ctx, "", "https://id.example", "inactive-owner", "Inactive Owner")
 	if err != nil {
 		t.Fatalf("verify owner: %v", err)
 	}
 	if _, err := LinkBotToCustomerAccount(ctx, account.ID, bot.ID); err != nil {
 		t.Fatalf("link bot: %v", err)
 	}
-	if _, err := AssignCosmeticLicense(ctx, account.ID, license.ID, &bot.ID); err != nil {
-		t.Fatalf("assign license: %v", err)
+	if _, err := SetCustomerSubscription(ctx, account.ID, true, time.Now()); err != nil {
+		t.Fatalf("subscribe: %v", err)
 	}
-	if _, err := EquipCustomerCosmeticLicense(ctx, account.ID, bot.ID, license.ID); err != nil {
+	if _, err := EquipCustomerCosmetic(ctx, account.ID, bot.ID, CosmeticSlotAttachment, item.ID); err != nil {
 		t.Fatalf("equip active category item: %v", err)
+	}
+	if _, err := EquipCosmetic(ctx, demoBot.ID, CosmeticSlotAttachment, item.ID); err != nil {
+		t.Fatalf("demo equip active category item: %v", err)
 	}
 	equipped, err := GetEquippedCosmetics(ctx, bot.ID)
 	if err != nil || equipped[CosmeticSlotAttachment] != item.AssetKey {
 		t.Fatalf("active equipped assets = (%v, %v), want %q", equipped, err, item.AssetKey)
 	}
-	batch, err := GetEquippedCosmeticsForBots(ctx, []string{bot.ID, legacyBot.ID, bot.ID})
+	batch, err := GetEquippedCosmeticsForBots(ctx, []string{bot.ID, demoBot.ID, bot.ID})
 	if err != nil || len(batch) != 2 || batch[bot.ID][CosmeticSlotAttachment] != item.AssetKey ||
-		batch[legacyBot.ID][CosmeticSlotAttachment] != "none" {
+		batch[demoBot.ID][CosmeticSlotAttachment] != item.AssetKey {
 		t.Fatalf("batched equipped assets = (%v, %v)", batch, err)
 	}
 
 	category.IsActive = false
 	if _, err := UpsertCosmeticCategory(ctx, category, "integration-admin"); err != nil {
 		t.Fatalf("deactivate category: %v", err)
-	}
-	licenses, err := ListCustomerCosmeticLicenses(ctx, account.ID)
-	if err != nil || len(licenses) != 1 {
-		t.Fatalf("durable licenses after category deactivate = (%+v, %v)", licenses, err)
-	}
-	if licenses[0].Item.IsActive {
-		t.Fatal("license item remained effectively active while its category was inactive")
 	}
 	botItems, err := ListBotCosmetics(ctx, bot.ID)
 	if err != nil {
@@ -146,28 +139,33 @@ func TestPostgresInactiveCosmeticCategorySuspendsGrantEquipAndRendering(t *testi
 			t.Fatalf("bot inventory exposed item %q from an inactive category", item.ID)
 		}
 	}
+	inventory, err := GetCustomerCosmeticsInventory(ctx, account.ID)
+	if err != nil {
+		t.Fatalf("GetCustomerCosmeticsInventory inactive category: %v", err)
+	}
+	for _, got := range inventory.Items {
+		if got.ID == item.ID {
+			t.Fatalf("account inventory exposed item %q from an inactive category", item.ID)
+		}
+	}
+	if _, listed := inventory.Loadouts[bot.ID][CosmeticSlotAttachment]; listed {
+		t.Fatalf("account loadout still reports the inactive item: %v", inventory.Loadouts)
+	}
 	equipped, err = GetEquippedCosmetics(ctx, bot.ID)
 	if err != nil || equipped[CosmeticSlotAttachment] != "none" {
 		t.Fatalf("inactive equipped assets = (%v, %v), want attachment fallback", equipped, err)
 	}
-	if _, err := EquipCosmetic(ctx, bot.ID, item.Slot, item.ID); !errors.Is(err, ErrCosmeticInactive) {
+	if _, err := EquipCosmetic(ctx, demoBot.ID, item.Slot, item.ID); !errors.Is(err, ErrCosmeticInactive) {
 		t.Fatalf("bot-key equip inactive category error = %v, want ErrCosmeticInactive", err)
 	}
-	if _, err := EquipCustomerCosmeticLicense(ctx, account.ID, bot.ID, license.ID); !errors.Is(err, ErrCosmeticInactive) {
+	if _, err := EquipCustomerCosmetic(ctx, account.ID, bot.ID, item.Slot, item.ID); !errors.Is(err, ErrCosmeticInactive) {
 		t.Fatalf("account equip inactive category error = %v, want ErrCosmeticInactive", err)
 	}
-	replayed, replayCreated, err := GrantCosmeticLicense(ctx, "inactive-owner@example.com", item.ID, "manual", "inactive-license")
-	if err != nil || replayCreated || replayed.ID != license.ID {
-		t.Fatalf("inactive category idempotent license replay = (%+v, %v, %v), want existing license", replayed, replayCreated, err)
+	if created, err := GrantCosmeticEntitlement(ctx, demoBot.ID, item.ID, "demo", "inactive-demo-grant"); err != nil || created {
+		t.Fatalf("inactive category idempotent demo replay = (%v, %v), want existing entitlement", created, err)
 	}
-	if created, err := GrantCosmeticEntitlement(ctx, legacyBot.ID, item.ID, "manual", "inactive-legacy-existing"); err != nil || created {
-		t.Fatalf("inactive category idempotent legacy replay = (%v, %v), want existing entitlement", created, err)
-	}
-	if _, _, err := GrantCosmeticLicense(ctx, "other-owner@example.com", item.ID, "manual", "inactive-second-license"); !errors.Is(err, ErrCosmeticInactive) {
-		t.Fatalf("account grant inactive category error = %v, want ErrCosmeticInactive", err)
-	}
-	if _, err := GrantCosmeticEntitlement(ctx, bot.ID, item.ID, "manual", "inactive-legacy-license"); !errors.Is(err, ErrCosmeticInactive) {
-		t.Fatalf("legacy grant inactive category error = %v, want ErrCosmeticInactive", err)
+	if _, err := GrantCosmeticEntitlement(ctx, bot.ID, item.ID, "demo", "inactive-new-grant"); !errors.Is(err, ErrCosmeticInactive) {
+		t.Fatalf("demo grant inactive category error = %v, want ErrCosmeticInactive", err)
 	}
 
 	category.IsActive = true
@@ -289,41 +287,26 @@ func TestPostgresCosmeticStarterPackAdminEditsSurviveSchemaRepair(t *testing.T) 
 	}
 }
 
-func TestPostgresCosmeticPackPriceMigrationPreservesOrderSnapshot(t *testing.T) {
+func TestPostgresCosmeticPackReferencePriceIsNormalizedOnRepair(t *testing.T) {
 	ctx := useFreshPostgresSchema(t)
 	if err := EnsureCoreSchema(ctx); err != nil {
 		t.Fatalf("EnsureCoreSchema: %v", err)
 	}
-	account, err := UpsertVerifiedCustomerAccount(ctx, "price-migration@example.com", "https://id.example", "price-migration", "Price Migration")
-	if err != nil {
-		t.Fatalf("create price migration account: %v", err)
-	}
-	order, err := CreateCosmeticOrder(ctx, account.ID, "neon-signal-pack", 1)
-	if err != nil || order.UnitPriceCents != CosmeticPackPriceCents {
-		t.Fatalf("create pre-migration order snapshot = (%+v, %v)", order, err)
-	}
-	// Simulate rows written by a pre-fixed-price release. Current order creation
-	// correctly rejects this catalog price, while schema repair must preserve
-	// historical order snapshots already in the ledger.
+	// Simulate a row written by a release with a different reference price.
+	// Nothing is sold per pack any more, but the reference metadata the admin
+	// editor shows is still kept consistent by schema repair.
 	if _, err := Pool.Exec(ctx, `UPDATE cosmetic_packs SET price_cents = 699 WHERE id = 'neon-signal-pack'`); err != nil {
 		t.Fatalf("stage legacy catalog price: %v", err)
 	}
-	if _, err := Pool.Exec(ctx, `
-		UPDATE cosmetic_orders SET unit_price_cents = 699, expected_subtotal_cents = 699 WHERE id = $1`, order.ID); err != nil {
-		t.Fatalf("stage legacy order price: %v", err)
-	}
 	if err := EnsureCosmeticsSchema(ctx); err != nil {
-		t.Fatalf("EnsureCosmeticsSchema price migration: %v", err)
+		t.Fatalf("EnsureCosmeticsSchema price normalisation: %v", err)
 	}
-	var packPrice, orderPrice int64
-	if err := Pool.QueryRow(ctx, `
-		SELECT
-			(SELECT price_cents FROM cosmetic_packs WHERE id = 'neon-signal-pack'),
-			(SELECT unit_price_cents FROM cosmetic_orders WHERE id = $1)`, order.ID).Scan(&packPrice, &orderPrice); err != nil {
-		t.Fatalf("read migrated catalog and order prices: %v", err)
+	var packPrice int64
+	if err := Pool.QueryRow(ctx, `SELECT price_cents FROM cosmetic_packs WHERE id = 'neon-signal-pack'`).Scan(&packPrice); err != nil {
+		t.Fatalf("read normalised pack price: %v", err)
 	}
-	if packPrice != CosmeticPackPriceCents || orderPrice != 699 {
-		t.Fatalf("post-migration pack/order prices = %d/%d, want 199/699", packPrice, orderPrice)
+	if packPrice != CosmeticPackPriceCents {
+		t.Fatalf("post-repair pack price = %d, want %d", packPrice, CosmeticPackPriceCents)
 	}
 }
 

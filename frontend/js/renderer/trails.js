@@ -381,7 +381,7 @@ export class TrailRenderer {
     // Paid styles are an explicit visual entitlement. Rank them around the
     // current camera target before filling spare capacity with free wakes, so
     // neither free nor off-screen insertion order permanently hides a nearby
-    // purchased trail. A small existing-trail bonus prevents edge thrash.
+    // paid trail. A small existing-trail bonus prevents edge thrash.
     for (const [botId, entry] of botEntries) {
       if (!entry.isAlive || !entry._interpReady) continue;
       const position = entryPosition(entry);
@@ -607,7 +607,7 @@ export class TrailRenderer {
         } else {
           ({primary, secondary} = this._getStyleColors(style));
         }
-        // A purchased trail is an explicit visual entitlement: it never dims
+        // A paid trail is an explicit visual entitlement: it never dims
         // behind the optional free-wake brightness toggle.
         const brightness = bright || paid || this.options.forceEnabled === true ? 1 : 0.55;
         // The vertex-color gradient depends only on this signature — not on

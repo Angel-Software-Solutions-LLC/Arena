@@ -11,10 +11,13 @@ import (
 	"arena-server/internal/db"
 )
 
-// IdentityAuthority owns verified customer identity binding. Customer
-// sessions and credentials remain private to Arena.
+// IdentityAuthority owns verified customer identity binding and the one
+// commerce fact attached to an identity: whether Accounts reported an active
+// Arena subscription at sign-in. Customer sessions and credentials remain
+// private to Arena.
 type IdentityAuthority interface {
 	UpsertVerifiedIdentity(context.Context, string, string, string, string) (*db.CustomerAccount, error)
+	SetSubscription(context.Context, string, bool, time.Time) (*db.SubscriptionSyncChange, error)
 }
 
 // MetadataAuthority exposes the revisioned W1b.2 agent/profile contract. Its
@@ -29,9 +32,11 @@ type MetadataAuthority interface {
 	UnlinkAgentExact(context.Context, db.PlatformAgentUnlinkCommand) (*db.PlatformAgentLinkResult, error)
 }
 
-// CosmeticsAuthority owns shared catalog, account-agent links, licenses, and
-// their lifecycle. Bot loadout reads and equip writes are intentionally absent:
-// those are Arena gameplay presentation state.
+// CosmeticsAuthority owns the shared catalog and account-agent links. Bot
+// loadout reads and equip writes are intentionally absent: those are Arena
+// gameplay presentation state. There is no licence facet any more — the only
+// entitlement is the Arena subscription, which Accounts owns and Arena caches
+// on the account (see db.SetCustomerSubscription).
 type CosmeticsAuthority interface {
 	PublicCatalog(context.Context) (*db.CosmeticCatalog, error)
 	AdminCatalog(context.Context) (*db.CosmeticCatalog, error)
@@ -45,23 +50,6 @@ type CosmeticsAuthority interface {
 	AccountInventory(context.Context, string) (*db.CustomerCosmeticsInventory, error)
 	ClaimArenaAgent(context.Context, string, string) (*db.AccountBot, error)
 	UnlinkAgent(context.Context, string, string) (bool, error)
-	AssignLicense(context.Context, string, string, *string) (*db.CosmeticAssignmentChange, error)
-	GrantLicense(context.Context, string, string, string, string) (*db.CosmeticLicense, bool, error)
-	RevokeLicense(context.Context, string) (*db.CosmeticAssignmentChange, bool, error)
-	AdminAccess(context.Context, string) (*db.CosmeticAdminAccess, error)
-	CreateAdminMembership(context.Context, string, time.Time, string, string) (*db.CosmeticAdminMembership, int, error)
-	RevokeAdminMembership(context.Context, string, string, string) (*db.CosmeticAdminMembership, []string, bool, error)
-	ExpireAdminMembershipsForEmail(context.Context, string, time.Time) (int, []string, error)
-}
-
-// LicenseLifecycleAuthority exposes the revisioned W1b.4 shared-license
-// boundary without widening the compatibility interface used by Arena's
-// customer cosmetics handlers.
-type LicenseLifecycleAuthority interface {
-	AssignLicenseExact(context.Context, db.PlatformLicenseAssignmentCommand) (*db.PlatformCosmeticLicense, error)
-	UnassignLicenseExact(context.Context, db.PlatformLicenseUnassignmentCommand) (*db.PlatformCosmeticLicense, error)
-	TransitionLicense(context.Context, db.PlatformLicenseTransitionCommand) (*db.PlatformCosmeticLicense, error)
-	LicenseHistory(context.Context, string, int64, int) ([]db.PlatformLicenseLifecycleEvent, int64, error)
 }
 
 // Authority is the one logical shared authority consumed by Arena. Consumer
@@ -70,5 +58,4 @@ type Authority interface {
 	IdentityAuthority
 	MetadataAuthority
 	CosmeticsAuthority
-	LicenseLifecycleAuthority
 }

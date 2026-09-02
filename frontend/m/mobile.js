@@ -6,6 +6,7 @@ import {
   MOBILE_SAFE_VIEWPORT_REGIONS,
   observeArenaSafeViewport,
 } from '../js/safe-viewport.js?v=20260718b';
+import { isSignedOut, signInAvailability, startSignIn, watchSignInState } from '../js/sign-in.js?v=20260825a';
 
 /**
  * Mobile spectator shell — full-viewport 3D stage, floating top bar,
@@ -88,41 +89,208 @@ function setupExploreBrand() {
   });
 }
 
+const MOBILE_OVERLAY_SELECTOR = '.mobile-overlay';
+const PRIORITY_MODAL_ROOT_SELECTOR = 'dialog, [role="alertdialog"][aria-modal="true"]';
+const ACTIVE_PRIORITY_MODAL_SELECTOR = 'dialog[open], [role="alertdialog"][aria-modal="true"]';
+const MOBILE_FOCUSABLE_SELECTOR = [
+  'a[href]',
+  'button:not([disabled])',
+  'input:not([disabled])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  'iframe',
+  '[contenteditable="true"]',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',');
+
+let mobileBackgroundInertState = null;
+let mobileBackgroundObserver = null;
+
+function isVisible(element) {
+  if (!element || element.hidden || element.getAttribute('aria-hidden') === 'true') return false;
+  const style = window.getComputedStyle(element);
+  return style.display !== 'none' && style.visibility !== 'hidden' && element.getClientRects().length > 0;
+}
+
+function visibleFocusable(root) {
+  if (!root) return [];
+  return Array.from(root.querySelectorAll(MOBILE_FOCUSABLE_SELECTOR)).filter((element) => {
+    if (element.closest('[inert], [hidden], [aria-hidden="true"]')) return false;
+    return isVisible(element);
+  });
+}
+
+function isPriorityModalRoot(element) {
+  return element?.matches?.(PRIORITY_MODAL_ROOT_SELECTOR);
+}
+
+function isActivePriorityModalRoot(element) {
+  return element?.matches?.(ACTIVE_PRIORITY_MODAL_SELECTOR) && isVisible(element);
+}
+
+function activePriorityModal() {
+  const activeRoot = document.activeElement?.closest?.(ACTIVE_PRIORITY_MODAL_SELECTOR);
+  if (activeRoot?.parentElement === document.body && isActivePriorityModalRoot(activeRoot)) return activeRoot;
+  const roots = Array.from(document.body.children).filter(isActivePriorityModalRoot);
+  return roots[roots.length - 1] || null;
+}
+
+function syncMobileBackgroundElement(element) {
+  if (!mobileBackgroundInertState || element.parentElement !== document.body ||
+      element.matches(MOBILE_OVERLAY_SELECTOR)) return;
+  if (isPriorityModalRoot(element)) {
+    if (mobileBackgroundInertState.has(element)) {
+      element.inert = mobileBackgroundInertState.get(element);
+      mobileBackgroundInertState.delete(element);
+    }
+    return;
+  }
+  if (!mobileBackgroundInertState.has(element)) {
+    mobileBackgroundInertState.set(element, element.inert);
+  }
+  element.inert = true;
+}
+
+function applyMobileBackgroundInert() {
+  if (!mobileBackgroundInertState) {
+    mobileBackgroundInertState = new Map();
+    mobileBackgroundObserver = new MutationObserver((records) => {
+      const changedRoots = new Set();
+      records.forEach((record) => {
+        record.addedNodes.forEach((node) => {
+          if (node.nodeType === Node.ELEMENT_NODE && node.parentElement === document.body) {
+            changedRoots.add(node);
+          }
+        });
+      });
+      changedRoots.forEach(syncMobileBackgroundElement);
+    });
+    mobileBackgroundObserver.observe(document.body, { childList: true });
+  }
+  Array.from(document.body.children).forEach(syncMobileBackgroundElement);
+}
+
+function restoreMobileBackgroundInert() {
+  if (!mobileBackgroundInertState) return;
+  mobileBackgroundObserver?.disconnect();
+  mobileBackgroundObserver = null;
+  mobileBackgroundInertState.forEach((wasInert, element) => {
+    if (element.isConnected) element.inert = wasInert;
+  });
+  mobileBackgroundInertState = null;
+}
+
 // Wires a single FAB <-> full-screen overlay pair: click toggles the
 // overlay's "open" class (chat-panel.js watches #chat-overlay for exactly
 // this), backdrop/close-button taps and Escape dismiss it, and opening one
 // overlay closes any other so the mobile viewport never stacks two.
-function setupMobileOverlay(overlayEl, fabEl, { onOpen, onClose } = {}) {
+function setupMobileOverlay(overlayEl, fabEl, { onOpen, onClose, interceptPress } = {}) {
   if (!overlayEl || !fabEl) return null;
+  const panel = overlayEl.querySelector('.mobile-overlay-panel');
+  let returnFocus = null;
 
-  const close = () => {
+  overlayEl.inert = true;
+
+  const close = ({ restoreFocus = true, releaseBackground = true } = {}) => {
     if (!overlayEl.classList.contains('open')) return;
     overlayEl.classList.remove('open');
+    overlayEl.style.removeProperty('transition-property');
+    overlayEl.style.removeProperty('visibility');
     overlayEl.setAttribute('aria-hidden', 'true');
+    overlayEl.inert = true;
     fabEl.classList.remove('active');
     fabEl.setAttribute('aria-expanded', 'false');
     onClose?.();
+
+    if (releaseBackground && !document.querySelector(`${MOBILE_OVERLAY_SELECTOR}.open`)) {
+      restoreMobileBackgroundInert();
+    }
+
+    const target = returnFocus;
+    returnFocus = null;
+    if (restoreFocus && target?.isConnected) {
+      requestAnimationFrame(() => {
+        if (!document.querySelector(`${MOBILE_OVERLAY_SELECTOR}.open`) && target.isConnected) {
+          target.focus();
+        }
+      });
+    }
   };
 
   const open = () => {
-    document.querySelectorAll('.mobile-overlay.open').forEach((other) => {
-      if (other !== overlayEl) other._mobileOverlayClose?.();
+    if (overlayEl.classList.contains('open')) return;
+    const activeElement = document.activeElement;
+    returnFocus = activeElement instanceof HTMLElement && !activeElement.closest(MOBILE_OVERLAY_SELECTOR)
+      ? activeElement
+      : fabEl;
+
+    applyMobileBackgroundInert();
+    document.querySelectorAll(`${MOBILE_OVERLAY_SELECTOR}.open`).forEach((other) => {
+      if (other !== overlayEl) {
+        other._mobileOverlayClose?.({ restoreFocus: false, releaseBackground: false });
+      }
     });
+    overlayEl.inert = false;
+    // The CSS visibility transition otherwise keeps the newly opened panel
+    // unfocusable through its first frame, even though opacity is animating.
+    overlayEl.style.transitionProperty = 'opacity';
+    overlayEl.style.visibility = 'visible';
     overlayEl.classList.add('open');
     overlayEl.setAttribute('aria-hidden', 'false');
     fabEl.classList.add('active');
     fabEl.setAttribute('aria-expanded', 'true');
     onOpen?.();
+
+    requestAnimationFrame(() => {
+      overlayEl.style.removeProperty('transition-property');
+      if (!overlayEl.classList.contains('open')) return;
+      const focusable = visibleFocusable(panel);
+      const closeButton = overlayEl.querySelector('.mobile-overlay-close');
+      const target = focusable.includes(closeButton) ? closeButton : focusable[0];
+      target?.focus();
+    });
+  };
+
+  const trapFocus = (event) => {
+    if (event.key !== 'Tab' || !overlayEl.classList.contains('open')) return;
+    const focusRoot = activePriorityModal() || panel;
+    const focusable = visibleFocusable(focusRoot);
+    if (focusable.length === 0) {
+      event.preventDefault();
+      return;
+    }
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const activeElement = document.activeElement;
+    if (!focusRoot?.contains(activeElement)) {
+      event.preventDefault();
+      first.focus();
+    } else if (event.shiftKey && activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
   };
 
   overlayEl._mobileOverlayClose = close;
   overlayEl.querySelectorAll('[data-mobile-overlay-close]').forEach((btn) => {
-    btn.addEventListener('click', close);
+    btn.addEventListener('click', () => close());
   });
   fabEl.addEventListener('click', () => {
-    if (overlayEl.classList.contains('open')) close();
-    else open();
+    if (overlayEl.classList.contains('open')) {
+      close();
+      return;
+    }
+    // A press may mean something else before it means "open this" -- see the
+    // Dashboard FAB below, where a signed-out press opens the Accounts window
+    // first. The intercept opens the overlay itself when it is done.
+    if (interceptPress?.(open)) return;
+    open();
   });
+  document.addEventListener('keydown', trapFocus);
 
   return { open, close };
 }
@@ -132,10 +300,11 @@ function setupMobileOverlay(overlayEl, fabEl, { onOpen, onClose } = {}) {
 // overlays, which are otherwise identical lazy-iframe drawers. Returns the
 // {open, close} handle so callers can drive it from elsewhere (see the
 // window.ArenaOpen*/ArenaCloseOverlay hooks below).
-function setupLazyFrameOverlay(overlayId, fabId) {
+function setupLazyFrameOverlay(overlayId, fabId, { interceptPress } = {}) {
   const overlay = document.getElementById(overlayId);
   const frame = overlay?.querySelector('iframe[data-src]');
   return setupMobileOverlay(overlay, document.getElementById(fabId), {
+    interceptPress,
     onOpen: () => {
       if (frame && !frame.getAttribute('src')) {
         frame.setAttribute('src', appPath(frame.dataset.src));
@@ -144,11 +313,32 @@ function setupLazyFrameOverlay(overlayId, fabId) {
   });
 }
 
+/*
+ * The mobile half of app.js's openDashboardFromPress, and for the same
+ * reason: the Dashboard drawer is how somebody signs in here too, and it used
+ * to open on a screen asking which of two ways they wanted. A signed-out
+ * press starts the Accounts window itself; the drawer opens after it, whatever
+ * the window did, so nothing about the press can dead-end.
+ *
+ * Returns false -- "not handled, open normally" -- whenever the session is
+ * still unknown or sign-in is not configured on this Arena, because a window
+ * opened after a fetch is a window the browser blocks.
+ */
+function interceptDashboardPressForSignIn(open) {
+  if (!isSignedOut() || signInAvailability() !== 'available') return false;
+  startSignIn().finally(open);
+  return true;
+}
+
 // Chat FAB opens #chat-overlay, whose markup/ids match ../js/chat-panel.js
 // exactly (that module is unmodified and self-wires on DOMContentLoaded).
 function setupChatAndDashboard() {
+  // Read the session now, so a later press already knows what it means.
+  watchSignInState();
   setupMobileOverlay(document.getElementById('chat-overlay'), document.getElementById('fab-chat'));
-  const dashboardOverlay = setupLazyFrameOverlay('dashboard-overlay', 'fab-dashboard');
+  const dashboardOverlay = setupLazyFrameOverlay('dashboard-overlay', 'fab-dashboard', {
+    interceptPress: interceptDashboardPressForSignIn,
+  });
   const shopOverlay = setupLazyFrameOverlay('shop-overlay', 'fab-shop');
 
   // Mirrors app.js's openDashboardOverlay/window.ArenaOpen*/ArenaCloseOverlay
@@ -184,8 +374,12 @@ function setupChatAndDashboard() {
     else if (overlayId === 'shop-overlay') shopOverlay?.close();
   };
 
+  const priorityEscapeEvents = new WeakSet();
   document.addEventListener('keydown', (event) => {
-    if (event.key !== 'Escape') return;
+    if (event.key === 'Escape' && activePriorityModal()) priorityEscapeEvents.add(event);
+  }, { capture: true });
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || priorityEscapeEvents.has(event)) return;
     document.querySelectorAll('.mobile-overlay.open').forEach((overlay) => {
       overlay._mobileOverlayClose?.();
     });
