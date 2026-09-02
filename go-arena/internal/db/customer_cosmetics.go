@@ -14,23 +14,52 @@ import (
 )
 
 var (
-	ErrCustomerEmailInvalid             = errors.New("invalid customer email")
-	ErrCustomerAccountNotFound          = errors.New("customer account not found")
-	ErrCustomerAccountUnverified        = errors.New("customer email is not verified")
-	ErrCustomerIdentityConflict         = errors.New("verified identity is already bound to another account")
-	ErrCustomerBotAlreadyLinked         = errors.New("bot is already linked to another account")
-	ErrCustomerBotNotLinked             = errors.New("bot is not linked to this account")
-	ErrCustomerBotKeyInactive           = errors.New("bot API key is inactive")
-	ErrCosmeticLicenseNotFound          = errors.New("cosmetic license not found")
-	ErrCosmeticLicenseNotOwned          = errors.New("cosmetic license is not owned by this account")
-	ErrCosmeticLicenseReferenceRequired = errors.New("external reference is required for provider fulfillment")
-	ErrCosmeticLicenseGrantConflict     = errors.New("external reference already granted a different cosmetic license")
-	ErrCosmeticLicenseAlreadyAssigned   = errors.New("cosmetic license is already assigned to another agent")
+	ErrCustomerEmailInvalid      = errors.New("invalid customer email")
+	ErrCustomerAccountNotFound   = errors.New("customer account not found")
+	ErrCustomerAccountUnverified = errors.New("customer email is not verified")
+	ErrCustomerIdentityConflict  = errors.New("verified identity is already bound to another account")
+	ErrCustomerBotAlreadyLinked  = errors.New("bot is already linked to another account")
+	ErrCustomerBotNotLinked      = errors.New("bot is not linked to this account")
+	ErrCustomerBotKeyInactive    = errors.New("bot API key is inactive")
+	// ErrSubscriptionRequired is the one commerce error left: a paid cosmetic
+	// was asked for by an account whose Arena subscription is not active.
+	ErrSubscriptionRequired = errors.New("an active Arena subscription is required for this cosmetic")
 )
 
-// CustomerAccount is the durable owner of purchased cosmetics. API keys are
-// intentionally absent: keys prove control of a bot, but account ownership
-// survives key loss, revocation, and replacement.
+/*
+ * botMayWearCosmeticSQL is the single rule for whether a bot may wear one
+ * catalog item, written once and joined everywhere a paid cosmetic is read,
+ * equipped or rendered. `l` is the bot (a row with `bot_id`), `i` the item.
+ *
+ *   - a free item is always available;
+ *   - the admin demo-loadout tool grants bot-scoped complimentary items in
+ *     `cosmetic_entitlements`, and those are honoured for that bot;
+ *   - everything else is included with the Arena subscription: the bot must
+ *     be linked to a customer account whose `subscription_active` flag is on.
+ *
+ * The flag is read at query time rather than copied into the loadout, so a
+ * subscription that lapses hides every paid look at the next read with no
+ * row to clean up, and one that resumes brings the saved loadout straight
+ * back. There is no per-item ownership anywhere in Arena any more — Accounts
+ * owns the subscription, and Arena owns which bot wears what.
+ */
+const botMayWearCosmeticSQL = `(
+	i.is_free = true
+	OR EXISTS (
+		SELECT 1 FROM cosmetic_entitlements e
+		WHERE e.bot_id = l.bot_id AND e.cosmetic_id = i.id
+	)
+	OR EXISTS (
+		SELECT 1 FROM account_bot_links abl
+		JOIN customer_accounts ca ON ca.id = abl.account_id
+		WHERE abl.bot_id = l.bot_id AND ca.subscription_active = true
+	)
+)`
+
+// CustomerAccount is the durable owner of an Arena subscription and of the
+// bots that wear it. API keys are intentionally absent: keys prove control
+// of a bot, but account ownership survives key loss, revocation, and
+// replacement.
 type CustomerAccount struct {
 	ID string `json:"id"`
 	// Empty for every account linked to an Accounts identity, which after the
@@ -40,8 +69,14 @@ type CustomerAccount struct {
 	Email           string     `json:"email,omitempty"`
 	DisplayName     string     `json:"display_name"`
 	EmailVerifiedAt *time.Time `json:"email_verified_at,omitempty"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	// SubscriptionActive is Arena's cache of the one commerce fact it acts
+	// on: Accounts reported an ACTIVE entitlement for the Arena product at
+	// this account's last sign-in. SubscriptionSyncedAt is when that was
+	// last read; nil for an account that has never been synced.
+	SubscriptionActive   bool       `json:"subscription_active"`
+	SubscriptionSyncedAt *time.Time `json:"subscription_synced_at,omitempty"`
+	CreatedAt            time.Time  `json:"created_at"`
+	UpdatedAt            time.Time  `json:"updated_at"`
 }
 
 type AccountBot struct {
@@ -54,47 +89,46 @@ type AccountBot struct {
 	LinkedAt      time.Time `json:"linked_at"`
 }
 
-// CosmeticLicense represents one independently assignable copy. Buying the
-// same catalog item twice creates two rows with different IDs.
-type CosmeticLicense struct {
-	ID              string       `json:"id"`
-	AccountID       *string      `json:"account_id,omitempty"`
-	LegacyBotID     *string      `json:"legacy_bot_id,omitempty"`
-	CosmeticID      string       `json:"cosmetic_id"`
-	AssignedBotID   *string      `json:"assigned_bot_id,omitempty"`
-	AssignedBotName *string      `json:"assigned_bot_name,omitempty"`
-	Equipped        bool         `json:"equipped"`
-	Status          string       `json:"status"`
-	Source          string       `json:"source"`
-	ExternalRef     *string      `json:"external_reference,omitempty"`
-	Revision        int64        `json:"revision"`
-	GrantedAt       time.Time    `json:"granted_at"`
-	UpdatedAt       time.Time    `json:"updated_at"`
-	Item            CosmeticItem `json:"item"`
+// CustomerSubscription is what the Dashboard is told about the account's
+// Arena subscription. It is a projection of the two account columns, kept as
+// its own object so the wire shape can grow without renaming account fields.
+type CustomerSubscription struct {
+	Active   bool       `json:"active"`
+	SyncedAt *time.Time `json:"synced_at,omitempty"`
+	// URL is where the subscription is bought and managed. Filled in by the
+	// API layer from configuration; the database knows nothing about it.
+	URL string `json:"url,omitempty"`
 }
 
+// CustomerCosmeticsInventory is the Dashboard's view: the account, its bots,
+// whether the subscription is active, every active catalog item (all of them
+// are included with the subscription), and what each linked bot currently
+// wears. There are no licences to list; with a subscription, everything is
+// unlocked for every linked bot.
 type CustomerCosmeticsInventory struct {
-	Account           CustomerAccount           `json:"account"`
-	Bots              []AccountBot              `json:"bots"`
-	Licenses          []CosmeticLicense         `json:"licenses"`
-	Subscription      *CosmeticSubscription     `json:"subscription"`
-	SubscriptionOffer CosmeticSubscriptionOffer `json:"subscription_offer"`
-	// Membership is the account's active admin-granted "All Access" grant, if
-	// any. It is a distinct entitlement from Subscription (Stripe-driven) --
-	// both can grant the same catalog access, but only Subscription implies a
-	// recurring charge. The Dashboard's All Access status must treat either as
-	// "access active" or a staff-granted membership silently looks inactive.
-	Membership *CosmeticAdminMembership `json:"membership,omitempty"`
+	Account      CustomerAccount      `json:"account"`
+	Bots         []AccountBot         `json:"bots"`
+	Subscription CustomerSubscription `json:"subscription"`
+	Items        []CosmeticItem       `json:"items"`
+	// Loadouts is bot id -> slot -> cosmetic id, for the cosmetics that bot
+	// actually renders right now (a paid look saved while subscribed is
+	// omitted while the subscription is lapsed, exactly as the spectator
+	// stream omits it).
+	Loadouts map[string]map[string]string `json:"loadouts"`
 }
 
-type CosmeticAssignmentChange struct {
-	License       CosmeticLicense `json:"license"`
-	PreviousBotID *string         `json:"previous_bot_id,omitempty"`
-	CurrentBotID  *string         `json:"current_bot_id,omitempty"`
+// SubscriptionSyncChange reports what one sync did, so the caller can refresh
+// the live visuals of the bots it affected.
+type SubscriptionSyncChange struct {
+	AccountID string
+	Active    bool
+	Changed   bool
+	BotIDs    []string
 }
 
-// NormalizeCustomerEmail produces the canonical ownership key used by both
-// payment fulfillment and verified OIDC login.
+// NormalizeCustomerEmail produces the canonical form of an address, used only
+// while pre-cutover accounts are still being matched by the address they
+// signed up with.
 func NormalizeCustomerEmail(raw string) (string, error) {
 	normalized := strings.ToLower(strings.TrimSpace(raw))
 	if normalized == "" || len(normalized) > 254 {
@@ -115,6 +149,7 @@ func scanCustomerAccount(row pgx.Row) (*CustomerAccount, error) {
 	// "we do not hold one" has always looked like everywhere above this.
 	var email *string
 	err := row.Scan(&account.ID, &email, &account.DisplayName, &account.EmailVerifiedAt,
+		&account.SubscriptionActive, &account.SubscriptionSyncedAt,
 		&account.CreatedAt, &account.UpdatedAt)
 	if err != nil {
 		return nil, err
@@ -126,13 +161,14 @@ func scanCustomerAccount(row pgx.Row) (*CustomerAccount, error) {
 }
 
 func customerAccountSelect() string {
-	return `SELECT id, email, display_name, email_verified_at, created_at, updated_at FROM customer_accounts`
+	return `SELECT id, email, display_name, email_verified_at, subscription_active, subscription_synced_at,
+	               created_at, updated_at FROM customer_accounts`
 }
 
 // lockCustomerAccount is the first lock taken by every account-scoped
-// mutation. Serialising on this row gives assign, equip, link, unlink, grant,
-// and identity binding one shared lock order before they touch licenses or bot
-// links.
+// mutation. Serialising on this row gives equip, link, unlink, subscription
+// sync and identity binding one shared lock order before they touch loadouts
+// or bot links.
 func lockCustomerAccount(ctx context.Context, tx pgx.Tx, accountID string, requireVerified bool) (*CustomerAccount, error) {
 	account, err := scanCustomerAccount(tx.QueryRow(ctx,
 		customerAccountSelect()+` WHERE id = $1 FOR UPDATE`, accountID))
@@ -148,32 +184,6 @@ func lockCustomerAccount(ctx context.Context, tx pgx.Tx, accountID string, requi
 	return account, nil
 }
 
-// GetOrCreateCustomerAccountByEmail creates a pending account for fulfillment.
-// It does not mark the email verified; only a verified OIDC claim does that.
-func GetOrCreateCustomerAccountByEmail(ctx context.Context, rawEmail string) (*CustomerAccount, error) {
-	if Pool == nil {
-		return nil, ErrNoDatabase
-	}
-	email, err := NormalizeCustomerEmail(rawEmail)
-	if err != nil {
-		return nil, err
-	}
-	account, err := scanCustomerAccount(Pool.QueryRow(ctx, `
-		INSERT INTO customer_accounts (id, email, created_at, updated_at)
-		VALUES ($1, $2, NOW(), NOW())
-		ON CONFLICT (email) DO UPDATE SET updated_at = customer_accounts.updated_at
-		RETURNING id, email, display_name, email_verified_at, created_at, updated_at`,
-		uuid.NewString(), email))
-	if err != nil {
-		return nil, fmt.Errorf("GetOrCreateCustomerAccountByEmail: %w", err)
-	}
-	return account, nil
-}
-
-// UpsertVerifiedCustomerAccount binds a verified OIDC identity to the durable
-// email account. It first follows a stable issuer+subject binding. Email
-// fallback is deliberately restricted to an identity-null pending account so
-// a second identity can never take over an already-bound email owner.
 // UpsertVerifiedCustomerAccount binds an Accounts identity to an Arena account
 // without keeping the person's email address.
 //
@@ -365,6 +375,68 @@ func GetCustomerAccount(ctx context.Context, accountID string) (*CustomerAccount
 	return account, nil
 }
 
+/*
+ * SetCustomerSubscription records what Accounts said at this sign-in.
+ *
+ * It is the whole of the "entitlement sync" now. Nothing is materialised per
+ * item; the flag is joined at read time by botMayWearCosmeticSQL, so
+ * flipping it is what unlocks or hides every paid cosmetic on every bot this
+ * account has linked. The affected bot ids are returned so the caller can
+ * refresh the engine's presentation cache for the ones that are connected.
+ *
+ * Both directions are written, deliberately. A lapsed subscription is a fact
+ * Accounts reported, and the previous flag is a cache of an older report;
+ * keeping it would be Arena deciding to disagree with the authority.
+ */
+func SetCustomerSubscription(ctx context.Context, accountID string, active bool, syncedAt time.Time) (*SubscriptionSyncChange, error) {
+	if Pool == nil {
+		return nil, ErrNoDatabase
+	}
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return nil, ErrCustomerAccountNotFound
+	}
+	tx, err := Pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("SetCustomerSubscription begin: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	account, err := lockCustomerAccount(ctx, tx, accountID, false)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE customer_accounts
+		SET subscription_active = $2, subscription_synced_at = $3, updated_at = NOW()
+		WHERE id = $1`, accountID, active, syncedAt.UTC()); err != nil {
+		return nil, fmt.Errorf("SetCustomerSubscription update: %w", err)
+	}
+	change := &SubscriptionSyncChange{AccountID: accountID, Active: active, Changed: account.SubscriptionActive != active}
+	if change.Changed {
+		rows, err := tx.Query(ctx, `SELECT bot_id FROM account_bot_links WHERE account_id = $1 ORDER BY bot_id`, accountID)
+		if err != nil {
+			return nil, fmt.Errorf("SetCustomerSubscription bots: %w", err)
+		}
+		for rows.Next() {
+			var botID string
+			if err := rows.Scan(&botID); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("SetCustomerSubscription bot scan: %w", err)
+			}
+			change.BotIDs = append(change.BotIDs, botID)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("SetCustomerSubscription bot rows: %w", err)
+		}
+		rows.Close()
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("SetCustomerSubscription commit: %w", err)
+	}
+	return change, nil
+}
+
 func ListAccountBots(ctx context.Context, accountID string) ([]AccountBot, error) {
 	if Pool == nil {
 		return nil, ErrNoDatabase
@@ -391,6 +463,40 @@ func ListAccountBots(ctx context.Context, accountID string) ([]AccountBot, error
 		bots = append(bots, bot)
 	}
 	return bots, rows.Err()
+}
+
+// ListAccountBotLoadouts reports what each of the account's linked bots
+// renders right now: bot id -> slot -> cosmetic id, through the same rule the
+// spectator stream uses, so the Dashboard never shows a look the arena does
+// not.
+func ListAccountBotLoadouts(ctx context.Context, accountID string) (map[string]map[string]string, error) {
+	if Pool == nil {
+		return nil, ErrNoDatabase
+	}
+	rows, err := Pool.Query(ctx, `
+		SELECT l.bot_id, l.slot, l.cosmetic_id
+		FROM bot_cosmetic_loadout l
+		JOIN account_bot_links abl ON abl.bot_id = l.bot_id AND abl.account_id = $1
+		JOIN cosmetic_items i ON i.id = l.cosmetic_id AND i.slot = l.slot
+		JOIN cosmetic_categories c ON c.id = i.category_id
+		WHERE i.is_active = true AND c.is_active = true AND `+botMayWearCosmeticSQL+`
+		ORDER BY l.bot_id, l.slot`, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("ListAccountBotLoadouts: %w", err)
+	}
+	defer rows.Close()
+	loadouts := make(map[string]map[string]string)
+	for rows.Next() {
+		var botID, slot, cosmeticID string
+		if err := rows.Scan(&botID, &slot, &cosmeticID); err != nil {
+			return nil, fmt.Errorf("ListAccountBotLoadouts scan: %w", err)
+		}
+		if loadouts[botID] == nil {
+			loadouts[botID] = make(map[string]string)
+		}
+		loadouts[botID][slot] = cosmeticID
+	}
+	return loadouts, rows.Err()
 }
 
 func ClaimArenaAgentWithControlProof(
@@ -503,46 +609,6 @@ func linkBotToCustomerAccountTx(
 			return nil, false, fmt.Errorf("LinkBotToCustomerAccount insert: %w", err)
 		}
 	}
-	// Claim every pre-account license for this bot. The account assignment is
-	// represented by a composite-FK row, so a future handler bug cannot point a
-	// license at a bot belonging to another account.
-	legacyRows, err := tx.Query(ctx, `
-		SELECT id, assigned_bot_id, status FROM cosmetic_licenses
-		WHERE legacy_bot_id = $1 AND account_id IS NULL
-		ORDER BY id FOR UPDATE`, botID)
-	if err != nil {
-		return nil, false, fmt.Errorf("LinkBotToCustomerAccount legacy locks: %w", err)
-	}
-	type legacyClaim struct {
-		licenseID string
-		assigned  *string
-		status    string
-	}
-	claims := make([]legacyClaim, 0)
-	for legacyRows.Next() {
-		var claim legacyClaim
-		if err := legacyRows.Scan(&claim.licenseID, &claim.assigned, &claim.status); err != nil {
-			legacyRows.Close()
-			return nil, false, fmt.Errorf("LinkBotToCustomerAccount legacy scan: %w", err)
-		}
-		claims = append(claims, claim)
-	}
-	if err := legacyRows.Err(); err != nil {
-		legacyRows.Close()
-		return nil, false, fmt.Errorf("LinkBotToCustomerAccount legacy rows: %w", err)
-	}
-	legacyRows.Close()
-	for _, claim := range claims {
-		var preserveAgentID *string
-		if claim.status == "active" && claim.assigned != nil && *claim.assigned == botID {
-			preserveAgentID = &botID
-		}
-		if _, err := claimCosmeticLicenseTx(
-			ctx, tx, claim.licenseID, accountID, preserveAgentID, "arena_agent_link_claim",
-		); err != nil {
-			return nil, false, fmt.Errorf("LinkBotToCustomerAccount claim legacy: %w", err)
-		}
-	}
 	if linkCreated {
 		if err := appendPlatformAgentLinkEventTx(ctx, tx, accountID, botID, "linked", "arena_account_link", time.Now()); err != nil {
 			return nil, false, fmt.Errorf("LinkBotToCustomerAccount platform link: %w", err)
@@ -586,42 +652,24 @@ func unlinkBotFromCustomerAccountTx(ctx context.Context, tx pgx.Tx, accountID, b
 		}
 		return nil, fmt.Errorf("unlink bot from customer account link: %w", err)
 	}
-	// The account row above serializes all same-account mutations. License locks
-	// then protect against admin revocation while the assignment is removed.
-	rows, err := tx.Query(ctx, `
-		SELECT cl.id FROM cosmetic_licenses cl
-		JOIN cosmetic_license_assignments cla ON cla.license_id = cl.id
-		WHERE cla.account_id = $1 AND cla.bot_id = $2
-		ORDER BY cl.id FOR UPDATE OF cl, cla`, accountID, botID)
-	if err != nil {
-		return nil, fmt.Errorf("unlink bot from customer account license locks: %w", err)
+	/*
+	 * The subscription travelled with the link, so the paid loadout goes
+	 * with it. Free items and admin demo grants belong to the bot itself and
+	 * stay. Deleting rather than relying on the read-time rule alone keeps
+	 * the loadout table honest: a bot nobody subscribes for has no paid rows
+	 * waiting to reappear the moment somebody else links it.
+	 */
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM bot_cosmetic_loadout l
+		USING cosmetic_items i
+		WHERE l.bot_id = $1 AND i.id = l.cosmetic_id AND i.is_free = false
+		  AND NOT EXISTS (
+		    SELECT 1 FROM cosmetic_entitlements e
+		    WHERE e.bot_id = l.bot_id AND e.cosmetic_id = i.id
+		  )`, botID); err != nil {
+		return nil, fmt.Errorf("unlink bot from customer account loadout: %w", err)
 	}
-	licenseIDs := make([]string, 0)
-	for rows.Next() {
-		var licenseID string
-		if err := rows.Scan(&licenseID); err != nil {
-			rows.Close()
-			return nil, fmt.Errorf("unlink bot from customer account license scan: %w", err)
-		}
-		licenseIDs = append(licenseIDs, licenseID)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return nil, fmt.Errorf("unlink bot from customer account license rows: %w", err)
-	}
-	rows.Close()
-	for _, licenseID := range licenseIDs {
-		license, _, err := lockPlatformCosmeticLicenseTx(ctx, tx, licenseID)
-		if err != nil {
-			return nil, err
-		}
-		if _, err := applyCosmeticLicenseAssignmentTx(
-			ctx, tx, license, nil, "unassigned", "arena", "arena_agent_unlink",
-		); err != nil {
-			return nil, err
-		}
-	}
-	_, err = tx.Exec(ctx, `DELETE FROM account_bot_links WHERE account_id = $1 AND bot_id = $2`, accountID, botID)
+	_, err := tx.Exec(ctx, `DELETE FROM account_bot_links WHERE account_id = $1 AND bot_id = $2`, accountID, botID)
 	if err != nil {
 		return nil, fmt.Errorf("unlink bot from customer account delete: %w", err)
 	}
@@ -659,83 +707,7 @@ func IsBotLinkedToCustomerAccount(ctx context.Context, accountID, botID string) 
 	return linked, nil
 }
 
-const cosmeticLicenseSelect = `
-	SELECT cl.id, cl.account_id, cl.legacy_bot_id, cl.cosmetic_id,
-	       COALESCE(cla.bot_id, cl.assigned_bot_id), b.name,
-	       EXISTS (SELECT 1 FROM bot_cosmetic_loadout l WHERE l.license_id = cl.id) AS equipped,
-	       cl.status, cl.source, cl.external_reference, cl.revision,
-	       cl.granted_at, cl.updated_at,
-	       i.id, i.name, i.description, i.slot, i.asset_key, i.rarity,
-	       i.price_cents, i.currency, i.is_free, i.is_purchasable,
-	       (i.is_active AND c.is_active), i.is_builtin
-	FROM cosmetic_licenses cl
-	JOIN cosmetic_items i ON i.id = cl.cosmetic_id
-	JOIN cosmetic_categories c ON c.id = i.category_id
-	LEFT JOIN cosmetic_license_assignments cla ON cla.license_id = cl.id
-	LEFT JOIN bots b ON b.id = COALESCE(cla.bot_id, cl.assigned_bot_id)`
-
-type rowScanner interface {
-	Scan(dest ...any) error
-}
-
-func scanCosmeticLicense(row rowScanner) (*CosmeticLicense, error) {
-	var license CosmeticLicense
-	err := row.Scan(&license.ID, &license.AccountID, &license.LegacyBotID, &license.CosmeticID,
-		&license.AssignedBotID, &license.AssignedBotName, &license.Equipped,
-		&license.Status, &license.Source, &license.ExternalRef, &license.Revision,
-		&license.GrantedAt, &license.UpdatedAt,
-		&license.Item.ID, &license.Item.Name, &license.Item.Description, &license.Item.Slot,
-		&license.Item.AssetKey, &license.Item.Rarity, &license.Item.PriceCents,
-		&license.Item.Currency, &license.Item.IsFree, &license.Item.IsPurchasable, &license.Item.IsActive, &license.Item.IsBuiltin)
-	if err != nil {
-		return nil, err
-	}
-	return &license, nil
-}
-
-func getCosmeticLicense(ctx context.Context, licenseID string) (*CosmeticLicense, error) {
-	license, err := scanCosmeticLicense(Pool.QueryRow(ctx, cosmeticLicenseSelect+` WHERE cl.id = $1`, licenseID))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrCosmeticLicenseNotFound
-	}
-	if err != nil {
-		return nil, fmt.Errorf("getCosmeticLicense: %w", err)
-	}
-	return license, nil
-}
-
-func ListCustomerCosmeticLicenses(ctx context.Context, accountID string) ([]CosmeticLicense, error) {
-	if Pool == nil {
-		return nil, ErrNoDatabase
-	}
-	rows, err := Pool.Query(ctx, cosmeticLicenseSelect+`
-		WHERE cl.account_id = $1
-		ORDER BY cl.granted_at, cl.id`, accountID)
-	if err != nil {
-		return nil, fmt.Errorf("ListCustomerCosmeticLicenses: %w", err)
-	}
-	defer rows.Close()
-	licenses := make([]CosmeticLicense, 0)
-	for rows.Next() {
-		license, err := scanCosmeticLicense(rows)
-		if err != nil {
-			return nil, fmt.Errorf("ListCustomerCosmeticLicenses scan: %w", err)
-		}
-		licenses = append(licenses, *license)
-	}
-	return licenses, rows.Err()
-}
-
 func GetCustomerCosmeticsInventory(ctx context.Context, accountID string) (*CustomerCosmeticsInventory, error) {
-	// Subscription access is materialized as ordinary per-item licenses. This
-	// idempotent sync makes newly published sets available before the Dashboard
-	// renders inventory, without weakening the existing assignment constraints.
-	if _, err := SyncCustomerCosmeticSubscriptionLicenses(ctx, accountID); err != nil {
-		return nil, err
-	}
-	if _, err := SyncCustomerCosmeticAdminMembershipLicenses(ctx, accountID); err != nil {
-		return nil, err
-	}
 	account, err := GetCustomerAccount(ctx, accountID)
 	if err != nil {
 		return nil, err
@@ -744,411 +716,84 @@ func GetCustomerCosmeticsInventory(ctx context.Context, accountID string) (*Cust
 	if err != nil {
 		return nil, err
 	}
-	licenses, err := ListCustomerCosmeticLicenses(ctx, accountID)
+	items, err := ListCosmeticCatalog(ctx)
 	if err != nil {
 		return nil, err
 	}
-	subscription, err := GetCustomerCosmeticSubscription(ctx, accountID)
-	if err != nil {
-		return nil, err
-	}
-	membership, err := GetActiveCosmeticAdminMembership(ctx, accountID)
+	loadouts, err := ListAccountBotLoadouts(ctx, accountID)
 	if err != nil {
 		return nil, err
 	}
 	return &CustomerCosmeticsInventory{
-		Account: *account, Bots: bots, Licenses: licenses, Subscription: subscription, Membership: membership,
+		Account: *account,
+		Bots:    bots,
+		Subscription: CustomerSubscription{
+			Active: account.SubscriptionActive, SyncedAt: account.SubscriptionSyncedAt,
+		},
+		Items:    items,
+		Loadouts: loadouts,
 	}, nil
 }
 
-// GrantCosmeticLicense is the email-owned payment/manual fulfillment seam.
-// An external reference is idempotent; without one, each call intentionally
-// creates another independently assignable copy.
-// GrantCosmeticLicense fulfils against an email address, for the payment path
-// that only knows one.
-//
-// Retained, and deliberately thin. It resolves the address to an account and
-// hands over; every line of the actual fulfilment now lives in
-// GrantCosmeticLicenseToAccount, because an account that has been linked to an
-// Accounts identity no longer *has* an address to be found by.
-//
-// This entry point is for the legacy Stripe seam, where a person pays before
-// signing in and the receipt is the only identifier that exists. Once
-// purchasing moves to the Accounts app the buyer is known by id at the moment
-// of purchase, and nothing needs to call this.
-func GrantCosmeticLicense(ctx context.Context, rawEmail, cosmeticID, source, externalReference string) (*CosmeticLicense, bool, error) {
-	if Pool == nil {
-		return nil, false, ErrNoDatabase
+/*
+ * EquipCustomerCosmetic is the Dashboard's equip: this linked bot wears this
+ * catalog item in this slot from now on.
+ *
+ * A free item needs only the link. A paid item needs the account's Arena
+ * subscription to be active — that is the one and only ownership check, and
+ * it is made against the account row locked at the top of the transaction so
+ * a sync landing at the same moment cannot be half-seen. The admin demo grant
+ * is not consulted here: it is a bot-scoped complimentary path for the demo
+ * fleet, and the Dashboard equips what the subscription includes.
+ */
+func EquipCustomerCosmetic(ctx context.Context, accountID, botID, slot, cosmeticID string) (*CosmeticItem, error) {
+	slot = strings.TrimSpace(strings.ToLower(slot))
+	if !IsValidCosmeticSlot(slot) {
+		return nil, ErrInvalidCosmeticSlot
 	}
-	account, err := GetOrCreateCustomerAccountByEmail(ctx, rawEmail)
-	if err != nil {
-		return nil, false, err
-	}
-	return GrantCosmeticLicenseToAccount(ctx, account.ID, cosmeticID, source, externalReference)
-}
-
-// GrantCosmeticLicenseToAccount is the fulfilment seam, keyed by the thing
-// that actually identifies a customer now.
-//
-// Splitting this out is what makes "stop storing email addresses" survive
-// contact with the shop. Fulfilment never needed an address — it needed an
-// account, and the address was only ever how one was found. An account id is
-// how one is found now, from a signed-in session or from an Accounts purchase
-// that already knows who bought.
-func GrantCosmeticLicenseToAccount(ctx context.Context, accountID, cosmeticID, source, externalReference string) (*CosmeticLicense, bool, error) {
-	if Pool == nil {
-		return nil, false, ErrNoDatabase
-	}
-	account, err := GetCustomerAccount(ctx, strings.TrimSpace(accountID))
-	if err != nil {
-		return nil, false, err
-	}
-	source = strings.ToLower(strings.TrimSpace(source))
-	if source == "" {
-		source = "manual"
-	}
-	externalReference = strings.TrimSpace(externalReference)
-	if source != "manual" && externalReference == "" {
-		return nil, false, ErrCosmeticLicenseReferenceRequired
-	}
-
-	tx, err := Pool.Begin(ctx)
-	if err != nil {
-		return nil, false, fmt.Errorf("GrantCosmeticLicense begin: %w", err)
-	}
-	defer tx.Rollback(ctx)
-	if _, err := lockCustomerAccount(ctx, tx, account.ID, false); err != nil {
-		return nil, false, err
-	}
-	if externalReference != "" {
-		var existingID, existingCosmetic string
-		var existingAccount *string
-		err := tx.QueryRow(ctx, `
-			SELECT id, account_id, cosmetic_id FROM cosmetic_licenses
-			WHERE source = $1 AND external_reference = $2
-			FOR UPDATE`, source, externalReference).Scan(&existingID, &existingAccount, &existingCosmetic)
-		if err == nil {
-			if existingCosmetic != cosmeticID {
-				return nil, false, ErrCosmeticLicenseGrantConflict
-			}
-			if existingAccount == nil {
-				// PR #69 licenses may outlive a deleted bot/key with only their
-				// payment/manual reference as recovery evidence. Email fulfillment
-				// claims that exact copy without reactivating its status or creating
-				// a duplicate. Any legacy loadout is removed because the copy is now
-				// account-owned and intentionally unassigned.
-				if _, err := claimCosmeticLicenseTx(
-					ctx, tx, existingID, account.ID, nil, "arena_fulfillment_claim",
-				); err != nil {
-					return nil, false, fmt.Errorf("GrantCosmeticLicense claim legacy: %w", err)
-				}
-				if err := tx.Commit(ctx); err != nil {
-					return nil, false, fmt.Errorf("GrantCosmeticLicense claim legacy commit: %w", err)
-				}
-				license, loadErr := getCosmeticLicense(ctx, existingID)
-				return license, true, loadErr
-			}
-			if *existingAccount == account.ID {
-				if err := tx.Commit(ctx); err != nil {
-					return nil, false, fmt.Errorf("GrantCosmeticLicense idempotent commit: %w", err)
-				}
-				license, loadErr := getCosmeticLicense(ctx, existingID)
-				return license, false, loadErr
-			}
-			return nil, false, ErrCosmeticLicenseGrantConflict
-		}
-		if !errors.Is(err, pgx.ErrNoRows) {
-			return nil, false, fmt.Errorf("GrantCosmeticLicense idempotency: %w", err)
-		}
-	}
-	var itemActive, categoryActive bool
-	if err := tx.QueryRow(ctx, `
-		SELECT i.is_active, c.is_active
-		FROM cosmetic_items i
-		JOIN cosmetic_categories c ON c.id = i.category_id
-		WHERE i.id = $1
-		FOR SHARE OF i, c`, cosmeticID).Scan(&itemActive, &categoryActive); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, false, ErrCosmeticNotFound
-		}
-		return nil, false, fmt.Errorf("GrantCosmeticLicense item: %w", err)
-	}
-	if !itemActive || !categoryActive {
-		return nil, false, ErrCosmeticInactive
-	}
-
-	licenseID := uuid.NewString()
-	_, err = createCosmeticLicenseTx(ctx, tx, cosmeticLicenseCreate{
-		LicenseID: licenseID, AccountID: &account.ID, CosmeticID: cosmeticID,
-		Source: source, Reason: "arena_license_grant", ExternalReference: externalReference,
-	})
-	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			return nil, false, ErrCosmeticLicenseGrantConflict
-		}
-		return nil, false, fmt.Errorf("GrantCosmeticLicense insert: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, false, fmt.Errorf("GrantCosmeticLicense commit: %w", err)
-	}
-	license, err := getCosmeticLicense(ctx, licenseID)
-	return license, true, err
-}
-
-func AssignCosmeticLicense(ctx context.Context, accountID, licenseID string, botID *string) (*CosmeticAssignmentChange, error) {
-	if Pool == nil {
-		return nil, ErrNoDatabase
-	}
-	var normalizedBotID *string
-	if botID != nil && strings.TrimSpace(*botID) != "" {
-		value := strings.TrimSpace(*botID)
-		normalizedBotID = &value
-	}
-	tx, err := Pool.Begin(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("AssignCosmeticLicense begin: %w", err)
-	}
-	defer tx.Rollback(ctx)
-	if _, err := lockCustomerAccount(ctx, tx, accountID, true); err != nil {
-		return nil, err
-	}
-	var owner *string
-	var status string
-	if err := tx.QueryRow(ctx, `
-		SELECT account_id, status FROM cosmetic_licenses WHERE id = $1 FOR UPDATE`, licenseID).
-		Scan(&owner, &status); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrCosmeticLicenseNotFound
-		}
-		return nil, fmt.Errorf("AssignCosmeticLicense lock: %w", err)
-	}
-	if owner == nil || *owner != accountID {
-		return nil, ErrCosmeticLicenseNotOwned
-	}
-	if blocked, err := cosmeticLicenseBlockedByAdminMembership(ctx, tx, licenseID); err != nil {
-		return nil, fmt.Errorf("AssignCosmeticLicense membership: %w", err)
-	} else if blocked {
-		return nil, ErrCosmeticInactive
-	}
-	var previous *string
-	err = tx.QueryRow(ctx, `
-		SELECT bot_id FROM cosmetic_license_assignments WHERE license_id = $1 FOR UPDATE`, licenseID).Scan(&previous)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return nil, fmt.Errorf("AssignCosmeticLicense current assignment: %w", err)
-	}
-	if normalizedBotID != nil {
-		if status != "active" {
-			return nil, ErrCosmeticInactive
-		}
-		var keyIsActive bool
-		if err := tx.QueryRow(ctx, `
-			SELECT k.is_active
-			FROM account_bot_links l
-			JOIN bots b ON b.id = l.bot_id
-			JOIN api_keys k ON k.id = b.api_key_id
-			WHERE l.account_id = $1 AND l.bot_id = $2
-			FOR SHARE OF l, k`, accountID, *normalizedBotID).Scan(&keyIsActive); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return nil, ErrCustomerBotNotLinked
-			}
-			return nil, fmt.Errorf("AssignCosmeticLicense bot link: %w", err)
-		}
-		if !keyIsActive {
-			return nil, ErrCustomerBotKeyInactive
-		}
-	}
-	platformLicense, _, err := lockPlatformCosmeticLicenseTx(ctx, tx, licenseID)
-	if err != nil {
-		return nil, err
-	}
-	transition := "assigned"
-	reason := "arena_compatibility_assignment"
-	if normalizedBotID == nil {
-		transition = "unassigned"
-		reason = "arena_compatibility_unassignment"
-	}
-	if _, err := applyCosmeticLicenseAssignmentTx(ctx, tx, platformLicense, normalizedBotID, transition, "arena", reason); err != nil {
-		return nil, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("AssignCosmeticLicense commit: %w", err)
-	}
-	license, err := getCosmeticLicense(ctx, licenseID)
-	if err != nil {
-		return nil, err
-	}
-	return &CosmeticAssignmentChange{License: *license, PreviousBotID: previous, CurrentBotID: normalizedBotID}, nil
-}
-
-// EquipCustomerCosmeticLicense equips one exact assigned license. Assignment
-// and equip are deliberately separate: moving a license never overwrites the
-// destination bot's current slot.
-func EquipCustomerCosmeticLicense(ctx context.Context, accountID, botID, licenseID string) (*CosmeticLicense, error) {
 	if Pool == nil {
 		return nil, ErrNoDatabase
 	}
 	tx, err := Pool.Begin(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("EquipCustomerCosmeticLicense begin: %w", err)
+		return nil, fmt.Errorf("EquipCustomerCosmetic begin: %w", err)
 	}
 	defer tx.Rollback(ctx)
-	if _, err := lockCustomerAccount(ctx, tx, accountID, true); err != nil {
+	account, err := lockCustomerAccount(ctx, tx, accountID, true)
+	if err != nil {
 		return nil, err
-	}
-	var owner *string
-	var cosmeticID, slot, status string
-	var itemActive, categoryActive bool
-	if err := tx.QueryRow(ctx, `
-		SELECT cl.account_id, cl.cosmetic_id, i.slot, cl.status, i.is_active, c.is_active
-		FROM cosmetic_licenses cl
-		JOIN cosmetic_items i ON i.id = cl.cosmetic_id
-		JOIN cosmetic_categories c ON c.id = i.category_id
-		WHERE cl.id = $1
-		FOR UPDATE OF cl
-		FOR SHARE OF i, c`, licenseID).Scan(&owner, &cosmeticID, &slot, &status, &itemActive, &categoryActive); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrCosmeticLicenseNotFound
-		}
-		return nil, fmt.Errorf("EquipCustomerCosmeticLicense license: %w", err)
-	}
-	if owner == nil || *owner != accountID {
-		return nil, ErrCosmeticLicenseNotOwned
-	}
-	if blocked, err := cosmeticLicenseBlockedByAdminMembership(ctx, tx, licenseID); err != nil {
-		return nil, fmt.Errorf("EquipCustomerCosmeticLicense membership: %w", err)
-	} else if blocked {
-		return nil, ErrCosmeticInactive
-	}
-	if status != "active" {
-		return nil, ErrCosmeticInactive
-	}
-	if !itemActive || !categoryActive {
-		return nil, ErrCosmeticInactive
 	}
 	var keyIsActive bool
 	if err := tx.QueryRow(ctx, `
 		SELECT k.is_active
-		FROM cosmetic_license_assignments a
-		JOIN bots b ON b.id = a.bot_id
+		FROM account_bot_links l
+		JOIN bots b ON b.id = l.bot_id
 		JOIN api_keys k ON k.id = b.api_key_id
-		WHERE a.license_id = $1 AND a.account_id = $2 AND a.bot_id = $3
-		FOR SHARE OF a, k`, licenseID, accountID, botID).Scan(&keyIsActive); err != nil {
+		WHERE l.account_id = $1 AND l.bot_id = $2
+		FOR SHARE OF l, k`, accountID, botID).Scan(&keyIsActive); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrCustomerBotNotLinked
 		}
-		return nil, fmt.Errorf("EquipCustomerCosmeticLicense assignment: %w", err)
+		return nil, fmt.Errorf("EquipCustomerCosmetic bot link: %w", err)
 	}
 	if !keyIsActive {
 		return nil, ErrCustomerBotKeyInactive
 	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO bot_cosmetic_loadout
-			(bot_id, slot, cosmetic_id, license_id, account_id, updated_at)
-		VALUES ($1, $2, $3, $4, $5, NOW())
-		ON CONFLICT (bot_id, slot) DO UPDATE
-		SET cosmetic_id = EXCLUDED.cosmetic_id, license_id = EXCLUDED.license_id,
-		    account_id = EXCLUDED.account_id, updated_at = NOW()`,
-		botID, slot, cosmeticID, licenseID, accountID); err != nil {
-		return nil, fmt.Errorf("EquipCustomerCosmeticLicense upsert: %w", err)
+	item, err := lockActiveCosmeticItemTx(ctx, tx, cosmeticID)
+	if err != nil {
+		return nil, err
+	}
+	if item.Slot != slot {
+		return nil, ErrCosmeticSlotMismatch
+	}
+	if !item.IsFree && !account.SubscriptionActive {
+		return nil, ErrSubscriptionRequired
+	}
+	if err := upsertBotCosmeticLoadoutTx(ctx, tx, botID, slot, cosmeticID); err != nil {
+		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("EquipCustomerCosmeticLicense commit: %w", err)
+		return nil, fmt.Errorf("EquipCustomerCosmetic commit: %w", err)
 	}
-	return getCosmeticLicense(ctx, licenseID)
-}
-
-func RevokeCosmeticLicense(ctx context.Context, licenseID string) (*CosmeticAssignmentChange, bool, error) {
-	if Pool == nil {
-		return nil, false, ErrNoDatabase
-	}
-	var membershipID string
-	err := Pool.QueryRow(ctx, `
-		SELECT membership_id FROM cosmetic_admin_membership_licenses WHERE license_id = $1`, licenseID).
-		Scan(&membershipID)
-	if err == nil {
-		return nil, false, ErrCosmeticAdminMembershipLicense
-	}
-	var pgErr *pgconn.PgError
-	membershipSchemaMissing := errors.As(err, &pgErr) && pgErr.Code == "42P01"
-	if !errors.Is(err, pgx.ErrNoRows) && !membershipSchemaMissing {
-		return nil, false, fmt.Errorf("RevokeCosmeticLicense membership: %w", err)
-	}
-	// Admin revocation does not receive an account ID. Read the current owner,
-	// then lock that account before locking the license. If a legacy claim races
-	// this read, retry so an account-owned mutation never skips the account lock.
-	for attempt := 0; attempt < 3; attempt++ {
-		var observedOwner *string
-		if err := Pool.QueryRow(ctx, `SELECT account_id FROM cosmetic_licenses WHERE id = $1`, licenseID).
-			Scan(&observedOwner); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return nil, false, nil
-			}
-			return nil, false, fmt.Errorf("RevokeCosmeticLicense owner: %w", err)
-		}
-
-		tx, err := Pool.Begin(ctx)
-		if err != nil {
-			return nil, false, fmt.Errorf("RevokeCosmeticLicense begin: %w", err)
-		}
-		if observedOwner != nil {
-			if _, err := lockCustomerAccount(ctx, tx, *observedOwner, false); err != nil {
-				tx.Rollback(ctx)
-				return nil, false, err
-			}
-		}
-
-		var actualOwner, legacyAssigned *string
-		var status string
-		if err := tx.QueryRow(ctx, `
-			SELECT account_id, assigned_bot_id, status
-			FROM cosmetic_licenses WHERE id = $1 FOR UPDATE`, licenseID).
-			Scan(&actualOwner, &legacyAssigned, &status); err != nil {
-			tx.Rollback(ctx)
-			if errors.Is(err, pgx.ErrNoRows) {
-				return nil, false, nil
-			}
-			return nil, false, fmt.Errorf("RevokeCosmeticLicense lock: %w", err)
-		}
-		ownerChanged := (observedOwner == nil) != (actualOwner == nil) ||
-			(observedOwner != nil && actualOwner != nil && *observedOwner != *actualOwner)
-		if ownerChanged {
-			tx.Rollback(ctx)
-			continue
-		}
-
-		var previous *string
-		err = tx.QueryRow(ctx, `
-			SELECT bot_id FROM cosmetic_license_assignments
-			WHERE license_id = $1 FOR UPDATE`, licenseID).Scan(&previous)
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			tx.Rollback(ctx)
-			return nil, false, fmt.Errorf("RevokeCosmeticLicense assignment: %w", err)
-		}
-		if previous == nil {
-			previous = legacyAssigned
-		}
-		platformLicense, _, err := lockPlatformCosmeticLicenseTx(ctx, tx, licenseID)
-		if err != nil {
-			tx.Rollback(ctx)
-			return nil, false, err
-		}
-		transitioned, err := applyCosmeticLicenseTerminalTransitionTx(
-			ctx, tx, platformLicense, "revoked", "arena_admin", "arena_admin_revoke", "",
-		)
-		if err != nil {
-			tx.Rollback(ctx)
-			return nil, false, err
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return nil, false, fmt.Errorf("RevokeCosmeticLicense commit: %w", err)
-		}
-		license, err := getCosmeticLicense(ctx, licenseID)
-		if err != nil {
-			return nil, false, err
-		}
-		return &CosmeticAssignmentChange{License: *license, PreviousBotID: previous},
-			status == "active" && transitioned, nil
-	}
-	return nil, false, fmt.Errorf("RevokeCosmeticLicense: account ownership changed repeatedly")
+	return item, nil
 }

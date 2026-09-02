@@ -200,13 +200,15 @@ func TestPostgresFreshSchemaCosmeticsAndLeaderboardResetSmoke(t *testing.T) {
 		t.Fatalf("equipped cosmetics = (%v, %v), want neon_grid", equipped, err)
 	}
 
-	revoked, err := RevokeCosmeticEntitlement(ctx, bot.ID, "skin-neon-grid")
-	if err != nil || !revoked {
-		t.Fatalf("RevokeCosmeticEntitlement = (%v, %v), want (true, nil)", revoked, err)
+	// The grant is what lets the loadout resolve; withdrawing it hides the
+	// look at the next read with no loadout cleanup, exactly as a lapsed
+	// subscription does for a linked bot.
+	if _, err := Pool.Exec(ctx, `DELETE FROM cosmetic_entitlements WHERE bot_id = $1 AND cosmetic_id = $2`, bot.ID, "skin-neon-grid"); err != nil {
+		t.Fatalf("withdraw demo entitlement: %v", err)
 	}
 	equipped, err = GetEquippedCosmetics(ctx, bot.ID)
 	if err != nil || equipped[CosmeticSlotBotSkin] != "standard" {
-		t.Fatalf("post-revoke cosmetics = (%v, %v), want standard", equipped, err)
+		t.Fatalf("post-withdrawal cosmetics = (%v, %v), want standard", equipped, err)
 	}
 
 	if err := ApplyBotStatsDelta(ctx, &BotStatsDelta{
@@ -995,160 +997,4 @@ func TestWeaponKillStatsMergeDerivedDamageSources(t *testing.T) {
 	if !reflect.DeepEqual(stats, want) {
 		t.Fatalf("weapon kill stats = %#v, want %#v", stats, want)
 	}
-}
-
-// TestPostgresCosmeticEntitlementSerialization covers races that a mocked
-// store cannot reproduce: revoke must take the entitlement lock before it
-// deletes the loadout, and an idempotent grant must serialize with a concurrent
-// entitlement delete before acknowledging fulfillment.
-func TestPostgresCosmeticEntitlementSerialization(t *testing.T) {
-	ctx := useFreshPostgresSchema(t)
-	if err := EnsureCoreSchema(ctx); err != nil {
-		t.Fatalf("EnsureCoreSchema: %v", err)
-	}
-
-	now := time.Now()
-	bot := &Bot{
-		ID: "race-bot", APIKeyID: "race-key", Name: "Race Bot", AvatarColor: "#abcdef",
-		DefaultWeapon: "sword", DefaultStats: JSONBStats{"hp": 5, "speed": 5, "attack": 5, "defense": 5},
-		DefaultFallback: "aggressive", CreatedAt: now, UpdatedAt: now,
-	}
-	if err := CreateAPIKeyAndBot(ctx, bot.APIKeyID, "race-hash", "arena_race_prefix", "127.0.0.1", bot); err != nil {
-		t.Fatalf("CreateAPIKeyAndBot: %v", err)
-	}
-	if created, err := GrantCosmeticEntitlement(ctx, bot.ID, "skin-neon-grid", "integration", "race-grant"); err != nil || !created {
-		t.Fatalf("grant race entitlement = (%v, %v)", created, err)
-	}
-
-	locker, err := Pool.Begin(ctx)
-	if err != nil {
-		t.Fatalf("begin entitlement locker: %v", err)
-	}
-	defer locker.Rollback(context.Background())
-	var marker int
-	if err := locker.QueryRow(ctx, `
-		SELECT 1 FROM cosmetic_entitlements
-		WHERE bot_id = $1 AND cosmetic_id = $2
-		FOR UPDATE`, bot.ID, "skin-neon-grid").Scan(&marker); err != nil {
-		t.Fatalf("lock entitlement: %v", err)
-	}
-
-	type revokeResult struct {
-		revoked bool
-		err     error
-	}
-	resultCh := make(chan revokeResult, 1)
-	go func() {
-		revoked, err := RevokeCosmeticEntitlement(context.Background(), bot.ID, "skin-neon-grid")
-		resultCh <- revokeResult{revoked: revoked, err: err}
-	}()
-
-	waitForBlockedCosmeticStatement(t, ctx)
-	if _, err := locker.Exec(ctx, `
-		INSERT INTO bot_cosmetic_loadout (bot_id, slot, cosmetic_id)
-		VALUES ($1, $2, $3)`, bot.ID, CosmeticSlotBotSkin, "skin-neon-grid"); err != nil {
-		t.Fatalf("insert concurrent paid loadout: %v", err)
-	}
-	if err := locker.Commit(ctx); err != nil {
-		t.Fatalf("commit concurrent equip: %v", err)
-	}
-
-	select {
-	case result := <-resultCh:
-		if result.err != nil || !result.revoked {
-			t.Fatalf("concurrent revoke = (%v, %v)", result.revoked, result.err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("concurrent revoke did not finish")
-	}
-
-	var loadoutRows, entitlementRows int
-	if err := Pool.QueryRow(ctx, `
-		SELECT (SELECT COUNT(*) FROM bot_cosmetic_loadout WHERE bot_id = $1),
-		       (SELECT COUNT(*) FROM cosmetic_entitlements WHERE bot_id = $1)`, bot.ID).
-		Scan(&loadoutRows, &entitlementRows); err != nil {
-		t.Fatalf("count post-race cosmetic rows: %v", err)
-	}
-	if loadoutRows != 0 || entitlementRows != 0 {
-		t.Fatalf("revoke left paid state: loadout=%d entitlements=%d", loadoutRows, entitlementRows)
-	}
-
-	if created, err := GrantCosmeticEntitlement(ctx, bot.ID, "skin-neon-grid", "integration", "race-regrant"); err != nil || !created {
-		t.Fatalf("create grant/revoke race entitlement = (%v, %v)", created, err)
-	}
-	deleteTx, err := Pool.Begin(ctx)
-	if err != nil {
-		t.Fatalf("begin concurrent entitlement delete: %v", err)
-	}
-	defer deleteTx.Rollback(context.Background())
-	if _, err := deleteTx.Exec(ctx, `
-		DELETE FROM cosmetic_entitlements
-		WHERE bot_id = $1 AND cosmetic_id = $2`, bot.ID, "skin-neon-grid"); err != nil {
-		t.Fatalf("stage concurrent entitlement delete: %v", err)
-	}
-
-	type grantResult struct {
-		created bool
-		err     error
-	}
-	grantCh := make(chan grantResult, 1)
-	go func() {
-		created, err := GrantCosmeticEntitlement(context.Background(), bot.ID, "skin-neon-grid", "integration", "race-regrant")
-		grantCh <- grantResult{created: created, err: err}
-	}()
-
-	waitForBlockedCosmeticStatement(t, ctx)
-	if err := deleteTx.Commit(ctx); err != nil {
-		t.Fatalf("commit concurrent entitlement delete: %v", err)
-	}
-	select {
-	case result := <-grantCh:
-		if result.err != nil || !result.created {
-			t.Fatalf("grant racing revoke = (%v, %v), want newly fulfilled entitlement", result.created, result.err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("grant racing revoke did not finish")
-	}
-
-	if err := Pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM cosmetic_entitlements
-		WHERE bot_id = $1 AND cosmetic_id = $2`, bot.ID, "skin-neon-grid").Scan(&entitlementRows); err != nil {
-		t.Fatalf("count regranted entitlement: %v", err)
-	}
-	if entitlementRows != 1 {
-		t.Fatalf("acknowledged regrant left %d entitlements, want 1", entitlementRows)
-	}
-	var legacyStatus string
-	if err := Pool.QueryRow(ctx, `
-		SELECT status FROM cosmetic_licenses
-		WHERE legacy_bot_id = $1 AND cosmetic_id = $2`, bot.ID, "skin-neon-grid").Scan(&legacyStatus); err != nil {
-		t.Fatalf("load terminal legacy license after regrant: %v", err)
-	}
-	if legacyStatus != "revoked" {
-		t.Fatalf("legacy regrant resurrected terminal license status = %q, want revoked", legacyStatus)
-	}
-}
-
-func waitForBlockedCosmeticStatement(t *testing.T, ctx context.Context) {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		var waiting bool
-		err := Pool.QueryRow(ctx, `
-			SELECT EXISTS (
-				SELECT 1
-				FROM pg_stat_activity
-				WHERE pid <> pg_backend_pid()
-				  AND wait_event_type = 'Lock'
-				  AND query LIKE '%cosmetic_entitlements%'
-			)`).Scan(&waiting)
-		if err != nil {
-			t.Fatalf("inspect blocked cosmetic statement: %v", err)
-		}
-		if waiting {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatal("timed out waiting for blocked cosmetic statement")
 }

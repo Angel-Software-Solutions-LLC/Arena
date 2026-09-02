@@ -35,28 +35,34 @@ assert.match(shopHTML, /data-shop-kind[\s\S]{0,400}<option value="trails">Trails
 assert.match(shopHTML, /data-shop-kind[\s\S]{0,500}<option value="body-forms">Full-body skins<\/option>/,
   'full-body skins must be a first-class product filter');
 assert.match(shopHTML, /data-shop-sort/, 'Shop needs an explicit sort control');
+assert.doesNotMatch(shopHTML, /<option value="price-(?:low|high)">/,
+  'nothing has a price of its own any more, so there is nothing to sort by price');
 assert.match(shopHTML, /data-shop-pack-detail/, 'Shop needs a selected-pack detail region');
 assert.match(shopHTML, /data-shop-item-list/, 'pack detail must expose its complete item list');
 assert.match(shopHTML, /data-shop-preview-pack/, 'customers need a full-pack preview control');
 assert.match(shopHTML, /data-shop-rotate-left/, 'preview must have a non-gesture rotate-left control');
 assert.match(shopHTML, /data-shop-rotate-right/, 'preview must have a non-gesture rotate-right control');
 assert.match(shopHTML, /data-shop-reset-view/, 'preview must have a reset control');
-assert.match(shopHTML, /data-shop-purchase[^>]*\shidden(?:\s|>)/,
-  'purchase link must not be keyboard-operable before a purchasable pack loads');
-assert.match(shopHTML, /Each purchased item copy can be assigned to one bot at a time/i,
-  'Shop must state the per-item license rule precisely');
-assert.match(shopHTML, /Items from the same pack can be assigned to different bots/i,
-  'Shop must explain that pack members are independent licenses');
-assert.match(shopHTML, /data-shop-subscription/, 'Shop needs one prominent horizontal All Access offer');
-assert.match(shopHTML, /All Access/);
-assert.match(shopHTML, /every current and future cosmetic set, full-body skin, and trail/i);
-assert.match(shopHTML, /up to 5 active API keys/i);
-assert.match(shopHTML, /subscription cosmetics are removed/i);
-assert.match(shopHTML, /data-shop-subscription-action/, 'All Access must lead into the verified-email Dashboard');
+assert.match(shopHTML, /data-shop-access[^>]*\shidden(?:\s|>)/,
+  'the access link must not be keyboard-operable before a pack loads');
+
+/*
+ * The subscription model, stated where people look for a price. There is no
+ * per-item licence, no All Access tier beside it, nothing to buy from Arena;
+ * one subscription in the Angel account unlocks the whole catalog.
+ */
+assert.match(shopHTML, /data-shop-subscription/, 'Shop needs one prominent subscription banner');
+assert.match(shopHTML, /Included with an Arena subscription/);
+assert.match(shopHTML, /Nothing is sold one item at a time/i);
+assert.match(shopHTML, /data-shop-subscription-action/, 'the banner must lead to where the subscription is sold');
 assert.match(shopHTML, /data-shop-subscription-action[^>]*\shidden(?:\s|>)/,
-  'All Access action must not be operable before checkout availability is confirmed');
-assert.match(shopCSS, /\.shop-all-access-offer \[hidden\]\s*\{[^}]*display:\s*none\s*!important/s,
-  'author button styles must not override the unavailable offer hidden state');
+  'the subscription action must not be operable before the catalog says where it points');
+assert.match(shopCSS, /\.shop-subscription-offer \[hidden\]\s*\{[^}]*display:\s*none\s*!important/s,
+  'author button styles must not override the hidden state');
+for (const retired of [/All Access/, /license/i, /licence/i, /\$\d/, /price/i, /checkout/i, /stripe/i, /purchas/i, /dash_plan|dash_pack/]) {
+  assert.doesNotMatch(shopHTML, retired, `the Shop must not carry per-item commerce copy: ${retired}`);
+}
+assert.doesNotMatch(shopCSS, /license|all-access|purchase|price/i, 'retired commerce styles must not linger');
 assert.match(mainHTML, /data-overlay-open="shop-overlay"[^>]*>[\s\S]*?<span>Shop<\/span>/,
   'the main command dock must open the Shop as a slide-out drawer');
 assert.match(mainHTML, /class="mobile-command-actions"[\s\S]*?data-overlay-open="shop-overlay"[^>]*>Shop<\/button>/,
@@ -68,6 +74,8 @@ let source = readFileSync(shopModuleURL, 'utf8');
 assert.match(source, /dataset\.shopPackId\s*=/, 'pack hooks must serialize as data-shop-pack-id in real DOM');
 assert.match(source, /dataset\.shopItemId\s*=/, 'item hooks must serialize as data-shop-item-id in real DOM');
 assert.doesNotMatch(source, /dataset\.shop(?:Pack|Item)ID\s*=/, 'dataset acronyms must not split into data-*-i-d attributes');
+assert.doesNotMatch(source, /checkout|stripe|price_cents|purchase_handoff|subscription_offer/i,
+  'the Shop controller must not read checkout facts the catalog no longer publishes');
 source = source.replace(/import ['"]\.\/babylon-runtime\.js[^'"]*['"];\r?\n/, '');
 source = source.replace(/import \{[^}]*\} from '\.\/paths\.js[^']*';\r?\n/, `
   const appPath = (path, pathname = '/') =>
@@ -91,12 +99,16 @@ const pack = {
 };
 
 const trailPack = {
-  id: 'trail-only', name: 'Comet Tail', category_id: 'trails', price_cents: 99,
+  id: 'trail-only', name: 'Comet Tail', category_id: 'trails',
   items: [{id: 'trail-item', name: 'Comet Tail', slot: 'trail', asset_key: 'comet_tail'}],
 };
 const bodyFormPack = {
-  id: 'giant-chicken-pack', name: 'Giant Chicken', category_id: 'body-forms', price_cents: 199,
+  id: 'giant-chicken-pack', name: 'Giant Chicken', category_id: 'body-forms',
   items: [{id: 'giant-chicken', name: 'Giant Chicken', slot: 'bot_skin', asset_key: 'body_giant_chicken'}],
+};
+const freePack = {
+  id: 'starter-pack', name: 'Starter', category_id: 'season-one', is_free: true,
+  items: [{id: 'starter-skin', name: 'Starter', slot: 'bot_skin', asset_key: 'arena_set_001_starter'}],
 };
 assert.equal(shop.isTrailPack(trailPack), true);
 assert.equal(shop.isTrailPack(pack), false, 'a coordinated set containing a trail remains a set');
@@ -104,12 +116,19 @@ assert.equal(shop.isBodyFormPack(bodyFormPack), true);
 assert.equal(shop.isBodyFormPack(pack), false, 'a coordinated chassis set is not a full-body skin');
 assert.deepEqual(
   shop.sortCosmeticPacks([
-    {id: 'zulu', name: 'Zulu', price_cents: 99},
-    {id: 'alpha', name: 'Alpha', price_cents: 199},
+    {id: 'zulu', name: 'Zulu'},
+    {id: 'alpha', name: 'Alpha'},
   ], 'name').map(candidate => candidate.id),
   ['alpha', 'zulu'],
   'name sorting must be deterministic and must not mutate the catalog order',
 );
+assert.deepEqual(
+  shop.sortCosmeticPacks([{id: 'zulu', name: 'Zulu'}, {id: 'alpha', name: 'Alpha'}], 'price-low').map(candidate => candidate.id),
+  ['zulu', 'alpha'],
+  'a retired price sort must fall back to catalog order, not throw or reorder',
+);
+assert.equal(shop.accessLabel(freePack), 'Free');
+assert.equal(shop.accessLabel(pack), 'Included with subscription');
 
 assert.deepEqual(shop.packPreviewLoadout(pack), {
   bot_skin: 'arena_set_003_ember',
@@ -131,11 +150,13 @@ assert.deepEqual(shop.itemPreviewLoadout(pack.items[4]), {
 }, 'individual trail preview must isolate the selected trail against standard defaults');
 assert.deepEqual(shop.packItems(pack).map(item => item.id), ['body-first', 'body-alt', 'weapon', 'attachment', 'trail'],
   'pack detail must preserve every catalog item, including multiple items in one slot');
-assert.equal(shop.dashboardPurchasePath('ember pack', '/shop/'), '/?dash_open=1&dash_tab=cosmetics&dash_pack=ember%20pack');
-assert.equal(shop.dashboardPurchasePath('ember pack', '/arena/shop/'), '/arena/?dash_open=1&dash_tab=cosmetics&dash_pack=ember%20pack');
-assert.equal(shop.subscriptionDashboardPath('/shop/'), '/?dash_open=1&dash_tab=cosmetics&dash_plan=all-access');
-assert.equal(shop.subscriptionDashboardPath('/arena/shop/'), '/arena/?dash_open=1&dash_tab=cosmetics&dash_plan=all-access');
+assert.equal(shop.dashboardCosmeticsPath('/shop/'), '/?dash_open=1&dash_tab=cosmetics');
+assert.equal(shop.dashboardCosmeticsPath('/arena/shop/'), '/arena/?dash_open=1&dash_tab=cosmetics');
 assert.equal(shop.catalogPath('/arena/shop/'), '/arena/api/v1/cosmetics/catalog');
+assert.equal(shop.subscriptionURL('https://accounts.example/shop/arena'), 'https://accounts.example/shop/arena');
+for (const unsafe of ['/shop', 'http://accounts.example/', 'javascript:alert(1)', 'https://', 'https://a b', '']) {
+  assert.equal(shop.subscriptionURL(unsafe), '', `${JSON.stringify(unsafe)} is not an address the Shop will send anybody to`);
+}
 
 class FakeStyle {
   constructor() { this.background = ''; }
@@ -196,9 +217,10 @@ const summary = new FakeElement('p');
 const showMore = new FakeElement('button');
 const packName = new FakeElement('h2');
 const packDescription = new FakeElement('p');
-const packPrice = new FakeElement('strong');
+const packAccess = new FakeElement('strong');
 const packCount = new FakeElement('p');
-const purchase = new FakeElement('a');
+const access = new FakeElement('a');
+const accessNote = new FakeElement('p');
 const previewPack = new FakeElement('button');
 const previewLabel = new FakeElement('p');
 const previewStatus = new FakeElement('p');
@@ -206,7 +228,6 @@ const rotateLeft = new FakeElement('button');
 const rotateRight = new FakeElement('button');
 const resetView = new FakeElement('button');
 const subscription = new FakeElement('section');
-const subscriptionPrice = new FakeElement('strong');
 const subscriptionAction = new FakeElement('a');
 const subscriptionState = new FakeElement('p');
 const root = new FakeRoot({
@@ -223,9 +244,10 @@ const root = new FakeRoot({
   '[data-shop-item-list]': itemList,
   '[data-shop-pack-name]': packName,
   '[data-shop-pack-description]': packDescription,
-  '[data-shop-pack-price]': packPrice,
+  '[data-shop-pack-access]': packAccess,
   '[data-shop-pack-count]': packCount,
-  '[data-shop-purchase]': purchase,
+  '[data-shop-access]': access,
+  '[data-shop-access-note]': accessNote,
   '[data-shop-preview-pack]': previewPack,
   '[data-shop-preview-label]': previewLabel,
   '[data-shop-preview-status]': previewStatus,
@@ -233,7 +255,6 @@ const root = new FakeRoot({
   '[data-shop-rotate-right]': rotateRight,
   '[data-shop-reset-view]': resetView,
   '[data-shop-subscription]': subscription,
-  '[data-shop-subscription-price]': subscriptionPrice,
   '[data-shop-subscription-action]': subscriptionAction,
   '[data-shop-subscription-state]': subscriptionState,
 });
@@ -266,9 +287,6 @@ const bulkPacks = Array.from({length: 99}, (_, index) => {
     name: finalSet ? 'Apex Radiance Set' : `Signal Set ${number}`,
     description: finalSet ? 'A coordinated three-piece Apex Radiance cosmetic set' : `Coordinated Arena set ${number}`,
     category_id: 'season-one',
-    price_cents: 199,
-    currency: 'USD',
-    is_purchasable: true,
     items: [{
       id: `chassis-${number}`,
       name: `Signal ${number} Chassis`,
@@ -277,21 +295,15 @@ const bulkPacks = Array.from({length: 99}, (_, index) => {
     }],
   };
 });
+const SUBSCRIBE_AT = 'https://accounts.example/shop/arena';
 const catalog = {
-  checkout_enabled: true,
-  subscription_offer: {
-    enabled: true,
-    price_cents: 1999,
-    currency: 'USD',
-    interval: 'month',
-    includes_future_sets: true,
-    max_api_keys: 5,
-  },
+  subscription: {product: 'arena', includes_all_cosmetics: true, url: SUBSCRIBE_AT},
   categories: [{id: 'season-one', name: 'Season One'}, {id: 'body-forms', name: 'Body Forms'}],
   packs: [
-    {...pack, name: 'Ember Pack', category_id: 'season-one', price_cents: 199, currency: 'USD', is_purchasable: true},
-    {...trailPack, currency: 'USD', is_purchasable: true},
-    {...bodyFormPack, currency: 'USD', is_purchasable: true},
+    {...pack, name: 'Ember Pack', category_id: 'season-one'},
+    trailPack,
+    bodyFormPack,
+    freePack,
     ...bulkPacks,
   ],
 };
@@ -312,10 +324,12 @@ await new Promise(resolve => setTimeout(resolve, 0));
 assert.equal(controller.snapshot().selectedPackID, 'signal-set-099',
   'a search typed during fetch must determine the selected pack when the response arrives');
 assert.equal(packList.children.length, 1);
-assert.equal(subscriptionPrice.textContent, '$19.99 / month');
-assert.equal(subscriptionAction.href, '/?dash_open=1&dash_tab=cosmetics&dash_plan=all-access');
+assert.equal(controller.snapshot().subscriptionURL, SUBSCRIBE_AT);
+assert.equal(subscriptionAction.href, SUBSCRIBE_AT, 'the banner leads to where Accounts sells the subscription');
 assert.equal(subscriptionAction.hidden, false);
-assert.match(subscriptionState.textContent, /current and future/i);
+assert.match(subscriptionAction.textContent, /Subscribe in your Angel account/);
+assert.match(subscriptionState.textContent, /one subscription/i);
+assert.equal(subscription.dataset.state, 'available');
 
 category.value = 'season-one';
 category.listeners.get('change')({currentTarget: category});
@@ -333,6 +347,8 @@ assert.equal(controller.snapshot().filteredCount, 1, 'the full-body filter must 
 assert.equal(controller.snapshot().selectedPackID, 'giant-chicken-pack');
 assert.equal(packList.children[0].dataset.shopPackId, 'giant-chicken-pack');
 assert.match(packList.children[0].children[1].children[1].textContent, /Full-body skin/);
+assert.match(packList.children[0].children[1].children[1].textContent, /included with subscription/,
+  'a pack card says what unlocks it instead of a price');
 
 kind.value = 'all';
 kind.listeners.get('change')({currentTarget: kind});
@@ -359,7 +375,7 @@ search.value = '';
 search.listeners.get('input')({currentTarget: search});
 assert.equal(controller.snapshot().selectedPackID, 'ember-pack');
 assert.equal(packList.children[0].dataset.shopPackId, 'arena-set-100-apex-radiance-pack',
-  'preserving a selection must not move it ahead of the selected name/price sort');
+  'preserving a selection must not move it ahead of the selected name sort');
 showMore.listeners.get('click')();
 assert.equal(packList.children.length, 48, 'Show more must reveal one bounded page at a time');
 
@@ -372,11 +388,27 @@ assert.equal(document.activeElement, emberButton, 'pack selection must retain ke
 assert.equal(controller.snapshot().selectedPackID, 'ember-pack');
 assert.equal(itemList.children.length, 5, 'selecting a pack must render every item, including its trail');
 assert.equal(packCount.textContent, '5 included items');
-assert.equal(packPrice.textContent, '$1.99');
-assert.equal(purchase.href, '/?dash_open=1&dash_tab=cosmetics&dash_pack=ember-pack');
-assert.equal(purchase.hidden, false);
+assert.equal(packAccess.textContent, 'Included with subscription');
+assert.equal(access.href, SUBSCRIBE_AT, 'a paid pack leads to the subscription, not to a checkout');
+assert.equal(access.hidden, false);
+assert.match(access.textContent, /Included with an Arena subscription/);
+assert.match(accessNote.textContent, /Subscribe in your Angel account/);
+assert.doesNotMatch(accessNote.textContent + access.textContent, /Stripe|checkout|Buy/i);
 assert.deepEqual(previewCalls.at(-1).loadout, shop.packPreviewLoadout(pack));
 
+search.value = 'Starter';
+search.listeners.get('input')({currentTarget: search});
+assert.equal(controller.snapshot().selectedPackID, 'starter-pack');
+await new Promise(resolve => setTimeout(resolve, 0));
+assert.equal(packAccess.textContent, 'Free');
+assert.equal(access.href, '/?dash_open=1&dash_tab=cosmetics', 'a free pack goes straight to the Dashboard to be equipped');
+assert.match(access.textContent, /Equip in Dashboard/);
+search.value = '';
+search.listeners.get('input')({currentTarget: search});
+packList.children.find(button => button.dataset.shopPackId === 'ember-pack').click();
+await new Promise(resolve => setTimeout(resolve, 0));
+
+assert.equal(controller.snapshot().selectedPackID, 'ember-pack');
 const weaponButton = itemList.children[2];
 weaponButton.click();
 await new Promise(resolve => setTimeout(resolve, 0));
@@ -405,25 +437,32 @@ assert.deepEqual(previewCalls.at(-1).loadout, {
 });
 controller.dispose();
 
-subscriptionAction.hidden = false;
+/*
+ * An operator who has not published where to subscribe. The banner still
+ * says what unlocks the catalog, and every control falls back to the
+ * Dashboard, which explains what is missing, rather than going dead.
+ */
+subscriptionAction.hidden = true;
 subscriptionAction.attributes.clear();
-const unavailableController = shop.initCosmeticsShop(root, {
-  pathname: '/shop/',
+const unlinkedController = shop.initCosmeticsShop(root, {
+  pathname: '/arena/shop/',
+  requestedPackID: 'ember-pack',
   updateURL: false,
   previewFactory: () => fakePreview,
   fetchImpl: async () => ({
     ok: true,
-    json: async () => ({
-      ...catalog,
-      subscription_offer: {...catalog.subscription_offer, enabled: false},
-    }),
+    json: async () => ({...catalog, subscription: {product: 'arena', includes_all_cosmetics: true}}),
   }),
 });
 await new Promise(resolve => setTimeout(resolve, 0));
-assert.equal(subscriptionAction.hidden, true,
-  'an unavailable All Access checkout must not leave a clickable-looking action');
-assert.equal(subscriptionAction.getAttribute('aria-disabled'), 'true');
-assert.match(subscriptionState.textContent, /not open yet/i);
-unavailableController.dispose();
+assert.equal(unlinkedController.snapshot().subscriptionURL, '');
+assert.equal(subscriptionAction.hidden, false);
+assert.equal(subscriptionAction.href, '/arena/?dash_open=1&dash_tab=cosmetics');
+assert.match(subscriptionAction.textContent, /Open your Dashboard/);
+assert.match(subscriptionState.textContent, /not published yet/i);
+assert.equal(subscription.dataset.state, 'unlinked');
+assert.equal(access.href, '/arena/?dash_open=1&dash_tab=cosmetics', 'with no address the paid pack still leads somewhere honest');
+assert.match(access.textContent, /Included with an Arena subscription/);
+unlinkedController.dispose();
 
-console.log('dedicated cosmetics Shop exposes full pack details and deterministic item previews');
+console.log('dedicated cosmetics Shop previews every pack and points at the one subscription that unlocks them');

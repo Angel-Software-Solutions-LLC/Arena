@@ -101,6 +101,10 @@ type CustomerOIDCHandler struct {
 	// ever used inside the callback.
 	entitlements *accounts.Client
 	authority    platform.IdentityAuthority
+	// onSubscriptionSynced is told which linked bots a sign-in's
+	// subscription sync affected, so the ones in the arena can be re-read.
+	// Set by the router, which is where the engine lives.
+	onSubscriptionSynced func(context.Context, []string)
 
 	sessions map[string]*CustomerSession
 	states   map[string]customerOIDCTransaction
@@ -448,9 +452,9 @@ func (h *CustomerOIDCHandler) CallbackHandler(w http.ResponseWriter, r *http.Req
 	if platformAdmin.Present {
 		// Worth its own line: this is the sign-in that can reach the admin
 		// panel, and an operator asking "who administered this" needs to be
-		// able to find it.
+		// able to find it — and to see which claim let them in.
 		slog.Info("customer sign-in carries platform administrator authority",
-			"account_id", account.ID, "staff_role", platformAdmin.Role)
+			"account_id", account.ID, "authority", platformAdmin.authority(), "staff_role", platformAdmin.Role)
 	}
 	/*
 	 * A popup finishes on a page of Arena's own, which tells the window that
@@ -704,14 +708,17 @@ func (h *CustomerOIDCHandler) SessionInfoHandler(w http.ResponseWriter, r *http.
 	 * session, never the thing that grants authority — the admin routes ask
 	 * the same question themselves.
 	 */
-	platformAdminRole, isPlatformAdmin := session.platformAdminAt(time.Now())
+	platformAdminGrant, isPlatformAdmin := session.platformAdminGrantAt(time.Now())
 	writeJSON(w, http.StatusOK, map[string]any{
-		"authenticated":       true,
-		"login_enabled":       oidcEnabled,
-		"platform_admin":      isPlatformAdmin,
-		"platform_admin_role": platformAdminRole,
-		"oidc_login_enabled":  oidcEnabled,
-		"email_login_enabled": false,
+		"authenticated":  true,
+		"login_enabled":  oidcEnabled,
+		"platform_admin": isPlatformAdmin,
+		// Which claim admitted the sign-in ("staff" or "product_admin"), and
+		// the desk role when Accounts named one. Descriptive only.
+		"platform_admin_authority": platformAdminGrant.Authority,
+		"platform_admin_role":      platformAdminGrant.Role,
+		"oidc_login_enabled":       oidcEnabled,
+		"email_login_enabled":      false,
 		"account": map[string]any{
 			"id": session.AccountID,
 			// Empty for a linked account, which is every account after the

@@ -57,16 +57,9 @@ func registerCosmeticsAdminRoutes(router chi.Router, handler *CosmeticsHandler) 
 	router.Delete("/cosmetics/items/{item_id}", handler.DeleteAdminItem)
 	router.Put("/cosmetics/packs/{pack_id}", handler.UpsertAdminPack)
 	router.Delete("/cosmetics/packs/{pack_id}", handler.DeleteAdminPack)
-
-	// Provider-neutral manual fulfillment routes remain separate from catalog
-	// administration. No checkout or payment webhook route is registered here.
-	router.Post("/cosmetics/grants", handler.Grant)
-	router.Delete("/cosmetics/grants", handler.Revoke)
-	router.Delete("/cosmetics/licenses/{license_id}", handler.Revoke)
-	router.Get("/cosmetics/access", handler.AdminCosmeticAccess)
-	router.Post("/cosmetics/memberships", handler.CreateAdminCosmeticMembership)
-	router.Delete("/cosmetics/memberships", handler.RevokeAdminCosmeticMembership)
-	router.Delete("/cosmetics/memberships/{membership_id}", handler.RevokeAdminCosmeticMembership)
+	// Catalog administration only. Who may wear what is decided by the Arena
+	// subscription held in Angel Accounts; there is no grant, licence,
+	// membership or order route here to second-guess it.
 }
 
 func (h *CosmeticsHandler) AdminCatalog(w http.ResponseWriter, r *http.Request) {
@@ -77,10 +70,10 @@ func (h *CosmeticsHandler) AdminCatalog(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"checkout_enabled": h.checkoutEnabled && cosmeticCatalogHasPurchasablePack(catalog),
-		"categories":       catalog.Categories,
-		"packs":            catalog.Packs,
-		"items":            catalog.Items,
+		"categories":   catalog.Categories,
+		"packs":        catalog.Packs,
+		"items":        catalog.Items,
+		"subscription": catalogSubscription(),
 	})
 }
 

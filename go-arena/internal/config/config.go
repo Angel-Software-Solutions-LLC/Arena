@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
-	"net"
 	"net/url"
 	"os"
 	"strings"
@@ -449,22 +448,15 @@ type Config struct {
 	// without stranding everybody who already had an account.
 	CustomerLinkLegacyByEmail bool `envconfig:"ARENA_CUSTOMER_LINK_LEGACY_BY_EMAIL" default:"true"`
 
-	// AccountsShopURL is where buying happens once Accounts owns commerce.
-	//
-	// Set it and Arena stops selling: the shop still shows every cosmetic and
-	// still knows what you own, but the buy control hands off to the Accounts
-	// app instead of opening a Stripe session here. Leave it empty and the
-	// existing flow is untouched, which makes this a switch the owner throws
-	// when the catalog on the other side is ready rather than a migration that
-	// has to land at the same instant.
-	//
-	// It is the gate as well as the destination. While it is set, Arena's own
-	// checkout endpoints refuse — a UI that hands off while the API behind it
-	// still opens Stripe sessions is one bug away from taking money in the
-	// wrong place.
+	// AccountsShopURL is where the Arena subscription is bought and managed:
+	// the Angel Accounts portal. Arena sells nothing itself. A signed-in
+	// customer without an active subscription is shown "Included with an
+	// Arena subscription" and sent here; leave it empty and the link is
+	// simply not offered (the lock is unchanged).
 	AccountsShopURL string `envconfig:"ARENA_ACCOUNTS_SHOP_URL" default:""`
 
-	// AccountsEntitlementsURL overrides where Arena reads what somebody owns.
+	// AccountsEntitlementsURL overrides where Arena reads whether the person
+	// signing in holds an active Arena subscription.
 	//
 	// Normally nothing sets this: the endpoint is advertised as
 	// `entitlements_endpoint` in the Accounts discovery document, and Arena
@@ -479,21 +471,9 @@ type Config struct {
 	CustomerAPIKeyCreatePerHour int `envconfig:"ARENA_CUSTOMER_API_KEY_CREATE_PER_HOUR" default:"10"`
 	CustomerAPIKeyRevokePerHour int `envconfig:"ARENA_CUSTOMER_API_KEY_REVOKE_PER_HOUR" default:"20"`
 
-	// Cosmetics checkout is disabled by default. Enabling it requires the
-	// verified customer auth provider, durable database state, and a complete
-	// Stripe configuration; ValidateCosmeticsCheckoutConfig enforces that
-	// launch boundary before the server starts.
-	CosmeticsCheckoutEnabled bool   `envconfig:"ARENA_COSMETICS_CHECKOUT_ENABLED" default:"false"`
-	StripeSecretKey          string `envconfig:"ARENA_STRIPE_SECRET_KEY" default:""`
-	StripePublishableKey     string `envconfig:"ARENA_STRIPE_PUBLISHABLE_KEY" default:""`
-	StripeWebhookSecrets     string `envconfig:"ARENA_STRIPE_WEBHOOK_SECRETS" default:""`
-	StripeSuccessURL         string `envconfig:"ARENA_STRIPE_SUCCESS_URL" default:""`
-	StripeCancelURL          string `envconfig:"ARENA_STRIPE_CANCEL_URL" default:""`
-	StripeReturnURL          string `envconfig:"ARENA_STRIPE_RETURN_URL" default:""`
-	StripePortalReturnURL    string `envconfig:"ARENA_STRIPE_PORTAL_RETURN_URL" default:""`
-	StripeAutomaticTax       bool   `envconfig:"ARENA_STRIPE_AUTOMATIC_TAX" default:"false"`
-	CosmeticsCheckoutRPM     int    `envconfig:"ARENA_COSMETICS_CHECKOUT_RPM" default:"10"`
-	CosmeticsAccountReadRPM  int    `envconfig:"ARENA_COSMETICS_ACCOUNT_READ_RPM" default:"60"`
+	// Inventory reads are limited per IP and per verified account, protecting
+	// the catalog-backed Dashboard query from scraping.
+	CosmeticsAccountReadRPM int `envconfig:"ARENA_COSMETICS_ACCOUNT_READ_RPM" default:"60"`
 
 	// Developer lobby chat. Off by default; posting requires a signed-in
 	// customer session, so enabling chat without customer auth yields a
@@ -689,137 +669,20 @@ func StartingElo() int {
 	return startingElo
 }
 
-// ValidateCosmeticsCheckoutConfig keeps the payment surface fail-closed. It
-// intentionally does nothing while checkout is disabled so development and
-// existing non-commerce deployments retain their current defaults.
-func ValidateCosmeticsCheckoutConfig(cfg Config) error {
+// ValidateCosmeticsConfig checks the little cosmetics configuration that is
+// left now that Arena sells nothing itself: the inventory read quota, and the
+// address the Dashboard sends an unsubscribed customer to.
+func ValidateCosmeticsConfig(cfg Config) error {
 	if cfg.CosmeticsAccountReadRPM <= 0 {
 		return fmt.Errorf("ARENA_COSMETICS_ACCOUNT_READ_RPM must be positive")
 	}
-	if !cfg.CosmeticsCheckoutEnabled {
-		if len(ParseStripeWebhookSecrets(cfg.StripeWebhookSecrets)) > 0 {
-			if stripeAPIKeyMode(cfg.StripeSecretKey, false) == "" {
-				return fmt.Errorf("ARENA_STRIPE_SECRET_KEY must be retained as an sk_test, rk_test, sk_live, or rk_live key while Stripe webhooks service existing cosmetic subscriptions")
-			}
-			if err := validateCosmeticsCheckoutURL("ARENA_STRIPE_PORTAL_RETURN_URL", cfg.StripePortalReturnURL); err != nil {
-				return err
-			}
+	if shop := strings.TrimSpace(cfg.AccountsShopURL); shop != "" {
+		parsed, err := url.Parse(shop)
+		if err != nil || !strings.EqualFold(parsed.Scheme, "https") || parsed.Host == "" {
+			return fmt.Errorf("ARENA_ACCOUNTS_SHOP_URL must be an absolute HTTPS URL")
 		}
-		return nil
-	}
-	oidcReady := cfg.CustomerOIDCEnabled &&
-		strings.TrimSpace(cfg.CustomerOIDCIssuer) != "" &&
-		strings.TrimSpace(cfg.CustomerOIDCClientID) != "" &&
-		strings.TrimSpace(cfg.CustomerOIDCClientSecret) != "" &&
-		strings.TrimSpace(cfg.CustomerOIDCRedirectURI) != "" &&
-		cfg.CustomerOIDCSessionTTL > 0
-
-	// Accounts is the only way a customer signs in, so it is the only thing
-	// checkout can be gated on. There is no second, Arena-operated path to
-	// fall back to any more, and that is deliberate: operating one meant
-	// holding the address it mailed.
-	if !oidcReady {
-		return fmt.Errorf("cosmetics checkout requires fully configured customer OIDC (Angel Accounts sign-in)")
-	}
-	if cfg.DBOptional {
-		return fmt.Errorf("cosmetics checkout requires the database; ARENA_DB_OPTIONAL must be false")
-	}
-	if strings.TrimSpace(cfg.StripeSecretKey) == "" {
-		return fmt.Errorf("ARENA_STRIPE_SECRET_KEY is required when cosmetics checkout is enabled")
-	}
-	secretMode := stripeAPIKeyMode(cfg.StripeSecretKey, false)
-	if secretMode == "" {
-		return fmt.Errorf("ARENA_STRIPE_SECRET_KEY must be an sk_test, rk_test, sk_live, or rk_live key")
-	}
-	publishableMode := stripeAPIKeyMode(cfg.StripePublishableKey, true)
-	if publishableMode == "" {
-		return fmt.Errorf("ARENA_STRIPE_PUBLISHABLE_KEY must be a pk_test or pk_live key")
-	}
-	if secretMode != publishableMode {
-		return fmt.Errorf("ARENA_STRIPE_SECRET_KEY and ARENA_STRIPE_PUBLISHABLE_KEY must use the same Stripe mode")
-	}
-	if len(ParseStripeWebhookSecrets(cfg.StripeWebhookSecrets)) == 0 {
-		return fmt.Errorf("ARENA_STRIPE_WEBHOOK_SECRETS must contain at least one secret")
-	}
-	if err := validateCosmeticsCheckoutURL("ARENA_STRIPE_SUCCESS_URL", cfg.StripeSuccessURL); err != nil {
-		return err
-	}
-	if err := validateCosmeticsCheckoutURL("ARENA_STRIPE_CANCEL_URL", cfg.StripeCancelURL); err != nil {
-		return err
-	}
-	if err := validateCosmeticsCheckoutURL("ARENA_STRIPE_RETURN_URL", cfg.StripeReturnURL); err != nil {
-		return err
-	}
-	if !strings.Contains(cfg.StripeReturnURL, "{CHECKOUT_SESSION_ID}") {
-		return fmt.Errorf("ARENA_STRIPE_RETURN_URL must include {CHECKOUT_SESSION_ID}")
-	}
-	if err := validateCosmeticsCheckoutURL("ARENA_STRIPE_PORTAL_RETURN_URL", cfg.StripePortalReturnURL); err != nil {
-		return err
-	}
-	if cfg.CosmeticsCheckoutRPM <= 0 {
-		return fmt.Errorf("ARENA_COSMETICS_CHECKOUT_RPM must be positive")
 	}
 	return nil
-}
-
-func stripeAPIKeyMode(value string, publishable bool) string {
-	value = strings.TrimSpace(value)
-	if publishable {
-		switch {
-		case strings.HasPrefix(value, "pk_test_"):
-			return "test"
-		case strings.HasPrefix(value, "pk_live_"):
-			return "live"
-		default:
-			return ""
-		}
-	}
-	switch {
-	case strings.HasPrefix(value, "sk_test_"), strings.HasPrefix(value, "rk_test_"):
-		return "test"
-	case strings.HasPrefix(value, "sk_live_"), strings.HasPrefix(value, "rk_live_"):
-		return "live"
-	default:
-		return ""
-	}
-}
-
-// ParseStripeWebhookSecrets converts the comma-separated rotation list into
-// the ordered secrets accepted by the Stripe adapter. Config retains the raw
-// string so Config remains comparable for the existing live-staging checks.
-func ParseStripeWebhookSecrets(raw string) []string {
-	values := strings.Split(raw, ",")
-	secrets := make([]string, 0, len(values))
-	for _, value := range values {
-		if secret := strings.TrimSpace(value); secret != "" {
-			secrets = append(secrets, secret)
-		}
-	}
-	return secrets
-}
-
-func validateCosmeticsCheckoutURL(name, raw string) error {
-	value := strings.TrimSpace(raw)
-	parsed, err := url.Parse(value)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return fmt.Errorf("%s must be an absolute HTTPS URL", name)
-	}
-	if strings.EqualFold(parsed.Scheme, "https") {
-		return nil
-	}
-	if strings.EqualFold(parsed.Scheme, "http") && isLoopbackCheckoutHost(parsed.Hostname()) {
-		return nil
-	}
-	return fmt.Errorf("%s must use HTTPS (HTTP is allowed only for loopback hosts)", name)
-}
-
-func isLoopbackCheckoutHost(host string) bool {
-	host = strings.ToLower(strings.TrimSpace(host))
-	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
 }
 
 // ValidateMovementConfig prevents a malformed floating-point environment
@@ -934,8 +797,8 @@ func Load() {
 		slog.Error("invalid size configuration", "error", err)
 		panic(err)
 	}
-	if err := ValidateCosmeticsCheckoutConfig(C); err != nil {
-		slog.Error("invalid cosmetics checkout configuration", "error", err)
+	if err := ValidateCosmeticsConfig(C); err != nil {
+		slog.Error("invalid cosmetics configuration", "error", err)
 		panic(err)
 	}
 	slog.Info("config loaded",

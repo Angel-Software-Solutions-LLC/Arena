@@ -12,11 +12,9 @@
   <link rel="stylesheet" href="css/sections.css?v=20260718f">
   <link rel="stylesheet" href="css/site-shell.css?v=20260718i">
   <link rel="stylesheet" href="css/chat.css?v=20260714b">
-  <link rel="stylesheet" href="css/embedded-checkout.css?v=20260713a">
   <link rel="stylesheet" href="css/brand-lockup.css?v=20260714a">
   <link rel="modulepreload" href="assets/vendor/babylon-runtime.5c31912818a4.min.js">
   <script defer src="js/cosmetic-themes.js?v=20260713f"></script>
-  <script defer src="js/embedded-checkout.js?v=20260823b"></script>
   <!-- service-status.js is NOT loaded here: app.js and site-shell.js import
        it (unversioned), and a second versioned URL would create a separate
        module instance with its own banner controller racing the first. -->
@@ -1628,7 +1626,7 @@ wss://arena.angel-serv.com/ws/spectator
                     <p class="keygen-panel-copy">Arena generates the token; arbitrary tokens you make yourself will not authenticate. The plaintext is shown once and is never persisted in browser storage.</p>
                     <button type="button" class="btn btn-gold keygen-btn">Generate API token</button>
                     <div class="keygen-result" aria-live="polite"></div>
-                    <p class="keygen-panel-copy">Later, sign in to your Angel account and link the bot in <a href="#" data-overlay-open="dashboard-overlay" data-dashboard-tab="cosmetics">My Dashboard</a> to purchase and equip cosmetics. No Angel account yet? <a data-accounts-register>Create one</a>.</p>
+                    <p class="keygen-panel-copy">Later, sign in to your Angel account and link the bot in <a href="#" data-overlay-open="dashboard-overlay" data-dashboard-tab="cosmetics">My Dashboard</a> to equip cosmetics. No Angel account yet? <a data-accounts-register>Create one</a>.</p>
                   </div>
                 </div>
               </div>
@@ -1642,18 +1640,18 @@ wss://arena.angel-serv.com/ws/spectator
                       <h3 class="onboarding-section-title">Try the dedicated Cosmetic Shop</h3>
                       <p>Open the full-size bot fitting stage, inspect every item inside a pack, and preview complete sets or one cosmetic at a time. Every item remains visual only.</p>
                     </div>
-                    <span class="cosmetics-checkout-state">142 products · 18 full-body skins</span>
+                    <span class="cosmetics-catalog-state">142 products · 18 full-body skins</span>
                   </div>
                   <div class="cosmetics-auth cosmetics-account-cta">
                     <div>
-                      <strong>Preview here. Own through your verified account.</strong>
-                      <span>Pack items become independent licenses, so different cosmetics from one pack can be assigned to different linked bots.</span>
+                      <strong>Preview here. Included with an Arena subscription.</strong>
+                      <span>One subscription on your Angel account unlocks every set, full-body skin and trail for every bot you link. Nothing is sold one item at a time.</span>
                     </div>
                     <button type="button" class="btn btn-gold" data-overlay-open="shop-overlay">Open Cosmetic Shop</button>
                   </div>
                   <div class="cosmetics-account-actions">
                     <button type="button" class="btn btn-secondary" data-arena-signin>Sign in with Angel Accounts</button>
-                    <a class="btn btn-secondary" href="#" data-overlay-open="dashboard-overlay" data-dashboard-tab="cosmetics">Manage owned cosmetics</a>
+                    <a class="btn btn-secondary" href="#" data-overlay-open="dashboard-overlay" data-dashboard-tab="cosmetics">Equip cosmetics</a>
                   </div>
                   <p class="cosmetics-account-register">No Angel account yet? <a data-accounts-register>Create one</a> — the same account works across every Angel product.</p>
                 </div>

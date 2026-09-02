@@ -578,26 +578,17 @@ function setupOverlays() {
   // same-origin documents that can't reach this page's own overlay JS call
   // directly -- the Shop iframe uses it instead of navigating with
   // ?dash_open=1, which used to reload the whole Arena just to switch tabs.
-  const openDashboardOverlay = ({ tab = '', plan = '', pack = '' } = {}) => {
+  const openDashboardOverlay = ({ tab = '' } = {}) => {
     const frame = document.getElementById('dashboard-frame');
     if (frame) {
       const extra = [];
       if (tab) extra.push(`tab=${encodeURIComponent(tab)}`);
-      if (plan) extra.push(`plan=${encodeURIComponent(plan)}`);
-      if (pack) extra.push(`pack=${encodeURIComponent(pack)}`);
       const loaded = Boolean(frame.getAttribute('src'));
       if (!loaded) {
         if (extra.length) {
           const base = frame.dataset.src || '';
           frame.dataset.src = base + (base.includes('?') ? '&' : '?') + extra.join('&');
         }
-      } else if (plan || pack) {
-        // Switching subscription plan or resuming a specific pack purchase
-        // needs the dashboard's own bootstrap to re-run (subscription offer
-        // resolution / pending-pack catalog lookup) -- reload just this
-        // small iframe, never the whole Arena page.
-        const base = frame.dataset.src || '/dashboard/?view=private';
-        frame.setAttribute('src', appPath(base) + (base.includes('?') ? '&' : '?') + extra.join('&'));
       } else if (tab && typeof frame.contentWindow?.activateTab === 'function') {
         frame.contentWindow.activateTab(tab);
       }
@@ -706,23 +697,17 @@ function setupOverlays() {
 // Pages that can't reach this page's overlay JS directly (a freshly
 // generated key's "claim this bot" link, or the Shop when it's reached as
 // its own standalone tab rather than embedded) hand off by navigating here
-// with ?dash_open=1 (plus optional dash_tab/dash_plan/dash_pack). This is
+// with ?dash_open=1 (plus an optional dash_tab). This is
 // what makes "Dashboard" open in the slide-out drawer everywhere instead of
 // sometimes landing on /dashboard/ as a bare full-page navigation.
 function applyDeepLinkedDashboardOpen(openDashboardOverlay) {
   const params = new URLSearchParams(window.location.search);
   if (params.get('dash_open') !== '1') return;
 
-  openDashboardOverlay({
-    tab: params.get('dash_tab') || '',
-    plan: params.get('dash_plan') || '',
-    pack: params.get('dash_pack') || '',
-  });
+  openDashboardOverlay({tab: params.get('dash_tab') || ''});
 
   params.delete('dash_open');
   params.delete('dash_tab');
-  params.delete('dash_plan');
-  params.delete('dash_pack');
   const query = params.toString();
   const cleanURL = window.location.pathname + (query ? `?${query}` : '') + window.location.hash;
   window.history.replaceState(null, '', cleanURL);

@@ -6,7 +6,7 @@ This project uses open source dependencies through Go modules, npm, Python packa
 
 | Area | Main dependencies | License family |
 | --- | --- | --- |
-| Go backend | `chi`, `cors`, `go-oidc`, `pgx`, `go-redis`, `gorilla/websocket`, `envconfig`, `uuid`, `stripe-go`, `x/crypto`, `x/oauth2` | Permissive licenses such as MIT, BSD, and Apache-2.0 |
+| Go backend | `chi`, `cors`, `go-oidc`, `pgx`, `go-redis`, `gorilla/websocket`, `envconfig`, `uuid`, `x/crypto`, `x/oauth2` | Permissive licenses such as MIT, BSD, and Apache-2.0 |
 | Browser frontend | Babylon.js packages from `cdn.babylonjs.com` | Apache-2.0 |
 | Browser fonts | Google Fonts: IBM Plex Mono and Space Grotesk | SIL Open Font License |
 | Node SDK | `ws` | MIT |

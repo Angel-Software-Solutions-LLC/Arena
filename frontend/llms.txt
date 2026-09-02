@@ -9,7 +9,7 @@ The AI Battle Arena is a competitive platform where developers build autonomous 
 2. Generate a server-issued token with Get Started or `POST https://arena.angel-serv.com/api/v1/keys/generate` (empty body, no account required, plaintext returned once)
 3. Connect via WebSocket: `wss://arena.angel-serv.com/ws/bot?key=YOUR_KEY`
 4. Send loadout, receive ticks, send actions
-5. To purchase cosmetics later, verify an email in My Dashboard and claim the existing bot with `POST /api/v1/account/bots` using that token once
+5. To equip cosmetics later, sign in with an Angel account in My Dashboard and claim the existing bot with `POST /api/v1/account/bots` using that token once; paid cosmetics are included with the Arena subscription held in that account
 
 Arena persists the generated token's hash and bot record. Never invent or ask a
 user to choose an API token; arbitrary strings are not valid credentials.

@@ -7,9 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -300,9 +298,11 @@ func IsValidCosmeticSlot(slot string) bool {
 	}
 }
 
-// EnsureCosmeticsSchema creates the provider-neutral catalog, entitlement,
-// and equip tables. Payment processors only grant entitlements; the game
-// engine consumes the resulting visual asset keys and never price metadata.
+// EnsureCosmeticsSchema creates the catalog, customer account, bot link and
+// equip tables. There is no payment state here: the Arena subscription is
+// sold and held by Angel Accounts, and the only trace of it in this schema is
+// the `subscription_active` flag on `customer_accounts`. The game engine
+// consumes the resulting visual asset keys and never price metadata.
 func EnsureCosmeticsSchema(ctx context.Context) error {
 	if Pool == nil {
 		return ErrNoDatabase
@@ -391,6 +391,9 @@ func EnsureCosmeticsSchema(ctx context.Context) error {
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_cosmetic_catalog_audit_created ON cosmetic_catalog_audit (created_at DESC, id DESC)`,
+		// Bot-scoped complimentary grants, written only by the admin
+		// demo-loadout tool so the demo fleet can wear paid looks without an
+		// account. Not a purchase record: customers never get rows here.
 		`CREATE TABLE IF NOT EXISTS cosmetic_entitlements (
 			bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
 			cosmetic_id TEXT NOT NULL REFERENCES cosmetic_items(id) ON DELETE RESTRICT,
@@ -415,6 +418,8 @@ func EnsureCosmeticsSchema(ctx context.Context) error {
 			email_verified_at TIMESTAMPTZ,
 			oidc_issuer TEXT,
 			oidc_subject TEXT,
+			subscription_active BOOLEAN NOT NULL DEFAULT false,
+			subscription_synced_at TIMESTAMPTZ,
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			CONSTRAINT customer_accounts_oidc_pair_check CHECK (
@@ -453,6 +458,13 @@ func EnsureCosmeticsSchema(ctx context.Context) error {
 		`ALTER TABLE customer_accounts ADD COLUMN IF NOT EXISTS bio TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE customer_accounts ADD COLUMN IF NOT EXISTS avatar_color TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE customer_accounts ADD COLUMN IF NOT EXISTS show_bots_public BOOLEAN NOT NULL DEFAULT true`,
+		// The one commerce fact Arena keeps: whether Accounts reported an
+		// active Arena subscription at the account's last sign-in, and
+		// when. Additive; a database from before subscriptions were the
+		// only product starts every account as not subscribed until its
+		// owner next signs in and the sync sets it.
+		`ALTER TABLE customer_accounts ADD COLUMN IF NOT EXISTS subscription_active BOOLEAN NOT NULL DEFAULT false`,
+		`ALTER TABLE customer_accounts ADD COLUMN IF NOT EXISTS subscription_synced_at TIMESTAMPTZ`,
 		`CREATE TABLE IF NOT EXISTS customer_email_verifications (
 			email TEXT PRIMARY KEY CHECK (email = LOWER(email)),
 			display_name TEXT NOT NULL DEFAULT '',
@@ -485,82 +497,36 @@ func EnsureCosmeticsSchema(ctx context.Context) error {
 			FROM account_bot_links links
 			JOIN bots ON bots.id = links.bot_id
 			ON CONFLICT (api_key_id) DO NOTHING`,
-		`CREATE TABLE IF NOT EXISTS cosmetic_licenses (
-			id TEXT PRIMARY KEY,
-			account_id TEXT REFERENCES customer_accounts(id) ON DELETE RESTRICT,
-			legacy_bot_id TEXT,
-			cosmetic_id TEXT NOT NULL REFERENCES cosmetic_items(id) ON DELETE RESTRICT,
-			assigned_bot_id TEXT REFERENCES bots(id) ON DELETE SET NULL,
-			status TEXT NOT NULL DEFAULT 'active'
-				CHECK (status IN ('active', 'refunded', 'revoked', 'chargeback')),
-			source TEXT NOT NULL DEFAULT 'manual',
-			external_reference TEXT,
-			granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-			terminal_at TIMESTAMPTZ,
-			UNIQUE (id, account_id),
-			CHECK (
-				(account_id IS NOT NULL AND legacy_bot_id IS NULL AND assigned_bot_id IS NULL) OR
-				(account_id IS NULL AND legacy_bot_id IS NOT NULL)
-			)
-		)`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_cosmetic_licenses_external
-			ON cosmetic_licenses (source, external_reference)
-			WHERE external_reference IS NOT NULL AND external_reference <> ''`,
-		`CREATE INDEX IF NOT EXISTS idx_cosmetic_licenses_account
-			ON cosmetic_licenses (account_id, granted_at, id)`,
-		`CREATE INDEX IF NOT EXISTS idx_cosmetic_licenses_assignment
-			ON cosmetic_licenses (assigned_bot_id, cosmetic_id)
-			WHERE assigned_bot_id IS NOT NULL`,
-		`CREATE TABLE IF NOT EXISTS cosmetic_license_assignments (
-			license_id TEXT PRIMARY KEY,
-			account_id TEXT NOT NULL,
-			bot_id TEXT NOT NULL,
-			assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-			UNIQUE (license_id, account_id, bot_id),
-			FOREIGN KEY (license_id, account_id)
-				REFERENCES cosmetic_licenses(id, account_id) ON DELETE CASCADE,
-			FOREIGN KEY (account_id, bot_id)
-				REFERENCES account_bot_links(account_id, bot_id) ON DELETE CASCADE
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_cosmetic_license_assignments_bot
-			ON cosmetic_license_assignments (account_id, bot_id, assigned_at)`,
+		/*
+		 * The loadout: one equipped item per bot and slot. Whether a bot may
+		 * wear a paid item is not recorded here — it is decided at read time
+		 * from the linked account's subscription flag (see
+		 * botMayWearCosmeticSQL), so this table carries presentation state
+		 * only.
+		 *
+		 * A database from before the subscription-only model also has
+		 * `license_id` and `account_id` columns on this table, both
+		 * nullable, plus the retired `cosmetic_licenses`,
+		 * `cosmetic_license_assignments`, `cosmetic_orders*`,
+		 * `cosmetic_payment_events`, `cosmetic_order_refunds`,
+		 * `cosmetic_subscription*`, `cosmetic_admin_membership*`,
+		 * `customer_accounts_grant*` and `platform_license_lifecycle_events`
+		 * tables. Nothing reads or writes them any more; they are left in
+		 * place rather than dropped, because migrations here are additive
+		 * and an operator may still want the ledger for their records. New
+		 * rows leave the two columns null, which every retained constraint
+		 * accepts. See docs/cosmetics-and-monetization.md.
+		 */
 		`CREATE TABLE IF NOT EXISTS bot_cosmetic_loadout (
 			bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
 			slot TEXT NOT NULL CHECK (slot IN ('bot_skin', 'weapon_skin', 'attachment', 'trail')),
 			cosmetic_id TEXT NOT NULL REFERENCES cosmetic_items(id) ON DELETE CASCADE,
-			license_id TEXT REFERENCES cosmetic_licenses(id) ON DELETE CASCADE,
-			account_id TEXT REFERENCES customer_accounts(id) ON DELETE RESTRICT,
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-			PRIMARY KEY (bot_id, slot),
-			CONSTRAINT bot_cosmetic_loadout_assignment_fk
-			FOREIGN KEY (license_id, account_id, bot_id)
-				REFERENCES cosmetic_license_assignments(license_id, account_id, bot_id) ON DELETE CASCADE
+			PRIMARY KEY (bot_id, slot)
 		)`,
-		`ALTER TABLE bot_cosmetic_loadout
-			ADD COLUMN IF NOT EXISTS license_id TEXT REFERENCES cosmetic_licenses(id) ON DELETE CASCADE`,
-		`ALTER TABLE bot_cosmetic_loadout
-			ADD COLUMN IF NOT EXISTS account_id TEXT REFERENCES customer_accounts(id) ON DELETE RESTRICT`,
 		`ALTER TABLE bot_cosmetic_loadout DROP CONSTRAINT IF EXISTS bot_cosmetic_loadout_slot_check`,
 		`ALTER TABLE bot_cosmetic_loadout ADD CONSTRAINT bot_cosmetic_loadout_slot_check CHECK (slot IN ('bot_skin', 'weapon_skin', 'attachment', 'trail'))`,
-		`DO $$
-		BEGIN
-			IF NOT EXISTS (
-				SELECT 1 FROM pg_constraint
-				WHERE conrelid = 'bot_cosmetic_loadout'::regclass
-				  AND conname = 'bot_cosmetic_loadout_assignment_fk'
-			) THEN
-				ALTER TABLE bot_cosmetic_loadout
-					ADD CONSTRAINT bot_cosmetic_loadout_assignment_fk
-					FOREIGN KEY (license_id, account_id, bot_id)
-					REFERENCES cosmetic_license_assignments(license_id, account_id, bot_id)
-					ON DELETE CASCADE;
-			END IF;
-		END
-		$$`,
 		`CREATE INDEX IF NOT EXISTS idx_bot_cosmetic_loadout_item ON bot_cosmetic_loadout (cosmetic_id)`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_bot_cosmetic_loadout_license
-			ON bot_cosmetic_loadout (license_id) WHERE license_id IS NOT NULL`,
 	}
 
 	for _, statement := range statements {
@@ -647,10 +613,10 @@ func EnsureCosmeticsSchema(ctx context.Context) error {
 			}
 		}
 	}
-	// Every sale-ready set follows one fixed catalog price; one-item trail
-	// products use their own fixed price. Orders snapshot the
-	// price before Checkout, so repairing catalog rows cannot rewrite historical
-	// or already-created order amounts.
+	// Every set keeps one fixed reference price and one-item trail products
+	// their own; the values are catalog metadata for the admin editor now
+	// that nothing is sold per item, and the normalisation keeps built-in
+	// rows consistent across deployments.
 	if _, err := tx.Exec(ctx, `
 		UPDATE cosmetic_packs
 		SET price_cents = CASE WHEN category_id = $2::text THEN $3::integer ELSE $1::integer END,
@@ -684,32 +650,6 @@ func EnsureCosmeticsSchema(ctx context.Context) error {
 		if _, err := tx.Exec(ctx, builtin.query, builtin.ids); err != nil {
 			return fmt.Errorf("EnsureCosmeticsSchema mark built-in %s: %w", builtin.entity, err)
 		}
-	}
-
-	// Existing deployments stored paid ownership directly against a bot. Keep
-	// those rows intact as a rollback/audit source, while materialising one
-	// stable legacy license per entitlement. The first verified account that
-	// proves possession of that bot's API key claims the license atomically.
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO cosmetic_licenses
-			(id, account_id, legacy_bot_id, cosmetic_id, assigned_bot_id, source, external_reference, granted_at, updated_at)
-		SELECT 'legacy-' || MD5(e.bot_id || CHR(31) || e.cosmetic_id),
-		       NULL, e.bot_id, e.cosmetic_id, e.bot_id, e.source, e.external_reference, e.granted_at, NOW()
-		FROM cosmetic_entitlements e
-		ON CONFLICT DO NOTHING`); err != nil {
-		return fmt.Errorf("EnsureCosmeticsSchema migrate legacy licenses: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE bot_cosmetic_loadout l
-		SET license_id = cl.id, updated_at = NOW()
-		FROM cosmetic_licenses cl
-		JOIN cosmetic_items i ON i.id = cl.cosmetic_id
-		WHERE l.license_id IS NULL
-		  AND i.is_free = false
-		  AND cl.legacy_bot_id = l.bot_id
-		  AND cl.assigned_bot_id = l.bot_id
-		  AND cl.cosmetic_id = l.cosmetic_id`); err != nil {
-		return fmt.Errorf("EnsureCosmeticsSchema migrate legacy loadouts: %w", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -754,26 +694,9 @@ func ListBotCosmetics(ctx context.Context, botID string) ([]BotCosmeticItem, err
 	rows, err := Pool.Query(ctx, `
 		SELECT i.id, i.name, i.description, i.category_id, i.slot, i.asset_key, i.rarity,
 		       i.price_cents, i.currency, i.is_free, i.is_purchasable, i.is_active, i.is_builtin, i.sort_order,
-		       (i.is_free OR EXISTS (
-		         SELECT 1 FROM cosmetic_licenses owned_license
-		         WHERE owned_license.cosmetic_id = i.id
-		           AND owned_license.status = 'active'
-		           AND NOT EXISTS (
-		             SELECT 1 FROM cosmetic_admin_membership_licenses admin_mapping
-		             JOIN cosmetic_admin_memberships admin_membership ON admin_membership.id = admin_mapping.membership_id
-		             WHERE admin_mapping.license_id = owned_license.id
-		               AND (admin_membership.status <> 'active' OR admin_membership.expires_at <= NOW())
-		           )
-		           AND (
-		             owned_license.assigned_bot_id = $1 OR EXISTS (
-		               SELECT 1 FROM cosmetic_license_assignments owned_assignment
-		               WHERE owned_assignment.license_id = owned_license.id
-		                 AND owned_assignment.bot_id = $1
-		             )
-		           )
-		       )) AS owned,
+		       `+botMayWearCosmeticSQL+` AS owned,
 		       CASE
-		         WHEN l.cosmetic_id IS NOT NULL THEN l.cosmetic_id = i.id
+		         WHEN equipped.cosmetic_id IS NOT NULL THEN equipped.cosmetic_id = i.id
 		         ELSE (i.slot = 'bot_skin' AND i.asset_key = 'standard')
 		           OR (i.slot = 'weapon_skin' AND i.asset_key = 'standard')
 		           OR (i.slot = 'attachment' AND i.asset_key = 'none')
@@ -781,11 +704,12 @@ func ListBotCosmetics(ctx context.Context, botID string) ([]BotCosmeticItem, err
 		       END AS equipped
 		FROM cosmetic_items i
 		JOIN cosmetic_categories c ON c.id = i.category_id
-		LEFT JOIN bot_cosmetic_loadout l ON l.bot_id = $1 AND l.slot = i.slot
+		CROSS JOIN (SELECT $1::text AS bot_id) l
+		LEFT JOIN bot_cosmetic_loadout equipped ON equipped.bot_id = $1 AND equipped.slot = i.slot
 		  AND EXISTS (
 		    SELECT 1 FROM cosmetic_items equipped_item
 		    JOIN cosmetic_categories equipped_category ON equipped_category.id = equipped_item.category_id
-		    WHERE equipped_item.id = l.cosmetic_id AND equipped_item.is_active = true
+		    WHERE equipped_item.id = equipped.cosmetic_id AND equipped_item.is_active = true
 		      AND equipped_category.is_active = true
 		  )
 		WHERE i.is_active = true AND c.is_active = true
@@ -809,56 +733,37 @@ func ListBotCosmetics(ctx context.Context, botID string) ([]BotCosmeticItem, err
 	return items, rows.Err()
 }
 
-// GetEquippedCosmetics returns only allowlisted asset identifiers for the
-// spectator protocol. Price and entitlement metadata never enters BotState.
-func GetEquippedCosmetics(ctx context.Context, botID string) (map[string]string, error) {
-	if Pool == nil {
-		return nil, ErrNoDatabase
-	}
-	rows, err := Pool.Query(ctx, `
-		SELECT l.slot, i.asset_key
-		FROM bot_cosmetic_loadout l
-		JOIN cosmetic_items i ON i.id = l.cosmetic_id AND i.slot = l.slot
-		JOIN cosmetic_categories c ON c.id = i.category_id
-		LEFT JOIN cosmetic_licenses cl ON cl.id = l.license_id
-		LEFT JOIN cosmetic_license_assignments cla
-		  ON cla.license_id = l.license_id AND cla.bot_id = l.bot_id AND cla.account_id = l.account_id
-		WHERE l.bot_id = $1 AND i.is_active = true AND c.is_active = true
-		  AND (
-		    i.is_free = true OR
-		    (cl.id IS NOT NULL AND cl.cosmetic_id = i.id AND cl.status = 'active'
-		      AND NOT EXISTS (
-		        SELECT 1 FROM cosmetic_admin_membership_licenses admin_mapping
-		        JOIN cosmetic_admin_memberships admin_membership ON admin_membership.id = admin_mapping.membership_id
-		        WHERE admin_mapping.license_id = cl.id
-		          AND (admin_membership.status <> 'active' OR admin_membership.expires_at <= NOW())
-		      ) AND (
-		      (cl.account_id IS NULL AND cl.assigned_bot_id = l.bot_id) OR
-		      (cl.account_id IS NOT NULL AND cla.license_id IS NOT NULL)
-		    ))
-		  )`, botID)
-	if err != nil {
-		return nil, fmt.Errorf("GetEquippedCosmetics: %w", err)
-	}
-	defer rows.Close()
+// equippedCosmeticsSQL resolves a loadout row to an asset key only when the
+// bot may still wear it: the item and its category are active, and the item
+// is free, demo-granted, or included with a linked account's active Arena
+// subscription. A paid look saved while subscribed simply stops resolving
+// when the subscription lapses, and resolves again when it resumes.
+const equippedCosmeticsSQL = `
+	SELECT l.bot_id, l.slot, i.asset_key
+	FROM bot_cosmetic_loadout l
+	JOIN cosmetic_items i ON i.id = l.cosmetic_id AND i.slot = l.slot
+	JOIN cosmetic_categories c ON c.id = i.category_id
+	WHERE l.bot_id = ANY($1::text[]) AND i.is_active = true AND c.is_active = true
+	  AND ` + botMayWearCosmeticSQL + `
+	ORDER BY l.bot_id, l.slot`
 
-	result := defaultEquippedCosmetics()
-	for rows.Next() {
-		var slot, assetKey string
-		if err := rows.Scan(&slot, &assetKey); err != nil {
-			return nil, fmt.Errorf("GetEquippedCosmetics scan: %w", err)
-		}
-		if IsValidCosmeticSlot(slot) {
-			result[slot] = assetKey
-		}
+// GetEquippedCosmetics returns only allowlisted asset identifiers for the
+// spectator protocol. Price and subscription metadata never enters BotState.
+func GetEquippedCosmetics(ctx context.Context, botID string) (map[string]string, error) {
+	loadouts, err := GetEquippedCosmeticsForBots(ctx, []string{botID})
+	if err != nil {
+		return nil, err
 	}
-	return result, rows.Err()
+	if equipped, ok := loadouts[strings.TrimSpace(botID)]; ok {
+		return equipped, nil
+	}
+	return defaultEquippedCosmetics(), nil
 }
 
 // GetEquippedCosmeticsForBots resolves a bounded connected-bot snapshot with
 // one database query. Every requested bot receives a fallback loadout even if
-// it has no active rows, allowing payment-reversal cache repair to clear stale
-// visuals without an N+1 query loop.
+// it has no active rows, allowing a subscription change to clear stale visuals
+// without an N+1 query loop.
 func GetEquippedCosmeticsForBots(ctx context.Context, botIDs []string) (map[string]map[string]string, error) {
 	if Pool == nil {
 		return nil, ErrNoDatabase
@@ -880,29 +785,7 @@ func GetEquippedCosmeticsForBots(ctx context.Context, botIDs []string) (map[stri
 		return result, nil
 	}
 
-	rows, err := Pool.Query(ctx, `
-		SELECT l.bot_id, l.slot, i.asset_key
-		FROM bot_cosmetic_loadout l
-		JOIN cosmetic_items i ON i.id = l.cosmetic_id AND i.slot = l.slot
-		JOIN cosmetic_categories c ON c.id = i.category_id
-		LEFT JOIN cosmetic_licenses cl ON cl.id = l.license_id
-		LEFT JOIN cosmetic_license_assignments cla
-		  ON cla.license_id = l.license_id AND cla.bot_id = l.bot_id AND cla.account_id = l.account_id
-		WHERE l.bot_id = ANY($1::text[]) AND i.is_active = true AND c.is_active = true
-		  AND (
-		    i.is_free = true OR
-		    (cl.id IS NOT NULL AND cl.cosmetic_id = i.id AND cl.status = 'active'
-		      AND NOT EXISTS (
-		        SELECT 1 FROM cosmetic_admin_membership_licenses admin_mapping
-		        JOIN cosmetic_admin_memberships admin_membership ON admin_membership.id = admin_mapping.membership_id
-		        WHERE admin_mapping.license_id = cl.id
-		          AND (admin_membership.status <> 'active' OR admin_membership.expires_at <= NOW())
-		      ) AND (
-		      (cl.account_id IS NULL AND cl.assigned_bot_id = l.bot_id) OR
-		      (cl.account_id IS NOT NULL AND cla.license_id IS NOT NULL)
-		    ))
-		  )
-		ORDER BY l.bot_id, l.slot`, unique)
+	rows, err := Pool.Query(ctx, equippedCosmeticsSQL, unique)
 	if err != nil {
 		return nil, fmt.Errorf("GetEquippedCosmeticsForBots: %w", err)
 	}
@@ -931,6 +814,48 @@ func defaultEquippedCosmetics() map[string]string {
 	}
 }
 
+// lockActiveCosmeticItemTx loads one catalog item under a share lock and
+// refuses an unknown or inactive one, so an equip cannot race an admin
+// retiring the item or its category.
+func lockActiveCosmeticItemTx(ctx context.Context, tx pgx.Tx, cosmeticID string) (*CosmeticItem, error) {
+	var item CosmeticItem
+	var categoryActive bool
+	err := tx.QueryRow(ctx, `
+		SELECT i.id, i.name, i.description, i.category_id, i.slot, i.asset_key, i.rarity, i.price_cents, i.currency,
+		       i.is_free, i.is_purchasable, i.is_active, i.is_builtin, i.sort_order, c.is_active
+		FROM cosmetic_items i
+		JOIN cosmetic_categories c ON c.id = i.category_id
+		WHERE i.id = $1
+		FOR SHARE OF i, c`, cosmeticID).
+		Scan(&item.ID, &item.Name, &item.Description, &item.CategoryID, &item.Slot, &item.AssetKey, &item.Rarity,
+			&item.PriceCents, &item.Currency, &item.IsFree, &item.IsPurchasable, &item.IsActive, &item.IsBuiltin, &item.SortOrder, &categoryActive)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrCosmeticNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("cosmetic item lookup: %w", err)
+	}
+	if !item.IsActive || !categoryActive {
+		return nil, ErrCosmeticInactive
+	}
+	return &item, nil
+}
+
+func upsertBotCosmeticLoadoutTx(ctx context.Context, tx pgx.Tx, botID, slot, cosmeticID string) error {
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO bot_cosmetic_loadout (bot_id, slot, cosmetic_id, updated_at)
+		VALUES ($1, $2, $3, NOW())
+		ON CONFLICT (bot_id, slot) DO UPDATE
+		SET cosmetic_id = EXCLUDED.cosmetic_id, updated_at = NOW()`,
+		botID, slot, cosmeticID); err != nil {
+		return fmt.Errorf("cosmetic loadout upsert: %w", err)
+	}
+	return nil
+}
+
+// EquipCosmetic is the bot-key equip (`PUT /api/v1/bot/cosmetics`): the bot
+// wears this item if it may — free, demo-granted, or included with the
+// subscription of the account it is linked to.
 func EquipCosmetic(ctx context.Context, botID, slot, cosmeticID string) (*CosmeticItem, error) {
 	slot = strings.TrimSpace(strings.ToLower(slot))
 	if !IsValidCosmeticSlot(slot) {
@@ -946,109 +871,40 @@ func EquipCosmetic(ctx context.Context, botID, slot, cosmeticID string) (*Cosmet
 	}
 	defer tx.Rollback(ctx)
 
-	var item CosmeticItem
-	var categoryActive bool
-	err = tx.QueryRow(ctx, `
-		SELECT i.id, i.name, i.description, i.category_id, i.slot, i.asset_key, i.rarity, i.price_cents, i.currency,
-		       i.is_free, i.is_purchasable, i.is_active, i.is_builtin, i.sort_order, c.is_active
-		FROM cosmetic_items i
-		JOIN cosmetic_categories c ON c.id = i.category_id
-		WHERE i.id = $1
-		FOR SHARE OF i, c`, cosmeticID).
-		Scan(&item.ID, &item.Name, &item.Description, &item.CategoryID, &item.Slot, &item.AssetKey, &item.Rarity,
-			&item.PriceCents, &item.Currency, &item.IsFree, &item.IsPurchasable, &item.IsActive, &item.IsBuiltin, &item.SortOrder, &categoryActive)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrCosmeticNotFound
-	}
+	item, err := lockActiveCosmeticItemTx(ctx, tx, cosmeticID)
 	if err != nil {
-		return nil, fmt.Errorf("EquipCosmetic item: %w", err)
-	}
-	if !item.IsActive || !categoryActive {
-		return nil, ErrCosmeticInactive
+		return nil, err
 	}
 	if item.Slot != slot {
 		return nil, ErrCosmeticSlotMismatch
 	}
-
-	var licenseID, licenseAccountID *string
 	if !item.IsFree {
-		var assignedLicenseID string
-		var assignedAccountID *string
-		// Discover the candidate without taking a subordinate lock. Account-owned
-		// equip must lock the account row before it locks the exact license so it
-		// cannot deadlock with dashboard assign/unlink operations.
-		err := tx.QueryRow(ctx, `
-			SELECT cl.id, cl.account_id
-			FROM cosmetic_licenses cl
-			LEFT JOIN cosmetic_license_assignments cla ON cla.license_id = cl.id
-			WHERE cl.cosmetic_id = $2 AND cl.status = 'active'
-			  AND NOT EXISTS (
-			    SELECT 1 FROM cosmetic_admin_membership_licenses admin_mapping
-			    JOIN cosmetic_admin_memberships admin_membership ON admin_membership.id = admin_mapping.membership_id
-			    WHERE admin_mapping.license_id = cl.id
-			      AND (admin_membership.status <> 'active' OR admin_membership.expires_at <= NOW())
-			  )
-			  AND (cl.assigned_bot_id = $1 OR cla.bot_id = $1)
-			ORDER BY cl.granted_at, cl.id
-			LIMIT 1`, botID, cosmeticID).Scan(&assignedLicenseID, &assignedAccountID)
-		if errors.Is(err, pgx.ErrNoRows) {
+		var allowed bool
+		if err := tx.QueryRow(ctx, `
+			SELECT `+botMayWearCosmeticSQL+`
+			FROM cosmetic_items i
+			CROSS JOIN (SELECT $1::text AS bot_id) l
+			WHERE i.id = $2`, botID, cosmeticID).Scan(&allowed); err != nil {
+			return nil, fmt.Errorf("EquipCosmetic entitlement: %w", err)
+		}
+		if !allowed {
 			return nil, ErrCosmeticNotOwned
 		}
-		if err != nil {
-			return nil, fmt.Errorf("EquipCosmetic license candidate: %w", err)
-		}
-		if assignedAccountID != nil {
-			if _, err := lockCustomerAccount(ctx, tx, *assignedAccountID, true); err != nil {
-				return nil, err
-			}
-		}
-		var lockedAccountID *string
-		err = tx.QueryRow(ctx, `
-			SELECT cl.account_id
-			FROM cosmetic_licenses cl
-			LEFT JOIN cosmetic_license_assignments cla ON cla.license_id = cl.id
-			WHERE cl.id = $1 AND cl.cosmetic_id = $2 AND cl.status = 'active'
-			  AND NOT EXISTS (
-			    SELECT 1 FROM cosmetic_admin_membership_licenses admin_mapping
-			    JOIN cosmetic_admin_memberships admin_membership ON admin_membership.id = admin_mapping.membership_id
-			    WHERE admin_mapping.license_id = cl.id
-			      AND (admin_membership.status <> 'active' OR admin_membership.expires_at <= NOW())
-			  )
-			  AND (cl.assigned_bot_id = $3 OR cla.bot_id = $3)
-			FOR UPDATE OF cl`, assignedLicenseID, cosmeticID, botID).Scan(&lockedAccountID)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrCosmeticNotOwned
-		}
-		if err != nil {
-			return nil, fmt.Errorf("EquipCosmetic license lock: %w", err)
-		}
-		if (assignedAccountID == nil) != (lockedAccountID == nil) ||
-			(assignedAccountID != nil && lockedAccountID != nil && *assignedAccountID != *lockedAccountID) {
-			return nil, ErrCosmeticNotOwned
-		}
-		licenseID = &assignedLicenseID
-		licenseAccountID = lockedAccountID
 	}
-
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO bot_cosmetic_loadout (bot_id, slot, cosmetic_id, license_id, account_id, updated_at)
-		VALUES ($1, $2, $3, $4, $5, NOW())
-		ON CONFLICT (bot_id, slot) DO UPDATE
-		SET cosmetic_id = EXCLUDED.cosmetic_id, license_id = EXCLUDED.license_id,
-		    account_id = EXCLUDED.account_id, updated_at = NOW()`,
-		botID, slot, cosmeticID, licenseID, licenseAccountID); err != nil {
-		return nil, fmt.Errorf("EquipCosmetic upsert: %w", err)
+	if err := upsertBotCosmeticLoadoutTx(ctx, tx, botID, slot, cosmeticID); err != nil {
+		return nil, err
 	}
-
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("EquipCosmetic commit: %w", err)
 	}
-	return &item, nil
+	return item, nil
 }
 
-// GrantCosmeticEntitlement is the provider-neutral fulfillment seam. Stripe,
-// Paddle, promotions, or manual support tools can all supply an idempotency
-// reference without changing the game engine or equip endpoint.
+// GrantCosmeticEntitlement is the bot-scoped complimentary grant behind the
+// admin demo-loadout tool. It is not a purchase path: customers get every
+// paid cosmetic through the Arena subscription, never through a row here.
+// An external reference makes a grant idempotent; the same reference naming
+// a different bot or item is a conflict.
 func GrantCosmeticEntitlement(ctx context.Context, botID, cosmeticID, source, externalReference string) (bool, error) {
 	if Pool == nil {
 		return false, ErrNoDatabase
@@ -1087,27 +943,13 @@ func GrantCosmeticEntitlement(ctx context.Context, botID, cosmeticID, source, ex
 			return false, fmt.Errorf("GrantCosmeticEntitlement idempotency lookup: %w", err)
 		}
 	}
-	var itemActive, categoryActive bool
-	if err := tx.QueryRow(ctx, `
-		SELECT i.is_active, c.is_active
-		FROM cosmetic_items i
-		JOIN cosmetic_categories c ON c.id = i.category_id
-		WHERE i.id = $1
-		FOR SHARE OF i, c`, cosmeticID).Scan(&itemActive, &categoryActive); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return false, ErrCosmeticNotFound
-		}
-		return false, fmt.Errorf("GrantCosmeticEntitlement item lookup: %w", err)
+	if _, err := lockActiveCosmeticItemTx(ctx, tx, cosmeticID); err != nil {
+		return false, err
 	}
-	if !itemActive || !categoryActive {
-		return false, ErrCosmeticInactive
-	}
-
-	newLicenseID := uuid.NewString()
 	tag, err := tx.Exec(ctx, `
-		INSERT INTO cosmetic_entitlements (bot_id, cosmetic_id, source, external_reference, license_id, granted_at)
-		VALUES ($1, $2, $3, NULLIF($4, ''), $5, NOW())
-		ON CONFLICT DO NOTHING`, botID, cosmeticID, source, externalReference, newLicenseID)
+		INSERT INTO cosmetic_entitlements (bot_id, cosmetic_id, source, external_reference, granted_at)
+		VALUES ($1, $2, $3, NULLIF($4, ''), NOW())
+		ON CONFLICT DO NOTHING`, botID, cosmeticID, source, externalReference)
 	if err != nil {
 		return false, fmt.Errorf("GrantCosmeticEntitlement: %w", err)
 	}
@@ -1122,141 +964,8 @@ func GrantCosmeticEntitlement(ctx context.Context, botID, cosmeticID, source, ex
 			return false, ErrCosmeticGrantConflict
 		}
 	}
-	var licenseID, entitlementSource string
-	var entitlementExternalReference *string
-	var grantedAt time.Time
-	if err := tx.QueryRow(ctx, `
-		SELECT COALESCE(license_id, 'legacy-' || MD5(bot_id || CHR(31) || cosmetic_id)),
-		       source, external_reference, granted_at
-		FROM cosmetic_entitlements
-		WHERE bot_id = $1 AND cosmetic_id = $2`, botID, cosmeticID).Scan(
-		&licenseID, &entitlementSource, &entitlementExternalReference, &grantedAt,
-	); err != nil {
-		return false, fmt.Errorf("GrantCosmeticEntitlement legacy license source: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE cosmetic_entitlements SET license_id = $3
-		WHERE bot_id = $1 AND cosmetic_id = $2 AND license_id IS NULL`, botID, cosmeticID, licenseID); err != nil {
-		return false, fmt.Errorf("GrantCosmeticEntitlement license mapping: %w", err)
-	}
-	reference := ""
-	if entitlementExternalReference != nil {
-		reference = *entitlementExternalReference
-	}
-	if reference != "" {
-		var existingLicenseID, existingCosmeticID, existingStatus string
-		var existingLegacyBotID *string
-		err := tx.QueryRow(ctx, `
-			SELECT id, cosmetic_id, status, legacy_bot_id
-			FROM cosmetic_licenses
-			WHERE source = $1 AND external_reference = $2
-			FOR UPDATE`, entitlementSource, reference).Scan(
-			&existingLicenseID, &existingCosmeticID, &existingStatus, &existingLegacyBotID,
-		)
-		if err == nil {
-			if existingCosmeticID != cosmeticID || existingLegacyBotID == nil || *existingLegacyBotID != botID {
-				return false, ErrCosmeticGrantConflict
-			}
-			if existingStatus != "active" {
-				return false, nil
-			}
-			licenseID = existingLicenseID
-			if _, err := tx.Exec(ctx, `
-				UPDATE cosmetic_entitlements SET license_id = $3
-				WHERE bot_id = $1 AND cosmetic_id = $2`, botID, cosmeticID, licenseID); err != nil {
-				return false, fmt.Errorf("GrantCosmeticEntitlement reconcile license mapping: %w", err)
-			}
-		} else if !errors.Is(err, pgx.ErrNoRows) {
-			return false, fmt.Errorf("GrantCosmeticEntitlement reconcile license: %w", err)
-		}
-	}
-	if _, err := createCosmeticLicenseTx(ctx, tx, cosmeticLicenseCreate{
-		LicenseID: licenseID, LegacyBotID: &botID, CosmeticID: cosmeticID,
-		AssignedAgentID: &botID, Source: entitlementSource, Reason: "legacy_entitlement_granted",
-		ExternalReference: reference, GrantedAt: grantedAt,
-	}); err != nil {
-		return false, fmt.Errorf("GrantCosmeticEntitlement legacy license: %w", err)
-	}
 	if err := tx.Commit(ctx); err != nil {
 		return false, fmt.Errorf("GrantCosmeticEntitlement commit: %w", err)
 	}
 	return created, nil
-}
-
-func RevokeCosmeticEntitlement(ctx context.Context, botID, cosmeticID string) (bool, error) {
-	if Pool == nil {
-		return false, ErrNoDatabase
-	}
-	tx, err := Pool.Begin(ctx)
-	if err != nil {
-		return false, fmt.Errorf("RevokeCosmeticEntitlement begin: %w", err)
-	}
-	defer tx.Rollback(ctx)
-
-	// Equip locks this same entitlement row before writing the loadout. Taking
-	// the lock before either delete gives equip and revoke one consistent lock
-	// order; otherwise revoke can delete an empty loadout, wait on entitlement,
-	// and leave behind a paid loadout inserted by the concurrent equip.
-	var entitlementMarker int
-	err = tx.QueryRow(ctx, `
-		SELECT 1 FROM cosmetic_entitlements
-		WHERE bot_id = $1 AND cosmetic_id = $2
-		FOR UPDATE`, botID, cosmeticID).Scan(&entitlementMarker)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return false, fmt.Errorf("RevokeCosmeticEntitlement lock: %w", err)
-	}
-
-	// Serialize with account assignment/equip if this entitlement has not yet
-	// been claimed. Claimed licenses are durable account property and are not
-	// removed by this compatibility-only bot entitlement helper.
-	rows, err := tx.Query(ctx, `
-		SELECT id FROM cosmetic_licenses
-		WHERE legacy_bot_id = $1 AND cosmetic_id = $2
-		ORDER BY id FOR UPDATE`, botID, cosmeticID)
-	if err != nil {
-		return false, fmt.Errorf("RevokeCosmeticEntitlement license lock: %w", err)
-	}
-	licenseIDs := make([]string, 0)
-	for rows.Next() {
-		var licenseID string
-		if err := rows.Scan(&licenseID); err != nil {
-			rows.Close()
-			return false, fmt.Errorf("RevokeCosmeticEntitlement license scan: %w", err)
-		}
-		licenseIDs = append(licenseIDs, licenseID)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return false, fmt.Errorf("RevokeCosmeticEntitlement license rows: %w", err)
-	}
-	rows.Close()
-
-	loadoutTag, err := tx.Exec(ctx, `
-		DELETE FROM bot_cosmetic_loadout
-		WHERE bot_id = $1 AND cosmetic_id = $2
-		  AND (
-		    license_id IS NULL OR license_id IN (
-		      SELECT id FROM cosmetic_licenses
-		      WHERE legacy_bot_id = $1 AND cosmetic_id = $2
-		    )
-		  )`, botID, cosmeticID)
-	if err != nil {
-		return false, fmt.Errorf("RevokeCosmeticEntitlement loadout: %w", err)
-	}
-	tag, err := tx.Exec(ctx, `
-		DELETE FROM cosmetic_entitlements
-		WHERE bot_id = $1 AND cosmetic_id = $2`, botID, cosmeticID)
-	if err != nil {
-		return false, fmt.Errorf("RevokeCosmeticEntitlement grant: %w", err)
-	}
-	licenseChanges, err := applyCosmeticLicenseTerminalBatchTx(
-		ctx, tx, licenseIDs, "revoked", "legacy_entitlement", "legacy_entitlement_revoked", botID+":"+cosmeticID,
-	)
-	if err != nil {
-		return false, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return false, fmt.Errorf("RevokeCosmeticEntitlement commit: %w", err)
-	}
-	return loadoutTag.RowsAffected() > 0 || tag.RowsAffected() > 0 || licenseChanges > 0, nil
 }

@@ -98,27 +98,30 @@ func TestManagedSchemaPreflightOmitsExternalDemoBotPersistence(t *testing.T) {
 	}
 }
 
-func TestManagedSchemaPreflightRequiresCosmeticCommerceLedger(t *testing.T) {
+// TestManagedSchemaPreflightRequiresTheSubscriptionFlagAndNoCommerceLedger
+// pins the subscription-only model at the deploy gate: a managed database
+// must carry the account subscription columns, and must not be refused for
+// lacking the retired Stripe order, subscription, licence and membership
+// tables — a fresh deployment never creates them.
+func TestManagedSchemaPreflightRequiresTheSubscriptionFlagAndNoCommerceLedger(t *testing.T) {
 	for _, required := range []string{
-		"('cosmetic_orders', 'account_id')",
-		"('cosmetic_orders', 'pack_description')",
-		"('cosmetic_orders', 'expected_subtotal_cents')",
-		"('cosmetic_orders', 'cumulative_charge_refunded_cents')",
-		"('cosmetic_orders', 'stripe_checkout_session_id')",
-		"('cosmetic_orders', 'stripe_payment_intent_id')",
-		"('cosmetic_order_items', 'item_id')",
-		"('cosmetic_order_licenses', 'license_id')",
-		"('cosmetic_payment_events', 'payload_hash')",
-		"('cosmetic_order_refunds', 'refund_id')",
-		"('cosmetic_subscriptions', 'id')",
-		"('cosmetic_subscriptions', 'stripe_subscription_id')",
-		"('cosmetic_subscriptions', 'last_provider_event_created_at')",
-		"('cosmetic_subscriptions', 'last_provider_state_observed_at')",
-		"('cosmetic_subscription_licenses', 'license_id')",
-		"('cosmetic_subscription_events', 'payload_hash')",
+		"('customer_accounts', 'subscription_active')",
+		"('customer_accounts', 'subscription_synced_at')",
+		"('bot_cosmetic_loadout', 'cosmetic_id')",
 	} {
 		if !strings.Contains(managedSchemaPreflightQuery, required) {
 			t.Errorf("managed schema preflight is missing %s", required)
+		}
+	}
+	for _, retired := range []string{
+		"cosmetic_orders", "cosmetic_order_items", "cosmetic_order_licenses", "cosmetic_payment_events",
+		"cosmetic_order_refunds", "cosmetic_subscriptions", "cosmetic_subscription_licenses",
+		"cosmetic_subscription_events", "cosmetic_admin_memberships", "cosmetic_admin_membership_licenses",
+		"cosmetic_licenses", "cosmetic_license_assignments", "customer_accounts_grants",
+		"platform_license_lifecycle_events", "('bot_cosmetic_loadout', 'license_id')",
+	} {
+		if strings.Contains(managedSchemaPreflightQuery, retired) {
+			t.Errorf("managed schema preflight still requires the retired commerce table/column %s", retired)
 		}
 	}
 }

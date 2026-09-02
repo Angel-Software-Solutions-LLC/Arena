@@ -11,38 +11,35 @@ import (
 	"testing"
 )
 
-// publishedResponse is the exact shape documented on Support#188, values and
+// publishedResponse is the shape the Accounts `/v1/entitlements` endpoint
+// publishes (apps/api/src/routes/v1.ts, `entitlementsPayload`), values and
 // all. Written out in full rather than assembled from the struct so a change
 // on the other side shows up here as a decode that stops matching, instead of
 // as a test that agrees with whatever Arena happens to expect today.
+//
+// `purchases` is still on the wire for products that sell one-time items;
+// Arena no longer sells any and does not read it.
 const publishedResponse = `{
   "account":  { "id": "acct_1", "name": "Player", "kind": "individual" },
   "user":     { "id": "usr_1", "email": "player@example.com", "name": "Player" },
-  "entitlements": [ { "productId": "arena", "plan": "all-access" } ],
-  "purchases": [
+  "entitlements": [
     {
-      "id":          "pur_abc",
-      "productId":   "arena",
-      "itemId":      "arena:neon-signal-pack",
-      "sku":         "neon-signal-pack",
-      "name":        "Neon Signal Pack",
-      "priceCents":  199,
-      "currency":    "USD",
-      "purchasedAt": "2026-08-23T10:00:00Z",
-      "status":      "active"
+      "productId": "kynetik", "productSlug": "kynetik", "productName": "Kynetik",
+      "planId": "kynetik-pro", "planSlug": "pro", "planName": "Pro",
+      "status": "active", "active": true, "features": ["kynetik.publish"], "limits": {},
+      "seats": 1, "seatsUsed": 1, "trialEndsAt": null, "currentPeriodEnd": "2026-10-01T00:00:00Z",
+      "staffGrantExpiresAt": null, "launchUrl": "https://kynetik.dev"
     },
     {
-      "id":          "pur_def",
-      "productId":   "arena",
-      "itemId":      "arena:ember-vanguard-pack",
-      "sku":         "ember-vanguard-pack",
-      "name":        "Ember Vanguard Pack",
-      "priceCents":  199,
-      "currency":    "USD",
-      "purchasedAt": "2026-08-01T10:00:00Z",
-      "status":      "revoked"
+      "productId": "arena", "productSlug": "arena", "productName": "Arena",
+      "planId": "arena-all-access", "planSlug": "all-access", "planName": "Arena",
+      "status": "active", "active": true,
+      "features": ["arena.bot", "arena.spectate", "arena.cosmetics"], "limits": {},
+      "seats": 1, "seatsUsed": 1, "trialEndsAt": null, "currentPeriodEnd": "2026-10-01T00:00:00Z",
+      "staffGrantExpiresAt": null, "launchUrl": "https://arena.angel-serv.com"
     }
   ],
+  "purchases": [],
   "refreshAfter": "2026-08-23T11:00:00Z"
 }`
 
@@ -72,26 +69,56 @@ func TestFetchReadsThePublishedShape(t *testing.T) {
 	if seenAuth != "Bearer at_token" {
 		t.Fatalf("Authorization header = %q, want a bearer token", seenAuth)
 	}
-	if len(snapshot.Purchases) != 2 {
-		t.Fatalf("purchases = %d, want both rows kept", len(snapshot.Purchases))
+	if len(snapshot.Entitlements) != 2 {
+		t.Fatalf("entitlements = %d, want every product row kept", len(snapshot.Entitlements))
 	}
-	/*
-	 * A revoked purchase must survive the read. Dropping it here would make a
-	 * withdrawal indistinguishable from a purchase that simply stopped being
-	 * mentioned, and the reconciler acts on exactly that difference.
-	 */
-	if snapshot.Purchases[1].Active() {
-		t.Fatalf("a revoked purchase read as active: %+v", snapshot.Purchases[1])
+	arena, ok := snapshot.ArenaEntitlement()
+	if !ok || arena.PlanSlug != "all-access" || arena.Status != "active" || !arena.Active {
+		t.Fatalf("arena entitlement = (%+v, %v), want the active all-access row", arena, ok)
 	}
-	active := snapshot.ActivePurchases()
-	if len(active) != 1 || active[0].ID != "pur_abc" || active[0].SKU != "neon-signal-pack" {
-		t.Fatalf("active purchases = %+v, want only the active grant", active)
+	if !snapshot.ArenaSubscriptionActive() {
+		t.Fatal("an active Arena entitlement did not read as a subscription")
 	}
 	if snapshot.RefreshAfter.IsZero() {
 		t.Fatalf("refreshAfter did not decode: %+v", snapshot.RefreshAfter)
 	}
-	if len(snapshot.Entitlements) != 1 {
-		t.Fatalf("subscriptions = %d, want them carried without being interpreted", len(snapshot.Entitlements))
+}
+
+// TestArenaSubscriptionIsDecidedByTheActiveFlagOnTheArenaRow is the whole
+// consumption rule: the Arena row, and Accounts' own `active`, nothing else.
+func TestArenaSubscriptionIsDecidedByTheActiveFlagOnTheArenaRow(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		entitlements string
+		wantPresent  bool
+		wantActive   bool
+	}{
+		{name: "active by slug", entitlements: `[{"productSlug":"arena","status":"active","active":true}]`, wantPresent: true, wantActive: true},
+		{name: "active by id only", entitlements: `[{"productId":"arena","status":"trialing","active":true}]`, wantPresent: true, wantActive: true},
+		{name: "lapsed", entitlements: `[{"productSlug":"arena","status":"canceled","active":false}]`, wantPresent: true, wantActive: false},
+		// `status` says active but Accounts says no: a suspended account, a
+		// time-boxed staff grant that ran out. Accounts' answer wins.
+		{name: "status without active", entitlements: `[{"productSlug":"arena","status":"active"}]`, wantPresent: true, wantActive: false},
+		{name: "other product only", entitlements: `[{"productSlug":"kynetik","status":"active","active":true}]`, wantPresent: false, wantActive: false},
+		{name: "nothing", entitlements: `[]`, wantPresent: false, wantActive: false},
+		{name: "an active row beats a stale one", entitlements: `[{"productSlug":"arena","active":false},{"productSlug":"arena","active":true}]`, wantPresent: true, wantActive: true},
+		{name: "case and whitespace do not matter", entitlements: `[{"productSlug":" Arena ","active":true}]`, wantPresent: true, wantActive: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var snapshot Snapshot
+			if err := json.Unmarshal([]byte(`{"entitlements":`+test.entitlements+`}`), &snapshot); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			_, present := snapshot.ArenaEntitlement()
+			if present != test.wantPresent || snapshot.ArenaSubscriptionActive() != test.wantActive {
+				t.Fatalf("present=%v active=%v, want present=%v active=%v",
+					present, snapshot.ArenaSubscriptionActive(), test.wantPresent, test.wantActive)
+			}
+		})
+	}
+	var absent *Snapshot
+	if absent.ArenaSubscriptionActive() {
+		t.Fatal("a missing snapshot read as subscribed")
 	}
 }
 
@@ -120,9 +147,9 @@ func TestSnapshotHasNowhereToPutAnAddress(t *testing.T) {
 	}
 }
 
-// TestFetchTellsSilenceFromEmptiness is the failure that would have been worst
-// in production: a response that omits `purchases` read as "owns nothing" is a
-// reconciliation input that says withdraw everything.
+// TestFetchTellsSilenceFromEmptiness is the failure that would be worst in
+// production: a response that omits `entitlements` read as "subscribes to
+// nothing" is a sync input that locks a paying customer's cosmetics.
 func TestFetchTellsSilenceFromEmptiness(t *testing.T) {
 	for _, test := range []struct {
 		name    string
@@ -130,23 +157,23 @@ func TestFetchTellsSilenceFromEmptiness(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "omitted", body: `{"account":{"id":"acct_1"}}`, wantErr: true},
-		{name: "null", body: `{"account":{"id":"acct_1"},"purchases":null}`, wantErr: true},
-		{name: "empty", body: `{"account":{"id":"acct_1"},"purchases":[]}`, wantErr: false},
+		{name: "null", body: `{"account":{"id":"acct_1"},"entitlements":null}`, wantErr: true},
+		{name: "empty", body: `{"account":{"id":"acct_1"},"entitlements":[]}`, wantErr: false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			client := serving(t, http.StatusOK, test.body, nil)
 			snapshot, err := client.Fetch(context.Background(), "at_token")
 			if test.wantErr {
 				if err == nil {
-					t.Fatalf("a response with no purchases key was accepted as owning nothing")
+					t.Fatalf("a response with no entitlements key was accepted as subscribing to nothing")
 				}
 				return
 			}
 			if err != nil {
 				t.Fatalf("an explicitly empty list is a real answer: %v", err)
 			}
-			if snapshot.Purchases == nil || len(snapshot.Purchases) != 0 {
-				t.Fatalf("purchases = %+v, want an empty list", snapshot.Purchases)
+			if snapshot.Entitlements == nil || len(snapshot.Entitlements) != 0 || snapshot.ArenaSubscriptionActive() {
+				t.Fatalf("entitlements = %+v, want an empty list and no subscription", snapshot.Entitlements)
 			}
 		})
 	}
@@ -169,9 +196,9 @@ func TestFetchDistinguishesARejectedToken(t *testing.T) {
 	}
 }
 
-// TestNoEndpointMeansNoClient is the state this ships in: until the Accounts
-// side provisions Arena's service client and advertises the endpoint, there is
-// nothing to read and nothing must pretend otherwise.
+// TestNoEndpointMeansNoClient is the state an Arena ships in until the
+// Accounts side advertises the endpoint: there is nothing to read and nothing
+// must pretend otherwise.
 func TestNoEndpointMeansNoClient(t *testing.T) {
 	if client := NewClient("   ", nil); client != nil {
 		t.Fatalf("an empty endpoint produced a client")

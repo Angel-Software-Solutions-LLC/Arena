@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"arena-server/internal/config"
 	"arena-server/internal/db"
@@ -20,44 +19,28 @@ import (
 )
 
 type fakeCosmeticsStore struct {
-	publicCatalog      *db.CosmeticCatalog
-	adminCatalog       *db.CosmeticCatalog
-	audit              []db.CosmeticCatalogAudit
-	items              []db.BotCosmeticItem
-	equipped           map[string]string
-	equippedErr        error
-	equippedBotIDs     []string
-	equipItem          *db.CosmeticItem
-	equipErr           error
-	grantCreated       bool
-	grantErr           error
-	revoked            bool
-	revokeErr          error
-	inventory          *db.CustomerCosmeticsInventory
-	linkBot            *db.AccountBot
-	assignment         *db.CosmeticAssignmentChange
-	license            *db.CosmeticLicense
-	lastBotID          string
-	lastAccount        string
-	lastLicense        string
-	lastSlot           string
-	lastCosmetic       string
-	lastActor          string
-	lastLimit          int
-	adminAccess        *db.CosmeticAdminAccess
-	membership         *db.CosmeticAdminMembership
-	licensesMade       int
-	affectedBots       []string
-	lastEmail          string
-	lastNote           string
-	lastReason         string
-	lastMembership     string
-	lastExpiry         time.Time
-	lastSource         string
-	lastReference      string
-	lastControlProof   string
-	claimCalls         int
-	expiredMemberships int
+	publicCatalog    *db.CosmeticCatalog
+	adminCatalog     *db.CosmeticCatalog
+	audit            []db.CosmeticCatalogAudit
+	items            []db.BotCosmeticItem
+	equipped         map[string]string
+	equippedErr      error
+	equippedBotIDs   []string
+	equipItem        *db.CosmeticItem
+	equipErr         error
+	grantErr         error
+	revoked          bool
+	revokeErr        error
+	inventory        *db.CustomerCosmeticsInventory
+	linkBot          *db.AccountBot
+	lastBotID        string
+	lastAccount      string
+	lastSlot         string
+	lastCosmetic     string
+	lastActor        string
+	lastLimit        int
+	lastControlProof string
+	claimCalls       int
 }
 
 func (f *fakeCosmeticsStore) PublicCatalog(context.Context) (*db.CosmeticCatalog, error) {
@@ -209,89 +192,6 @@ func TestAccountCosmeticsInventoryUsesPlatformAuthority(t *testing.T) {
 	}
 }
 
-func TestAccountCosmeticsInventoryIncludesActiveAdminMembership(t *testing.T) {
-	expires := time.Now().Add(30 * 24 * time.Hour).UTC()
-	store := &fakeCosmeticsStore{inventory: &db.CustomerCosmeticsInventory{
-		Membership: &db.CosmeticAdminMembership{
-			ID:        "membership-1",
-			AccountID: "account-membership",
-			Status:    "active",
-			GrantedBy: "admin@example.com",
-			ExpiresAt: expires,
-		},
-	}}
-	handler := newCosmeticsHandlerWithStore(store, nil)
-	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/account/cosmetics", nil)
-	request = request.WithContext(withCustomerSession(request.Context(), &CustomerSession{
-		AccountID: "account-membership",
-		Email:     "member@example.com",
-	}))
-
-	handler.AccountInventory(recorder, request)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
-	}
-	var response struct {
-		Membership *db.CosmeticAdminMembership `json:"membership"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
-		t.Fatalf("decode inventory: %v", err)
-	}
-	if response.Membership == nil || response.Membership.Status != "active" || response.Membership.ID != "membership-1" {
-		t.Fatalf("membership = %+v, want an active admin membership in the inventory response", response.Membership)
-	}
-}
-
-func TestAccountCosmeticsInventoryReconcilesTimedMembershipBeforeReadback(t *testing.T) {
-	store := &fakeCosmeticsStore{
-		inventory:          &db.CustomerCosmeticsInventory{},
-		expiredMemberships: 1,
-	}
-	handler := newCosmeticsHandlerWithStore(store, nil)
-	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/account/cosmetics", nil)
-	request = request.WithContext(withCustomerSession(request.Context(), &CustomerSession{
-		AccountID: "account-expiry",
-		Email:     "Member@Example.com",
-	}))
-	handler.AccountInventory(recorder, request)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
-	}
-	if store.lastEmail != "Member@Example.com" || store.lastAccount != "account-expiry" {
-		t.Fatalf("expiry/readback order email=%q account=%q", store.lastEmail, store.lastAccount)
-	}
-}
-
-func TestAccountCosmeticsInventoryExpiryRefreshIsScopedAndNonBlocking(t *testing.T) {
-	store := &fakeCosmeticsStore{
-		inventory:          &db.CustomerCosmeticsInventory{},
-		expiredMemberships: 1,
-		affectedBots:       []string{"affected-bot"},
-		equippedErr:        errors.New("temporary visual cache read failure"),
-	}
-	engine := game.NewGameEngine()
-	engine.Bots["affected-bot"] = &game.BotState{BotID: "affected-bot"}
-	engine.Bots["unrelated-bot"] = &game.BotState{BotID: "unrelated-bot"}
-	handler := newCosmeticsHandlerWithStore(store, engine)
-	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/account/cosmetics", nil)
-	request = request.WithContext(withCustomerSession(request.Context(), &CustomerSession{
-		AccountID: "account-expiry",
-		Email:     "member@example.com",
-	}))
-
-	handler.AccountInventory(recorder, request)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
-	}
-	if got := strings.Join(store.equippedBotIDs, ","); got != "affected-bot" {
-		t.Fatalf("visual refresh bots=%q, want only affected-bot", got)
-	}
-}
 func (f *fakeCosmeticsStore) ClaimArenaAgent(_ context.Context, accountID, controlProof string) (*db.AccountBot, error) {
 	f.lastAccount, f.lastControlProof = accountID, controlProof
 	f.claimCalls++
@@ -301,50 +201,9 @@ func (f *fakeCosmeticsStore) UnlinkAgent(_ context.Context, accountID, botID str
 	f.lastAccount, f.lastBotID = accountID, botID
 	return f.revoked, f.revokeErr
 }
-func (f *fakeCosmeticsStore) AssignLicense(_ context.Context, accountID, licenseID string, botID *string) (*db.CosmeticAssignmentChange, error) {
-	f.lastAccount, f.lastLicense = accountID, licenseID
-	if botID != nil {
-		f.lastBotID = *botID
-	}
-	return f.assignment, f.grantErr
-}
-func (f *fakeCosmeticsStore) EquipLicense(_ context.Context, accountID, botID, licenseID string) (*db.CosmeticLicense, error) {
-	f.lastAccount, f.lastBotID, f.lastLicense = accountID, botID, licenseID
-	return f.license, f.equipErr
-}
-func (f *fakeCosmeticsStore) GrantLicense(_ context.Context, email, cosmeticID, source, reference string) (*db.CosmeticLicense, bool, error) {
-	f.lastAccount, f.lastCosmetic, f.lastSource, f.lastReference = email, cosmeticID, source, reference
-	return f.license, f.grantCreated, f.grantErr
-}
-func (f *fakeCosmeticsStore) RevokeLicense(_ context.Context, licenseID string) (*db.CosmeticAssignmentChange, bool, error) {
-	f.lastLicense = licenseID
-	return f.assignment, f.revoked, f.revokeErr
-}
-
-func (f *fakeCosmeticsStore) AdminAccess(_ context.Context, email string) (*db.CosmeticAdminAccess, error) {
-	f.lastEmail = email
-	return f.adminAccess, f.grantErr
-}
-
-func (f *fakeCosmeticsStore) CreateAdminMembership(
-	_ context.Context, email string, expiresAt time.Time, note, actor string,
-) (*db.CosmeticAdminMembership, int, error) {
-	f.lastEmail, f.lastExpiry, f.lastNote, f.lastActor = email, expiresAt, note, actor
-	return f.membership, f.licensesMade, f.grantErr
-}
-
-func (f *fakeCosmeticsStore) RevokeAdminMembership(
-	_ context.Context, membershipID, actor, reason string,
-) (*db.CosmeticAdminMembership, []string, bool, error) {
-	f.lastMembership, f.lastActor, f.lastReason = membershipID, actor, reason
-	return f.membership, f.affectedBots, f.revoked, f.revokeErr
-}
-
-func (f *fakeCosmeticsStore) ExpireAdminMembershipsForEmail(
-	_ context.Context, email string, _ time.Time,
-) (int, []string, error) {
-	f.lastEmail = email
-	return f.expiredMemberships, f.affectedBots, f.revokeErr
+func (f *fakeCosmeticsStore) EquipForAccount(_ context.Context, accountID, botID, slot, cosmeticID string) (*db.CosmeticItem, error) {
+	f.lastAccount, f.lastBotID, f.lastSlot, f.lastCosmetic = accountID, botID, slot, cosmeticID
+	return f.equipItem, f.equipErr
 }
 
 func requestWithBot(method, target string, body []byte, bot *db.Bot) *http.Request {
@@ -493,127 +352,7 @@ func TestLinkAccountBotQuotaIsPerAccountAcrossSourceIPsAndRunsBeforeBcrypt(t *te
 	}
 }
 
-func TestCosmeticsCatalogDisclosesCheckoutState(t *testing.T) {
-	store := &fakeCosmeticsStore{publicCatalog: &db.CosmeticCatalog{
-		Categories: []db.CosmeticCategory{{ID: "starter-packs", Name: "Starter Packs", IsActive: true}},
-		Items:      []db.CosmeticItem{{ID: "free", CategoryID: "starter-packs", Slot: db.CosmeticSlotAttachment, IsFree: true, IsActive: true}},
-		Packs: []db.CosmeticPack{{
-			ID: "neon-pack", CategoryID: "starter-packs", PriceCents: db.CosmeticPackPriceCents, Currency: "USD",
-			IsPurchasable: true, IsActive: true, ItemIDs: []string{"free"},
-		}},
-	}}
-	handler := newCosmeticsHandlerWithStore(store, nil)
-	// Staging a sale flag must not advertise working checkout until a payment
-	// provider has been explicitly enabled on the handler.
-	rec := httptest.NewRecorder()
-	handler.Catalog(rec, httptest.NewRequest(http.MethodGet, "/api/v1/cosmetics/catalog", nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
-	}
-	var response struct {
-		CheckoutEnabled   bool                         `json:"checkout_enabled"`
-		SubscriptionOffer db.CosmeticSubscriptionOffer `json:"subscription_offer"`
-		Categories        []db.CosmeticCategory        `json:"categories"`
-		Packs             []db.CosmeticPack            `json:"packs"`
-		Items             []db.CosmeticItem            `json:"items"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-		t.Fatal(err)
-	}
-	if response.CheckoutEnabled || response.SubscriptionOffer.Enabled || response.SubscriptionOffer.PriceCents != 1999 ||
-		response.SubscriptionOffer.Currency != "USD" || response.SubscriptionOffer.Interval != "month" ||
-		!response.SubscriptionOffer.IncludesFutureSets || response.SubscriptionOffer.MaxAPIKeys != 5 ||
-		len(response.Categories) != 1 || len(response.Packs) != 1 || len(response.Items) != 1 {
-		t.Fatalf("unexpected catalog response: %+v", response)
-	}
-
-	handler.checkoutEnabled = true
-	enabled := httptest.NewRecorder()
-	handler.Catalog(enabled, httptest.NewRequest(http.MethodGet, "/api/v1/cosmetics/catalog", nil))
-	if err := json.Unmarshal(enabled.Body.Bytes(), &response); err != nil {
-		t.Fatal(err)
-	}
-	if !response.CheckoutEnabled || !response.SubscriptionOffer.Enabled {
-		t.Fatal("configured checkout with a purchasable pack was not disclosed")
-	}
-
-	store.publicCatalog.Packs[0].PriceCents = 299
-	corruptPrice := httptest.NewRecorder()
-	handler.Catalog(corruptPrice, httptest.NewRequest(http.MethodGet, "/api/v1/cosmetics/catalog", nil))
-	if err := json.Unmarshal(corruptPrice.Body.Bytes(), &response); err != nil {
-		t.Fatal(err)
-	}
-	if response.CheckoutEnabled {
-		t.Fatal("catalog advertised checkout for a stale non-$1.99 pack price")
-	}
-	store.publicCatalog.Packs[0].PriceCents = db.CosmeticPackPriceCents
-
-	// Launch checkout sells packs only. A stray item-level sale flag must not
-	// advertise an open shop when no pack can actually be checked out.
-	store.publicCatalog.Packs = nil
-	store.publicCatalog.Items[0].IsPurchasable = true
-	itemOnly := httptest.NewRecorder()
-	handler.Catalog(itemOnly, httptest.NewRequest(http.MethodGet, "/api/v1/cosmetics/catalog", nil))
-	if err := json.Unmarshal(itemOnly.Body.Bytes(), &response); err != nil {
-		t.Fatal(err)
-	}
-	if response.CheckoutEnabled {
-		t.Fatal("item-only sale flag enabled pack checkout without a purchasable pack")
-	}
-}
-
-func TestCosmeticsCatalogDisclosesNinetyNineCentTrailCheckout(t *testing.T) {
-	store := &fakeCosmeticsStore{publicCatalog: &db.CosmeticCatalog{
-		Categories: []db.CosmeticCategory{{ID: db.CosmeticTrailCategoryID, Name: "Trails", IsActive: true}},
-		Items: []db.CosmeticItem{{
-			ID: "trail-ember-sparks", CategoryID: db.CosmeticTrailCategoryID, Slot: db.CosmeticSlotTrail,
-			AssetKey: "ember_sparks", IsActive: true,
-		}},
-		Packs: []db.CosmeticPack{{
-			ID: "trail-ember-sparks-pack", CategoryID: db.CosmeticTrailCategoryID,
-			PriceCents: db.CosmeticTrailPriceCents, Currency: "USD", IsPurchasable: true, IsActive: true,
-			ItemIDs: []string{"trail-ember-sparks"},
-		}},
-	}}
-	handler := newCosmeticsHandlerWithStore(store, nil)
-	handler.checkoutEnabled = true
-	recorder := httptest.NewRecorder()
-	handler.Catalog(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/cosmetics/catalog", nil))
-	var response struct {
-		CheckoutEnabled bool `json:"checkout_enabled"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
-		t.Fatal(err)
-	}
-	if !response.CheckoutEnabled {
-		t.Fatal("catalog hid checkout for a valid one-item $0.99 trail product")
-	}
-
-	store.publicCatalog.Items[0].Slot = db.CosmeticSlotAttachment
-	malformed := httptest.NewRecorder()
-	handler.Catalog(malformed, httptest.NewRequest(http.MethodGet, "/api/v1/cosmetics/catalog", nil))
-	if err := json.Unmarshal(malformed.Body.Bytes(), &response); err != nil {
-		t.Fatal(err)
-	}
-	if response.CheckoutEnabled {
-		t.Fatal("malformed Trails product advertised checkout for a non-trail item")
-	}
-	store.publicCatalog.Items[0].Slot = db.CosmeticSlotTrail
-	store.publicCatalog.Packs[0].CategoryID = "starter-packs"
-	store.publicCatalog.Categories = append(store.publicCatalog.Categories,
-		db.CosmeticCategory{ID: "starter-packs", Name: "Starter Packs", IsActive: true})
-	store.publicCatalog.Packs[0].PriceCents = db.CosmeticPackPriceCents
-	malformedSet := httptest.NewRecorder()
-	handler.Catalog(malformedSet, httptest.NewRequest(http.MethodGet, "/api/v1/cosmetics/catalog", nil))
-	if err := json.Unmarshal(malformedSet.Body.Bytes(), &response); err != nil {
-		t.Fatal(err)
-	}
-	if response.CheckoutEnabled {
-		t.Fatal("non-trail product advertised checkout while containing a trail item")
-	}
-}
-
-func TestAdminCosmeticsCatalogIncludesInactiveEntriesWithoutEnablingCheckout(t *testing.T) {
+func TestAdminCosmeticsCatalogIncludesInactiveEntries(t *testing.T) {
 	store := &fakeCosmeticsStore{adminCatalog: &db.CosmeticCatalog{
 		Categories: []db.CosmeticCategory{{ID: "drafts", Name: "Drafts", IsActive: false}},
 		Items:      []db.CosmeticItem{{ID: "draft-item", CategoryID: "drafts", IsActive: false}},
@@ -626,16 +365,18 @@ func TestAdminCosmeticsCatalogIncludesInactiveEntriesWithoutEnablingCheckout(t *
 		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
 	}
 	var response struct {
-		CheckoutEnabled bool                  `json:"checkout_enabled"`
-		Categories      []db.CosmeticCategory `json:"categories"`
-		Packs           []db.CosmeticPack     `json:"packs"`
-		Items           []db.CosmeticItem     `json:"items"`
+		Categories []db.CosmeticCategory `json:"categories"`
+		Packs      []db.CosmeticPack     `json:"packs"`
+		Items      []db.CosmeticItem     `json:"items"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.CheckoutEnabled || len(response.Categories) != 1 || len(response.Packs) != 1 || len(response.Items) != 1 {
+	if len(response.Categories) != 1 || len(response.Packs) != 1 || len(response.Items) != 1 {
 		t.Fatalf("unexpected admin catalog response: %+v", response)
+	}
+	if strings.Contains(rec.Body.String(), "checkout") {
+		t.Fatalf("admin catalog still publishes a checkout fact: %s", rec.Body.String())
 	}
 }
 
@@ -857,37 +598,6 @@ func TestEquipCosmeticRefreshesConnectedBotVisuals(t *testing.T) {
 	}
 }
 
-func TestGrantCosmeticIsIdempotentAndValidated(t *testing.T) {
-	store := &fakeCosmeticsStore{grantCreated: false}
-	handler := newCosmeticsHandlerWithStore(store, nil)
-
-	bad := httptest.NewRecorder()
-	handler.Grant(bad, httptest.NewRequest(http.MethodPost, "/api/v1/admin/cosmetics/grants",
-		bytes.NewBufferString(`{"email":"owner@example.com","cosmetic_id":"skin-neon-grid","source":"INVALID SOURCE"}`)))
-	if bad.Code != http.StatusBadRequest {
-		t.Fatalf("invalid source status = %d, want 400", bad.Code)
-	}
-
-	good := httptest.NewRecorder()
-	handler.Grant(good, httptest.NewRequest(http.MethodPost, "/api/v1/admin/cosmetics/grants",
-		bytes.NewBufferString(`{"email":"owner@example.com","cosmetic_id":"skin-neon-grid","source":"manual","external_reference":"evt_123"}`)))
-	if good.Code != http.StatusOK {
-		t.Fatalf("idempotent grant status = %d, body=%s", good.Code, good.Body.String())
-	}
-
-	manualStore := &fakeCosmeticsStore{grantCreated: true, license: &db.CosmeticLicense{ID: "manual-license"}}
-	manual := httptest.NewRecorder()
-	newCosmeticsHandlerWithStore(manualStore, nil).Grant(manual, httptest.NewRequest(
-		http.MethodPost,
-		"/api/v1/admin/cosmetics/grants",
-		bytes.NewBufferString(`{"email":"owner@example.com","cosmetic_id":"skin-neon-grid","external_reference":"support-123"}`),
-	))
-	if manual.Code != http.StatusCreated || manualStore.lastSource != "manual" || manualStore.lastReference != "support-123" {
-		t.Fatalf("default manual grant status=%d source=%q reference=%q body=%s",
-			manual.Code, manualStore.lastSource, manualStore.lastReference, manual.Body.String())
-	}
-}
-
 func TestEquipCosmeticMapsStorageFailure(t *testing.T) {
 	store := &fakeCosmeticsStore{equipErr: errors.New("boom")}
 	handler := newCosmeticsHandlerWithStore(store, nil)
@@ -899,75 +609,20 @@ func TestEquipCosmeticMapsStorageFailure(t *testing.T) {
 	}
 }
 
-func TestCustomerCosmeticMutationsRejectInactiveBotKey(t *testing.T) {
-	t.Run("assignment", func(t *testing.T) {
-		store := &fakeCosmeticsStore{grantErr: db.ErrCustomerBotKeyInactive}
-		handler := newCosmeticsHandlerWithStore(store, nil)
-		rec := httptest.NewRecorder()
-		handler.AssignAccountLicense(rec, requestWithCustomerParam(
-			http.MethodPut,
-			"/api/v1/account/cosmetic-licenses/license-1/assignment",
-			[]byte(`{"bot_id":"bot-inactive"}`),
-			"license_id", "license-1",
-		))
-		if rec.Code != http.StatusConflict {
-			t.Fatalf("status = %d, want 409; body=%s", rec.Code, rec.Body.String())
-		}
-	})
-
-	t.Run("equip", func(t *testing.T) {
-		store := &fakeCosmeticsStore{equipErr: db.ErrCustomerBotKeyInactive}
-		handler := newCosmeticsHandlerWithStore(store, nil)
-		rec := httptest.NewRecorder()
-		handler.EquipAccountLicense(rec, requestWithCustomerParam(
-			http.MethodPut,
-			"/api/v1/account/bots/bot-inactive/cosmetics",
-			[]byte(`{"license_id":"license-1"}`),
-			"bot_id", "bot-inactive",
-		))
-		if rec.Code != http.StatusConflict {
-			t.Fatalf("status = %d, want 409; body=%s", rec.Code, rec.Body.String())
-		}
-	})
-}
-
-func TestCustomerCosmeticMutationsHideForeignLicense(t *testing.T) {
-	tests := []struct {
-		name   string
-		invoke func(*CosmeticsHandler, *httptest.ResponseRecorder)
-	}{
-		{
-			name: "assignment",
-			invoke: func(handler *CosmeticsHandler, rec *httptest.ResponseRecorder) {
-				handler.AssignAccountLicense(rec, requestWithCustomerParam(
-					http.MethodPut,
-					"/api/v1/account/cosmetic-licenses/foreign-license/assignment",
-					[]byte(`{"bot_id":"bot-1"}`),
-					"license_id", "foreign-license",
-				))
-			},
-		},
-		{
-			name: "equip",
-			invoke: func(handler *CosmeticsHandler, rec *httptest.ResponseRecorder) {
-				handler.EquipAccountLicense(rec, requestWithCustomerParam(
-					http.MethodPut,
-					"/api/v1/account/bots/bot-1/cosmetics",
-					[]byte(`{"license_id":"foreign-license"}`),
-					"bot_id", "bot-1",
-				))
-			},
-		},
+func TestCustomerCosmeticEquipRejectsInactiveBotKey(t *testing.T) {
+	store := &fakeCosmeticsStore{equipErr: db.ErrCustomerBotKeyInactive}
+	handler := newCosmeticsHandlerWithStore(store, nil)
+	rec := httptest.NewRecorder()
+	handler.EquipAccountCosmetic(rec, requestWithCustomerParam(
+		http.MethodPut,
+		"/api/v1/account/bots/bot-inactive/cosmetics",
+		[]byte(`{"slot":"bot_skin","cosmetic_id":"skin-neon-grid"}`),
+		"bot_id", "bot-inactive",
+	))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body=%s", rec.Code, rec.Body.String())
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			store := &fakeCosmeticsStore{grantErr: db.ErrCosmeticLicenseNotOwned, equipErr: db.ErrCosmeticLicenseNotOwned}
-			handler := newCosmeticsHandlerWithStore(store, nil)
-			rec := httptest.NewRecorder()
-			tc.invoke(handler, rec)
-			if rec.Code != http.StatusNotFound || strings.Contains(rec.Body.String(), "not owned") {
-				t.Fatalf("foreign license response status=%d body=%s", rec.Code, rec.Body.String())
-			}
-		})
+	if store.lastAccount != "account-1" || store.lastBotID != "bot-inactive" || store.lastSlot != "bot_skin" || store.lastCosmetic != "skin-neon-grid" {
+		t.Fatalf("equip reached the store as (%q, %q, %q, %q)", store.lastAccount, store.lastBotID, store.lastSlot, store.lastCosmetic)
 	}
 }

@@ -110,15 +110,18 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 	// Create dashboard handler.
 	dashboardHandler := NewDashboardHandler(bus, adminHandler)
 	cosmeticsHandler := newCosmeticsHandlerWithStores(platformAuthority, databaseCosmeticsStore{}, engine)
-	commerceHandler := NewCosmeticCommerceHandler(engine)
 	accountKeysHandler := NewAccountKeysHandler(engine)
 
 	// Angel Accounts is the only sign-in Arena has, for customers and for
-	// administrators alike (nil if disabled/misconfigured).
+	// administrators alike (nil if disabled/misconfigured). It is also the
+	// only source of the Arena subscription: when a sign-in flips the flag,
+	// the connected bots of that account are re-read here.
 	customerOIDCHandler := newCustomerOIDCHandlerWithAuthority(platformAuthority)
-	checkoutReady := commerceHandler.Enabled() && customerAccountAuthEnabled(customerOIDCHandler) && security.RedisClient != nil
-	commerceHandler.checkoutEnabled = checkoutReady
-	cosmeticsHandler.checkoutEnabled = checkoutReady
+	if customerOIDCHandler != nil {
+		customerOIDCHandler.onSubscriptionSynced = func(ctx context.Context, botIDs []string) {
+			cosmeticsHandler.refreshBotVisualsFor(ctx, botIDs)
+		}
+	}
 
 	// Developer lobby chat hub. The session resolver maps a request cookie
 	// to a chat identity; it stays nil-safe when customer OIDC is disabled
@@ -206,8 +209,6 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 		api.With(security.RateLimitMiddleware(config.C.ClientErrorReportRPM)).
 			Post("/client-errors", ClientErrorHandler(bus))
 		api.Get("/cosmetics/catalog", cosmeticsHandler.Catalog)
-		api.Get("/cosmetics/checkout/config", commerceHandler.CheckoutConfig)
-		api.Post("/cosmetics/webhooks/stripe", commerceHandler.StripeWebhook)
 		if customerOIDCHandler != nil {
 			if customerOIDCHandler.oauth2Config != nil {
 				customerOIDCEntry := security.RateLimitMiddleware(config.C.AdminRateLimitRPM)
@@ -227,7 +228,6 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 			account.With(
 				security.RateLimitMiddleware(config.C.CosmeticsAccountReadRPM),
 			).Get("/cosmetics", cosmeticsHandler.AccountInventory)
-			registerCustomerCosmeticCommerceRoutes(account, commerceHandler)
 			account.Get("/keys", accountKeysHandler.List)
 			account.With(
 				security.FailClosedRateLimitMiddleware(config.C.CustomerAPIKeyMutationRPM),
@@ -239,9 +239,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 				security.FailClosedRateLimitMiddleware(config.C.CustomerBotLinkRPM),
 			).Post("/bots", cosmeticsHandler.LinkAccountBot)
 			account.Delete("/bots/{bot_id}", cosmeticsHandler.UnlinkAccountBot)
-			account.Put("/cosmetic-licenses/{license_id}/assignment", cosmeticsHandler.AssignAccountLicense)
-			account.Delete("/cosmetic-licenses/{license_id}/assignment", cosmeticsHandler.AssignAccountLicense)
-			account.Put("/bots/{bot_id}/cosmetics", cosmeticsHandler.EquipAccountLicense)
+			account.Put("/bots/{bot_id}/cosmetics", cosmeticsHandler.EquipAccountCosmetic)
 			account.With(
 				security.FailClosedRateLimitMiddleware(config.C.CustomerAPIKeyMutationRPM),
 			).Patch("/profile", UpdateAccountProfileHandler)
@@ -302,7 +300,6 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 			admin.Use(MakeAdminAuthMiddlewareWithPlatformAdmins(adminHandler, customerOIDCHandler))
 			adminHandler.Routes(admin)
 			registerCosmeticsAdminRoutes(admin, cosmeticsHandler)
-			admin.Get("/cosmetics/orders", commerceHandler.AdminOrders)
 
 			// Dashboard API endpoints.
 			admin.Route("/dashboard", func(dash chi.Router) {
@@ -336,8 +333,6 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 			api.With(security.RateLimitMiddleware(config.C.ClientErrorReportRPM)).
 				Post("/client-errors", ClientErrorHandler(bus))
 			api.Get("/cosmetics/catalog", cosmeticsHandler.Catalog)
-			api.Get("/cosmetics/checkout/config", commerceHandler.CheckoutConfig)
-			api.Post("/cosmetics/webhooks/stripe", commerceHandler.StripeWebhook)
 			if customerOIDCHandler != nil {
 				if customerOIDCHandler.oauth2Config != nil {
 					customerOIDCEntry := security.RateLimitMiddleware(config.C.AdminRateLimitRPM)
@@ -357,7 +352,6 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 				account.With(
 					security.RateLimitMiddleware(config.C.CosmeticsAccountReadRPM),
 				).Get("/cosmetics", cosmeticsHandler.AccountInventory)
-				registerCustomerCosmeticCommerceRoutes(account, commerceHandler)
 				account.Get("/keys", accountKeysHandler.List)
 				account.With(
 					security.FailClosedRateLimitMiddleware(config.C.CustomerAPIKeyMutationRPM),
@@ -369,9 +363,7 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 					security.FailClosedRateLimitMiddleware(config.C.CustomerBotLinkRPM),
 				).Post("/bots", cosmeticsHandler.LinkAccountBot)
 				account.Delete("/bots/{bot_id}", cosmeticsHandler.UnlinkAccountBot)
-				account.Put("/cosmetic-licenses/{license_id}/assignment", cosmeticsHandler.AssignAccountLicense)
-				account.Delete("/cosmetic-licenses/{license_id}/assignment", cosmeticsHandler.AssignAccountLicense)
-				account.Put("/bots/{bot_id}/cosmetics", cosmeticsHandler.EquipAccountLicense)
+				account.Put("/bots/{bot_id}/cosmetics", cosmeticsHandler.EquipAccountCosmetic)
 				account.With(
 					security.FailClosedRateLimitMiddleware(config.C.CustomerAPIKeyMutationRPM),
 				).Patch("/profile", UpdateAccountProfileHandler)
@@ -410,7 +402,6 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 				admin.Use(MakeAdminAuthMiddlewareWithPlatformAdmins(adminHandler, customerOIDCHandler))
 				adminHandler.Routes(admin)
 				registerCosmeticsAdminRoutes(admin, cosmeticsHandler)
-				admin.Get("/cosmetics/orders", commerceHandler.AdminOrders)
 
 				admin.Route("/dashboard", func(dash chi.Router) {
 					dashboardHandler.DashboardRoutes(dash)
@@ -473,15 +464,6 @@ func registerLegalRedirects(r chi.Router) {
 			http.Redirect(w, req, destination, http.StatusMovedPermanently)
 		})
 	}
-}
-
-func registerCustomerCosmeticCommerceRoutes(account chi.Router, handler *CosmeticCommerceHandler) {
-	account.Get("/cosmetics/orders", handler.CustomerOrders)
-	checkoutQuota := security.FailClosedRateLimitMiddleware(config.C.CosmeticsCheckoutRPM)
-	account.With(checkoutQuota).Post("/cosmetics/checkout", handler.Checkout)
-	account.With(checkoutQuota).Post("/cosmetics/orders/{order_id}/checkout", handler.ResumeCheckout)
-	account.With(checkoutQuota).Post("/cosmetics/subscription/checkout", handler.SubscriptionCheckout)
-	account.With(checkoutQuota).Post("/cosmetics/subscription/portal", handler.SubscriptionPortal)
 }
 
 // healthHandler returns a handler for GET /api/v1/health.

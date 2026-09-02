@@ -87,6 +87,50 @@ jobs:
       - name: Test backend
         working-directory: go-arena
         run: go test ./...
+
+  # The race detector instruments and compiles every package a second time and
+  # then runs the whole suite (Postgres tests included) again, so it was the
+  # longest single step in the workflow. It shares nothing with the plain run
+  # except the checkout, so it runs beside it rather than after it.
+  backend-race:
+    name: Go race detector
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: arena
+          POSTGRES_PASSWORD: arena
+          POSTGRES_DB: arena_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U arena -d arena_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ARENA_TEST_DATABASE_URL: postgres://arena:arena@localhost:5432/arena_test?sslmode=disable
+      ARENA_TEST_REDIS_ADDR: localhost:6379
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go-arena/go.mod
+          cache-dependency-path: go-arena/go.sum
       - name: Race detector
         working-directory: go-arena
         run: go test -race ./...
@@ -138,9 +182,7 @@ jobs:
           node scripts/test-dashboard-accounts-login.mjs
           node scripts/test-one-click-sign-in.mjs
           node scripts/test-site-footer.mjs
-          node scripts/test-dashboard-cosmetics-checkout.mjs
-          node scripts/test-embedded-stripe-checkout.mjs
-          node scripts/test-purchases-via-accounts.mjs
+          node scripts/test-subscription-unlocks-cosmetics.mjs
           node scripts/test-cosmetic-themes.mjs
           node scripts/test-cosmetics-renderer.mjs
           node scripts/test-cosmetics-launch-ui.mjs
@@ -204,11 +246,24 @@ jobs:
         # upstream shader whitespace that cannot be normalized safely.
         run: git diff --check 4b825dc642cb6eb9a060e54bf8d69288fbee4904 HEAD -- . ':(exclude)frontend/assets/vendor/**'
 
-  browser-smoke:
-    name: Spectator browser smoke
+  # The smoke suite runs one test at a time under software WebGL (see
+  # tests/browser/playwright.config.mjs), so its wall time is the sum of every
+  # test in every viewport: over eleven minutes on one runner. Each viewport
+  # project is split into two Playwright shards on its own runner; every test
+  # lands in exactly one shard, so coverage is unchanged and the job takes as
+  # long as its slowest shard instead of the whole sum.
+  browser-smoke-matrix:
+    name: Spectator browser smoke (${{ matrix.project }}, ${{ matrix.shard }}/2)
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      # One viewport failing must not cancel the others: their diagnostics
+      # are the difference between a fix and a guess.
+      fail-fast: false
+      matrix:
+        project: [phone-375, tablet-768, desktop-1440]
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -220,20 +275,51 @@ jobs:
           cache-dependency-path: tests/browser/package-lock.json
       - name: Install browser test dependencies
         run: npm ci --prefix tests/browser --ignore-scripts
+      - name: Restore the Playwright browser download
+        # Keyed on the lockfile, which pins @playwright/test and therefore the
+        # exact Chromium build it wants. On a hit the install step below finds
+        # the build already present and only refreshes system packages.
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('tests/browser/package-lock.json') }}
       - name: Install functional Chromium runtime
         run: npm exec --prefix tests/browser -- playwright install --with-deps chromium
       - name: Run spectator browser smoke
-        run: npm test --prefix tests/browser
+        env:
+          PROJECT: ${{ matrix.project }}
+          SHARD: ${{ matrix.shard }}
+        run: npm test --prefix tests/browser -- --project="$PROJECT" --shard="$SHARD/2"
       - name: Retain browser diagnostics
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: spectator-browser-smoke
+          name: spectator-browser-smoke-${{ matrix.project }}-${{ matrix.shard }}
           path: |
             tests/browser/test-results
             tests/browser/playwright-report
           if-no-files-found: warn
           retention-days: 14
+
+  browser-smoke:
+    name: Spectator browser smoke
+    # Fans the shards back in under the name the suite has always reported,
+    # so anything keyed on that check keeps working. always() so a failed
+    # shard is reported rather than skipped; a draft PR skips this too.
+    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
+    needs: browser-smoke-matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Confirm every viewport shard passed
+        env:
+          MATRIX_RESULT: ${{ needs.browser-smoke-matrix.result }}
+        run: |
+          if [[ "$MATRIX_RESULT" != "success" ]]; then
+            echo "At least one spectator browser smoke shard did not pass ($MATRIX_RESULT)." >&2
+            exit 1
+          fi
+          echo "Every spectator browser smoke shard passed."
 
   python-sdk-310:
     name: Python SDK (3.10 compatibility)
@@ -260,7 +346,7 @@ jobs:
     # always() so upstream failures still get reported, but a draft PR skips
     # this too — with every needs skipped it would otherwise fail the draft.
     if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
-    needs: [policy, backend, frontend-and-sdks, browser-smoke, python-sdk-310]
+    needs: [policy, backend, backend-race, frontend-and-sdks, browser-smoke, python-sdk-310]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -268,6 +354,7 @@ jobs:
         env:
           POLICY_RESULT: ${{ needs.policy.result }}
           BACKEND_RESULT: ${{ needs.backend.result }}
+          RACE_RESULT: ${{ needs.backend-race.result }}
           FRONTEND_RESULT: ${{ needs.frontend-and-sdks.result }}
           BROWSER_RESULT: ${{ needs.browser-smoke.result }}
           PYTHON_RESULT: ${{ needs.python-sdk-310.result }}
@@ -275,6 +362,7 @@ jobs:
           results=(
             "$POLICY_RESULT"
             "$BACKEND_RESULT"
+            "$RACE_RESULT"
             "$FRONTEND_RESULT"
             "$BROWSER_RESULT"
             "$PYTHON_RESULT"

@@ -227,6 +227,66 @@ func TestAdminPanelReachesTheAdminAppOnADeskClaim(t *testing.T) {
 	}
 }
 
+// TestAdminPanelReachesTheAdminAppOnAProductGrant is the same walk for the
+// per-product grant: the panel bootstraps, says which claim opened it, and
+// the customer cookie plus the bootstrap's CSRF token carry a mutation.
+func TestAdminPanelReachesTheAdminAppOnAProductGrant(t *testing.T) {
+	accounts := newAngelAccounts(t)
+	handler, _ := newArenaSignedInWithAngel(t, accounts)
+	session, cookie := signInThroughAngel(t, handler, accounts, map[string]any{"product_admin": true})
+
+	bootstrap := httptest.NewRequest(http.MethodGet, "https://arena.example/api/v1/admin/session", nil)
+	bootstrap.AddCookie(cookie)
+	recorder := httptest.NewRecorder()
+	handler.AdminSessionInfoHandler(recorder, bootstrap)
+	var panel struct {
+		Authenticated bool   `json:"authenticated"`
+		Authority     string `json:"authority"`
+		Role          string `json:"role"`
+		CSRFToken     string `json:"csrf_token"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &panel); err != nil {
+		t.Fatalf("decode admin session: %v (%s)", err, recorder.Body.String())
+	}
+	if !panel.Authenticated || panel.Authority != "product_admin" || panel.Role != "" || panel.CSRFToken == "" {
+		t.Fatalf("admin session = %+v, want the panel drawn for a product administrator", panel)
+	}
+
+	mutate := func(r *http.Request) {
+		r.Header.Set("Origin", "https://arena.example")
+		r.Header.Set("X-CSRF-Token", panel.CSRFToken)
+	}
+	status, principal := callAdminRoute(t, handler, cookie, http.MethodPut, mutate)
+	if status != http.StatusNoContent || principal != "accounts-product-admin:"+session.AccountID {
+		t.Fatalf("panel mutation = %d %q, want it accepted under the product-admin principal", status, principal)
+	}
+}
+
+// TestCustomerCookieAloneNeverAuthorisesAdmin pins the other side of both
+// claims: a perfectly good customer session that carries neither is a
+// customer, and the admin subtree answers it the way it answers nobody.
+func TestCustomerCookieAloneNeverAuthorisesAdmin(t *testing.T) {
+	accounts := newAngelAccounts(t)
+	handler, _ := newArenaSignedInWithAngel(t, accounts)
+	session, cookie := signInThroughAngel(t, handler, accounts, nil)
+	if handler.GetSession(func() *http.Request {
+		r := httptest.NewRequest(http.MethodGet, "https://arena.example/api/v1/account/session", nil)
+		r.AddCookie(cookie)
+		return r
+	}()) == nil {
+		t.Fatal("the customer sign-in established no session")
+	}
+	for _, method := range []string{http.MethodGet, http.MethodPut} {
+		status, principal := callAdminRoute(t, handler, cookie, method, func(r *http.Request) {
+			r.Header.Set("Origin", "https://arena.example")
+			r.Header.Set("X-CSRF-Token", session.CSRFToken)
+		})
+		if status != http.StatusUnauthorized || principal != "" {
+			t.Fatalf("%s with a plain customer cookie = %d %q, want 401 and no principal", method, status, principal)
+		}
+	}
+}
+
 // TestAdminPanelStaysShutForAnOrdinaryCustomer is the same bootstrap read from
 // a session with no desk role: the panel is simply not drawn.
 func TestAdminPanelStaysShutForAnOrdinaryCustomer(t *testing.T) {

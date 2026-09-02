@@ -48,20 +48,11 @@ export function isBodyFormPack(pack) {
 export function sortCosmeticPacks(packs, sort = 'featured') {
   const candidates = Array.isArray(packs) ? [...packs] : [];
   const nameOf = pack => String(pack?.name || pack?.id || '');
-  const priceOf = pack => Number.isFinite(Number(pack?.price_cents))
-    ? Number(pack.price_cents)
-    : 0;
   const byName = (left, right) => nameOf(left).localeCompare(nameOf(right), undefined, {
     sensitivity: 'base',
     numeric: true,
   }) || String(left?.id || '').localeCompare(String(right?.id || ''));
   if (sort === 'name') return candidates.sort(byName);
-  if (sort === 'price-low') {
-    return candidates.sort((left, right) => priceOf(left) - priceOf(right) || byName(left, right));
-  }
-  if (sort === 'price-high') {
-    return candidates.sort((left, right) => priceOf(right) - priceOf(left) || byName(left, right));
-  }
   return candidates;
 }
 
@@ -84,48 +75,35 @@ export function itemPreviewLoadout(item) {
   return loadout;
 }
 
-export function dashboardPurchasePath(packID, pathname = window.location.pathname) {
+export function dashboardCosmeticsPath(pathname = window.location.pathname) {
   // The Dashboard opens as a slide-out overlay on the main site rather than
-  // a full-page navigation to /dashboard/. dash_pack travels alongside
-  // dash_open/dash_tab (see applyDeepLinkedDashboardOpen in js/app.js, which
-  // forwards it into the embedded iframe as ?pack=) so the Dashboard lands
-  // straight on a one-item purchase card instead of a duplicate shop grid.
-  const suffix = packID ? `&dash_pack=${encodeURIComponent(packID)}` : '';
-  return appPath('/?dash_open=1&dash_tab=cosmetics' + suffix, pathname);
+  // a full-page navigation to /dashboard/ (see applyDeepLinkedDashboardOpen
+  // in js/app.js). Equipping lives there; the Shop only previews.
+  return appPath('/?dash_open=1&dash_tab=cosmetics', pathname);
 }
 
 /**
- * Where buying goes, when it does not go through the Dashboard.
+ * Where subscribing goes: the Angel account, never Arena.
  *
- * The server sends an absolute https URL or nothing at all, and this refuses
- * anything else. Not a defence against a hostile catalog -- it comes from
- * Arena's own API -- but a floor under a misconfigured deployment: a Buy
- * control that does nothing beats one that navigates somewhere unintended.
+ * The catalog carries an absolute https URL or nothing at all, and this
+ * refuses anything else. Not a defence against a hostile catalog -- it comes
+ * from Arena's own API -- but a floor under a misconfigured deployment: a
+ * Subscribe control that falls back to the Dashboard beats one that
+ * navigates somewhere unintended.
  */
-export function purchaseHandoffURL(value) {
+export function subscriptionURL(value) {
   const raw = typeof value === 'string' ? value.trim() : '';
   if (!raw.startsWith('https://') || raw.length <= 'https://'.length) return '';
   return /[\s"'<>]/.test(raw) ? '' : raw;
-}
-
-export function subscriptionDashboardPath(pathname = window.location.pathname) {
-  return appPath('/?dash_open=1&dash_tab=cosmetics&dash_plan=all-access', pathname);
 }
 
 export function catalogPath(pathname = window.location.pathname) {
   return apiPath('/cosmetics/catalog', pathname);
 }
 
-function formatPrice(pack) {
-  if (pack?.is_free) return 'Free';
-  const rawCents = Number(pack?.price_cents || 0);
-  const cents = Number.isFinite(rawCents) && rawCents >= 0 ? Math.round(rawCents) : 0;
-  const currency = pack?.currency || 'USD';
-  try {
-    return new Intl.NumberFormat(undefined, {style: 'currency', currency}).format(cents / 100);
-  } catch (_) {
-    return `$${(cents / 100).toFixed(2)}`;
-  }
+/** What a pack costs, in the only two words the subscription model has. */
+export function accessLabel(pack) {
+  return pack?.is_free ? 'Free' : 'Included with subscription';
 }
 
 function normalizeSearchText(value) {
@@ -187,10 +165,10 @@ export function initCosmeticsShop(root, options = {}) {
     itemList: root.querySelector('[data-shop-item-list]'),
     packName: root.querySelector('[data-shop-pack-name]'),
     packDescription: root.querySelector('[data-shop-pack-description]'),
-    packPrice: root.querySelector('[data-shop-pack-price]'),
+    packAccess: root.querySelector('[data-shop-pack-access]'),
     packCount: root.querySelector('[data-shop-pack-count]'),
-    purchase: root.querySelector('[data-shop-purchase]'),
-    purchaseNote: root.querySelector('[data-shop-purchase-note]'),
+    access: root.querySelector('[data-shop-access]'),
+    accessNote: root.querySelector('[data-shop-access-note]'),
     previewPack: root.querySelector('[data-shop-preview-pack]'),
     previewLabel: root.querySelector('[data-shop-preview-label]'),
     previewStatus: root.querySelector('[data-shop-preview-status]'),
@@ -199,7 +177,6 @@ export function initCosmeticsShop(root, options = {}) {
     resetView: root.querySelector('[data-shop-reset-view]'),
     chassisPicker: root.querySelector('[data-shop-chassis-picker]'),
     subscription: root.querySelector('[data-shop-subscription]'),
-    subscriptionPrice: root.querySelector('[data-shop-subscription-price]'),
     subscriptionAction: root.querySelector('[data-shop-subscription-action]'),
     subscriptionState: root.querySelector('[data-shop-subscription-state]'),
   };
@@ -208,13 +185,10 @@ export function initCosmeticsShop(root, options = {}) {
 
   const state = {
     catalog: {categories: [], packs: []},
-    checkoutEnabled: false,
-    // Set when purchasing has moved to the Angel account. Kept apart from
-    // checkoutEnabled for the same reason the server keeps the two fields
-    // apart: "Arena will take your money" and "somewhere else will" are
-    // different facts, and only one of them is true at a time.
-    purchaseHandoff: '',
-    subscriptionOffer: null,
+    // Where the Arena subscription is sold, from the catalog. Empty until
+    // the catalog arrives or when the operator has not configured one, in
+    // which case the controls point at the Dashboard, which says so.
+    subscriptionURL: '',
     query: '',
     category: 'all',
     kind: 'all',
@@ -258,38 +232,24 @@ export function initCosmeticsShop(root, options = {}) {
   };
 
   const renderSubscription = () => {
-    const raw = state.subscriptionOffer && typeof state.subscriptionOffer === 'object'
-      ? state.subscriptionOffer
-      : {};
-    // All Access moves with everything else: once the handoff is set the card
-    // is offered again, pointing at the Angel account rather than at a
-    // Stripe session Arena would refuse to open.
-    const handoff = state.purchaseHandoff;
-    const offer = {
-      enabled: raw.enabled === true || Boolean(handoff),
-      price_cents: Number.isFinite(Number(raw.price_cents)) ? Number(raw.price_cents) : 1999,
-      currency: raw.currency || 'USD',
-      interval: String(raw.interval || 'month').trim().toLowerCase() || 'month',
-      includes_future_sets: raw.includes_future_sets === true,
-      max_api_keys: Math.min(5, Math.max(1, Number(raw.max_api_keys) || 5)),
-    };
-    if (elements.subscriptionPrice) {
-      elements.subscriptionPrice.textContent = `${formatPrice(offer)} / ${offer.interval}`;
-    }
+    // One subscription, sold in the Angel account. Arena publishes where;
+    // when it has not, the Dashboard is the next best place, because it
+    // explains what is missing instead of leaving a dead control here.
+    const url = state.subscriptionURL;
     if (elements.subscriptionAction) {
-      elements.subscriptionAction.href = handoff || subscriptionDashboardPath(pathname);
-      elements.subscriptionAction.textContent = handoff
-        ? 'Get All Access in your Angel account'
-        : 'View All Access in Dashboard';
-      elements.subscriptionAction.hidden = !offer.enabled;
-      elements.subscriptionAction.setAttribute('aria-disabled', String(!offer.enabled));
+      elements.subscriptionAction.href = url || dashboardCosmeticsPath(pathname);
+      elements.subscriptionAction.textContent = url
+        ? 'Subscribe in your Angel account'
+        : 'Open your Dashboard';
+      elements.subscriptionAction.hidden = false;
+      elements.subscriptionAction.setAttribute('aria-disabled', 'false');
     }
     if (elements.subscriptionState) {
-      elements.subscriptionState.textContent = offer.enabled
-        ? `Every current and future set, full-body skin, and trail, up to ${offer.max_api_keys} active API keys.`
-        : 'All Access checkout is not open yet.';
+      elements.subscriptionState.textContent = url
+        ? 'Every set, full-body skin and trail, for every bot you link, with one subscription.'
+        : 'Every set, full-body skin and trail is included with an Arena subscription. Where to subscribe is not published yet; your Dashboard will say when it is.';
     }
-    if (elements.subscription) elements.subscription.dataset.state = offer.enabled ? 'available' : 'unavailable';
+    if (elements.subscription) elements.subscription.dataset.state = url ? 'available' : 'unlinked';
   };
 
   const updateURL = packID => {
@@ -399,7 +359,7 @@ export function initCosmeticsShop(root, options = {}) {
     const productType = isTrailPack(pack) ? 'Trail' : isBodyFormPack(pack) ? 'Full-body skin' : 'Set';
     copy.append(
       createElement('strong', '', pack.name || pack.id || 'Cosmetic pack'),
-      createElement('small', 'shop-pack-card-meta', `${productType}, ${packItems(pack).length} item${packItems(pack).length === 1 ? '' : 's'}, ${formatPrice(pack)}`),
+      createElement('small', 'shop-pack-card-meta', `${productType}, ${packItems(pack).length} item${packItems(pack).length === 1 ? '' : 's'}, ${accessLabel(pack).toLowerCase()}`),
     );
     const arrow = createElement('span', 'shop-pack-card-arrow', '↗');
     arrow.setAttribute('aria-hidden', 'true');
@@ -487,7 +447,7 @@ export function initCosmeticsShop(root, options = {}) {
     if (elements.packDescription) {
       elements.packDescription.textContent = pack.description || 'A coordinated collection of presentation-only Arena cosmetics.';
     }
-    if (elements.packPrice) elements.packPrice.textContent = formatPrice(pack);
+    if (elements.packAccess) elements.packAccess.textContent = accessLabel(pack);
     if (elements.packCount) {
       elements.packCount.textContent = `${items.length} included item${items.length === 1 ? '' : 's'}`;
     }
@@ -503,33 +463,27 @@ export function initCosmeticsShop(root, options = {}) {
       items.forEach((item, index) => elements.itemList.appendChild(createItemButton(item, index)));
     }
 
-    const handoff = state.purchaseHandoff;
-    if (elements.purchase) {
-      const saleReady = (state.checkoutEnabled || Boolean(handoff)) && pack.is_purchasable === true;
+    if (elements.access) {
       /*
-       * One press from the Shop either way. Without a handoff this opens the
-       * Dashboard on a one-pack purchase card; with one it leaves for the
-       * Angel account directly, because routing through the Dashboard first
-       * would be a second press that only re-asked the same question.
+       * Nothing is bought here. A free pack goes straight to the Dashboard
+       * to be equipped; a paid one says what unlocks it and, when Arena
+       * knows where, leads to the Angel account to subscribe.
        */
-      elements.purchase.href = !saleReady
-        ? appPath('/?dash_open=1&dash_tab=cosmetics', pathname)
-        : handoff || dashboardPurchasePath(pack.id, pathname);
-      elements.purchase.hidden = !saleReady;
-      elements.purchase.setAttribute('aria-disabled', String(!saleReady));
-      const purchaseKind = isTrailPack(pack) ? 'trail' : isBodyFormPack(pack) ? 'skin' : 'pack';
-      elements.purchase.textContent = pack.is_free
-        ? 'Claim in Dashboard'
-        : `Buy ${purchaseKind} — ${formatPrice(pack)}${handoff ? ' in your Angel account' : ''}`;
-      elements.purchase.dataset.shopPurchasePack = pack.id || '';
+      const url = state.subscriptionURL;
+      elements.access.href = pack.is_free || !url ? dashboardCosmeticsPath(pathname) : url;
+      elements.access.hidden = false;
+      elements.access.setAttribute('aria-disabled', 'false');
+      elements.access.textContent = pack.is_free
+        ? 'Equip in Dashboard'
+        : url ? 'Included with an Arena subscription' : 'Included with an Arena subscription. Open Dashboard';
+      elements.access.dataset.shopAccessPack = pack.id || '';
     }
-    if (elements.purchaseNote) {
-      // The note beside the button has to describe the flow the button
-      // actually starts, or it becomes the thing people believe over the
-      // address bar. The Stripe sentence is only true while Arena sells.
-      elements.purchaseNote.textContent = handoff
-        ? 'Buying happens in your Angel account. Sign in to Arena afterwards, or press Refresh purchases in your Dashboard, to bring a new pack across.'
-        : 'Checkout opens in your Dashboard once you are signed in. Returning from checkout does not mark an order paid until Arena verifies the signed payment event.';
+    if (elements.accessNote) {
+      // The note beside the link has to describe what the link does, or it
+      // becomes the thing people believe over the address bar.
+      elements.accessNote.textContent = pack.is_free
+        ? 'Free cosmetics are open to every linked bot. Sign in to your Dashboard to equip it.'
+        : 'Subscribe in your Angel account, then sign in to your Dashboard (or press Refresh subscription there) and every cosmetic unlocks for all your linked bots.';
     }
   };
 
@@ -638,11 +592,7 @@ export function initCosmeticsShop(root, options = {}) {
         categories: Array.isArray(data.categories) ? data.categories : [],
         packs: Array.isArray(data.packs) ? data.packs.filter(pack => pack?.is_active !== false) : [],
       };
-      state.checkoutEnabled = data.checkout_enabled === true;
-      state.purchaseHandoff = purchaseHandoffURL(data.purchase_handoff_url);
-      state.subscriptionOffer = data.subscription_offer && typeof data.subscription_offer === 'object'
-        ? data.subscription_offer
-        : null;
+      state.subscriptionURL = subscriptionURL(data.subscription?.url);
       renderSubscription();
       populateCategories();
       const matches = filteredPacks();
@@ -661,7 +611,7 @@ export function initCosmeticsShop(root, options = {}) {
       }
     } catch (error) {
       state.catalog = {categories: [], packs: []};
-      state.subscriptionOffer = null;
+      state.subscriptionURL = '';
       renderSubscription();
       state.selectedPackID = '';
       renderPackList();
@@ -746,7 +696,7 @@ export function initCosmeticsShop(root, options = {}) {
       sort: state.sort,
       weapon: state.weapon,
       previewSignature: elements.canvas.dataset.previewSignature || '',
-      subscriptionEnabled: state.subscriptionOffer?.enabled === true,
+      subscriptionURL: state.subscriptionURL,
     }),
   };
 }

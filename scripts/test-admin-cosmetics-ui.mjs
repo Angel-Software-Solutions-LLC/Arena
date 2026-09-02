@@ -9,7 +9,7 @@ assert.match(html, /data-tab="cosmetics"/, 'cosmetics needs a dedicated admin na
 assert.match(html, /id="panel-cosmetics"/, 'cosmetics needs its own admin panel');
 const cosmeticsPanel = html.slice(html.indexOf('id="panel-cosmetics"'), html.indexOf('id="panel-controls"'));
 
-const cosmeticWorkspaceNames = ['catalog', 'access', 'orders', 'activity'];
+const cosmeticWorkspaceNames = ['catalog', 'activity'];
 for (const workspace of cosmeticWorkspaceNames) {
   assert.match(cosmeticsPanel, new RegExp(`data-cosmetics-workspace-tab="${workspace}"`),
     `cosmetics needs a ${workspace} workspace tab`);
@@ -23,7 +23,7 @@ const cosmeticWorkspacePanelTag = workspace =>
 assert.match(cosmeticWorkspaceTabTag('catalog'), /role="tab"/, 'workspace destinations need tab semantics');
 assert.match(cosmeticWorkspaceTabTag('catalog'), /aria-selected="true"/, 'Catalog must be the default selected workspace');
 assert.doesNotMatch(cosmeticWorkspacePanelTag('catalog'), /\shidden(?:\s|=|>)/, 'the default Catalog workspace must be visible');
-for (const workspace of ['access', 'orders', 'activity']) {
+for (const workspace of ['activity']) {
   assert.match(cosmeticWorkspaceTabTag(workspace), /role="tab"/, `${workspace} destination needs tab semantics`);
   assert.match(cosmeticWorkspaceTabTag(workspace), /aria-selected="false"/, `${workspace} must not be selected by default`);
   assert.match(cosmeticWorkspacePanelTag(workspace), /\shidden(?:\s|=|>)/, `${workspace} workspace must be hidden by default`);
@@ -36,8 +36,8 @@ assert.match(cosmeticWorkspaceSwitch, /dataset\.cosmeticsWorkspaceTab/, 'workspa
 assert.match(cosmeticWorkspaceSwitch, /setAttribute\('aria-selected'/, 'workspace switching must announce the selected tab');
 assert.match(cosmeticWorkspaceSwitch, /dataset\.cosmeticsWorkspacePanel/, 'workspace switching must select the requested panel');
 assert.match(cosmeticWorkspaceSwitch, /\.hidden\s*=\s*!/, 'workspace switching must show only the selected panel');
-assert.match(cosmeticWorkspaceSwitch, /workspace\s*===\s*'orders'[\s\S]*loadCosmeticOrders\(\)/,
-  'orders must load only when their workspace is opened');
+assert.doesNotMatch(cosmeticWorkspaceSwitch, /orders|loadCosmeticOrders/,
+  'there is no Orders workspace: Arena keeps no purchase ledger');
 assert.match(cosmeticWorkspaceSwitch, /workspace\s*===\s*'activity'[\s\S]*loadCosmeticCatalogAudit\(\)/,
   'activity must load only when its workspace is opened');
 
@@ -88,116 +88,27 @@ assert.match(cosmeticsPanel, /id="cosmeticItemFree"[^>]*onchange="syncCosmeticIt
 assert.match(html, /function syncCosmeticItemPrice[\s\S]*const free = [^;]+cosmeticItemFree[^;]+;[\s\S]*price\.readOnly = trail;[\s\S]*price\.value = free \? 0 : 99/,
   'trail item reference metadata must be fixed at $0.99 in the editor');
 assert.doesNotMatch(cosmeticsPanel, /<main class="cosmetics-admin-workbench"/, 'the cosmetics workbench must not nest a second main landmark');
-for (const orderID of ['cosmeticOrderSearch', 'cosmeticOrderStatusFilter', 'cosmeticOrderRefresh',
-  'cosmeticOrderStatus', 'cosmeticOrderList']) {
-  assert.match(cosmeticsPanel, new RegExp(`id="${orderID}"`), `commerce support needs ${orderID}`);
+/*
+ * Commerce left the admin with the per-item model. There is nothing to grant
+ * (the subscription is held in Angel Accounts and read at sign-in), no
+ * membership to time-box, and no order to look up, so none of those
+ * surfaces may survive as dead HTML or dead handlers.
+ */
+for (const retired of ['cosmeticsWorkspaceAccess', 'cosmeticsWorkspaceOrders', 'cosmeticAccessLookupForm',
+  'cosmeticGrantEmail', 'cosmeticGrantItem', 'cosmeticMembershipForm', 'cosmeticOrderList', 'cosmeticCheckoutState']) {
+  assert.doesNotMatch(html, new RegExp(`id="${retired}"`), `${retired} belongs to the retired per-item commerce model`);
 }
-assert.match(cosmeticsPanel, /id="cosmeticOrderStatus"[^>]*role="status"[^>]*aria-live="polite"/,
-  'commerce order loading and failure state needs one concise announcement');
-const orderListTag = cosmeticsPanel.match(/<[^>]+id="cosmeticOrderList"[^>]*>/)?.[0] || '';
-assert.match(orderListTag, /aria-busy="false"/, 'orders need a programmatic loading state');
-assert.doesNotMatch(orderListTag, /aria-live=/, 'rendering up to 50 orders must not announce every row');
-const ordersPanel = cosmeticsPanel.slice(
-  cosmeticsPanel.indexOf('data-cosmetics-workspace-panel="orders"'),
-  cosmeticsPanel.indexOf('data-cosmetics-workspace-panel="activity"'),
-);
-assert.doesNotMatch(ordersPanel, /<button[^>]*(refund|revoke)/i,
-  'commerce order support is read-only; refunds and revocations stay outside this panel');
-assert.match(html, /\.cosmetics-order-list\{[^}]*max-block-size:[^;}]+;[^}]*overflow:auto/,
-  'the 50-order support list must be bounded');
-const controlsPanel = html.slice(html.indexOf('id="panel-controls"'));
-assert.doesNotMatch(controlsPanel, /id="cosmeticGrantEmail"/, 'cosmetic fulfillment must not remain inside crowded Game Config');
-assert.match(html, /id="cosmeticGrantEmail"[^>]*type="email"/, 'admin fulfillment must target the purchaser email');
-assert.doesNotMatch(html, /id="cosmeticGrantBot"/, 'admin fulfillment must not make a bot the durable owner');
-assert.match(html, /id="cosmeticGrantReference"[^>]*required/, 'manual grants need an idempotency reference');
-const accessWorkspace = cosmeticsPanel.slice(
-  cosmeticsPanel.indexOf('data-cosmetics-workspace-panel="access"'),
-  cosmeticsPanel.indexOf('data-cosmetics-workspace-panel="orders"'),
-);
-assert.match(accessWorkspace, /id="cosmeticAccessLookupForm"/, 'Customer Access needs one focused lookup form');
-assert.match(accessWorkspace, /id="cosmeticAccessEmail"[^>]*type="email"[^>]*required/, 'customer access lookup must start with a required email');
-assert.match(accessWorkspace, /id="cosmeticAccessLookupStatus"[^>]*role="status"[^>]*aria-live="polite"/,
-  'customer lookup needs a concise live status');
-assert.match(accessWorkspace, /Cosmetics-only access/i, 'manual membership must be described as cosmetics-only access');
-assert.match(accessWorkspace, /future purchasable sets, full-body skins, and trails/i,
-  'manual membership must explicitly include future purchasable sets, full-body skins, and trails');
-assert.doesNotMatch(accessWorkspace, /(?:API[- ]?key|key)\s+(?:cap|limit)|\b5\s+API[- ]?keys?/i,
-  'manual cosmetics membership must not claim an API-key limit');
-assert.match(accessWorkspace, /id="cosmeticMembershipDurationDays"[^>]*type="number"[^>]*min="1"/,
-  'membership grants need a positive duration in days');
-assert.match(accessWorkspace, /id="cosmeticMembershipExpiresAt"[^>]*type="datetime-local"/,
-  'membership grants need an explicit expiry option');
-assert.match(html, /\.cosmetics-grant-form \[hidden\]\{display:none!important\}/,
-  'membership duration and exact-expiry fields must honor their hidden state');
-assert.doesNotMatch(accessWorkspace, /<input[^>]*id="cosmeticRevokeLicense"/,
-  'license revocation must not require pasting a raw UUID');
-assert.doesNotMatch(accessWorkspace, /<input[^>]*id="cosmeticMembershipRevoke[^>]*>/,
-  'membership revocation must not require pasting a raw UUID');
-
-const accessLookup = html.slice(
-  html.indexOf('async function lookupCosmeticCustomerAccess'),
-  html.indexOf('async function grantCosmeticLicense'),
-);
-assert.match(accessLookup, /new URLSearchParams\(\)/, 'customer lookup must encode the email as a query parameter');
-assert.match(accessLookup, /params\.set\('email',\s*email\)/, 'customer lookup must query by normalized email');
-assert.match(accessLookup, /api\('\/cosmetics\/[^']+\?'\s*\+\s*params\.toString\(\)\)/,
-  'customer lookup must use a protected cosmetics access endpoint');
-
-const grant = html.slice(html.indexOf('async function grantCosmeticLicense'), html.indexOf('async function revokeCosmeticLicense'));
-assert.match(grant, /if \(button\.disabled\) return;/, 'double clicks must not submit duplicate grants');
-assert.match(grant, /!payload\.external_reference/, 'blank idempotency references must be rejected');
-assert.match(grant, /finally\s*\{[\s\S]*button\.disabled = false;/, 'grant button must recover after success or failure');
-assert.doesNotMatch(grant, /\bsource\s*:/, 'the server, not the browser, must assign the grant source');
-assert.doesNotMatch(accessWorkspace, /id="cosmeticGrantSource"/, 'operators must not control the grant source');
-assert.match(accessWorkspace, /id="cosmeticGrantSearch"[^>]*type="search"/, 'large grant catalogs need a searchable item picker');
-assert.match(accessWorkspace, /id="cosmeticGrantItem"[^>]*disabled/, 'grant picker must stay bounded until the operator searches');
-assert.match(html, /function renderCosmeticGrantPicker[\s\S]*\.slice\(0,60\)/,
-  'grant search must render a bounded result set instead of 300 native options');
-
-const revoke = html.slice(html.indexOf('async function revokeCosmeticLicense'), html.indexOf('async function grantCosmeticMembership'));
-assert.match(revoke, /async function revokeCosmeticLicense\(licenseID\)/,
-  'a rendered customer license must pass its ID directly to one-click revoke');
-assert.match(revoke, /license_id:licenseID/, 'revocation body must carry the exact license ID');
-assert.match(revoke, /confirm\('Revoke cosmetic license ' \+ licenseID/, 'exact-copy revocation needs an explicit confirmation');
-assert.match(revoke, /if \(button\.disabled\) return;/, 'double clicks must not submit duplicate revocations');
-assert.match(accessLookup + grant + revoke, /data-license-id="\$\{escAttr\(license\.id\)\}"/,
-  'each loaded license row needs its own safe one-click revoke target');
-assert.match(accessLookup + grant + revoke, /revokeCosmeticLicense\(this\.dataset\.licenseId\)/,
-  'license revoke buttons must use the row ID instead of a raw UUID field');
-
-const membershipGrant = html.slice(
-  html.indexOf('async function grantCosmeticMembership'),
-  html.indexOf('async function revokeCosmeticMembership'),
-);
-assert.match(membershipGrant, /duration_days\s*:\s*durationDays/, 'membership submission must carry the chosen duration');
-assert.match(membershipGrant, /expires_at\s*:\s*expiresAt/, 'membership submission must carry the explicit expiry when supplied');
-assert.match(membershipGrant, /!durationDays\s*&&\s*!expiresAt/,
-  'membership submission must require a duration or explicit expiry');
-assert.match(html, /function fmtDateTime\(ts\)[\s\S]*year:\s*'numeric'[\s\S]*timeZoneName:\s*'short'/,
-  'membership expiries need a full date, time, and timezone formatter');
-assert.match(accessLookup, /expires \$\{esc\(fmtDateTime\(membership\.expires_at \|\| ''\)\)\}/,
-  'loaded memberships must show the expiry date and timezone, not only the wall-clock time');
-assert.match(membershipGrant, /'Membership granted until ' \+ fmtDateTime\(membership\?\.expires_at \|\| expiresAt\)/,
-  'membership grant confirmation must show the expiry date and timezone');
-assert.match(membershipGrant, /api\('\/cosmetics\/memberships',\s*\{method:'POST'/,
-  'membership grants must use the protected admin membership endpoint');
-assert.doesNotMatch(membershipGrant, /api[_-]?key|stripe|billing/i,
-  'manual cosmetics membership must not send billing or API-key entitlement controls');
-
-const membershipRevoke = html.slice(
-  html.indexOf('async function revokeCosmeticMembership'),
-  html.indexOf('async function cleanupStale'),
-);
-assert.match(membershipRevoke, /async function revokeCosmeticMembership\(membershipID\)/,
-  'a rendered membership must pass its ID directly to one-click revoke');
-assert.match(membershipRevoke, /membership_id\s*:\s*membershipID/,
-  'membership revoke must target the exact loaded membership');
-assert.match(membershipRevoke, /api\('\/cosmetics\/memberships',\s*\{method:'DELETE'/,
-  'membership revoke must use the protected admin membership endpoint');
-assert.match(accessLookup + membershipGrant + membershipRevoke, /data-membership-id="\$\{escAttr\(membership\.id\)\}"/,
-  'each loaded membership needs its own safe one-click revoke target');
-assert.match(accessLookup + membershipGrant + membershipRevoke, /revokeCosmeticMembership\(this\.dataset\.membershipId\)/,
-  'membership revoke buttons must use the row ID instead of a raw UUID field');
+for (const retiredFunction of ['lookupCosmeticCustomerAccess', 'grantCosmeticLicense', 'revokeCosmeticLicense',
+  'grantCosmeticMembership', 'revokeCosmeticMembership', 'loadCosmeticOrders', 'renderCosmeticGrantPicker']) {
+  assert.doesNotMatch(html, new RegExp(`function ${retiredFunction}\\b`), `${retiredFunction} must be gone with its routes`);
+}
+assert.doesNotMatch(html, /api\(['"]\/cosmetics\/(?:orders|grants|licenses|memberships|access)/,
+  'the admin must not call cosmetics commerce routes the server no longer serves');
+assert.doesNotMatch(html, /checkout_enabled|stripe/i, 'no checkout fact is published or read any more');
+assert.match(cosmeticsPanel, /id="cosmeticSubscriptionState"/, 'the summary says what unlocks paid cosmetics');
+const catalogSummary = html.slice(html.indexOf('function renderCosmeticAdminCatalog'), html.indexOf("getElementById('cosmeticCategoryList')"));
+assert.match(catalogSummary, /cosmeticAdminCatalog\.subscription\?\.url/, 'the summary reads the subscription address the catalog publishes');
+assert.match(catalogSummary, /ARENA_ACCOUNTS_SHOP_URL/, 'a missing address names the setting the operator has to fill in');
 
 const switchTab = html.slice(html.indexOf('function switchTab'), html.indexOf('// Direct tab clicks'));
 assert.match(switchTab, /currentTab === 'cosmetics'[\s\S]*loadCosmeticsAdmin\(\)/, 'opening the cosmetics tab must load its catalog state');
@@ -259,23 +170,9 @@ assert.match(catalogAdmin, /function resetCosmeticItemFilters/,
   'no-results filtering needs one-step recovery');
 assert.match(catalogAdmin, /function toggleCosmeticPackItemSelection/,
   'pack membership must survive filters independently of rendered checkboxes');
-assert.doesNotMatch(catalogAdmin, /loadCosmeticOrders\(\)/,
-  'catalog refresh must not eagerly load Orders data');
 
-const orderAdmin = html.slice(html.indexOf('function cosmeticOrderMoney'), html.indexOf('function cosmeticPriceLabel'));
-assert.match(orderAdmin, /new URLSearchParams\(\)/, 'order filters must be encoded as query parameters');
-assert.match(orderAdmin, /params\.set\('limit','50'\)/, 'orders must request at most 50 rows');
-assert.match(orderAdmin, /\.slice\(0,50\)/, 'the client must remain bounded even if the server over-returns');
-assert.match(orderAdmin, /esc\(order\.account_email[\s\S]*esc\(order\.pack_name/,
-  'network-provided order identity fields must be escaped before rendering');
-assert.doesNotMatch(orderAdmin, /innerHTML[^;]+query|innerHTML[^;]+statusFilter/,
-  'client filter values must never be copied into rendered HTML');
-assert.match(orderAdmin, /requestGeneration\s*=\s*\+\+cosmeticOrderRequestGeneration/,
-  'orders need a request generation so stale responses cannot overwrite newer filters');
-assert.match(orderAdmin, /requestGeneration\s*!==\s*cosmeticOrderRequestGeneration/,
-  'orders must ignore stale request completions');
-const auditAdmin = html.slice(html.indexOf('async function loadCosmeticCatalogAudit'), html.indexOf('async function lookupCosmeticCustomerAccess'));
-assert.doesNotMatch(auditAdmin, /requestGeneration/, 'Activity loading must not depend on the Orders request generation');
+const auditAdmin = html.slice(html.indexOf('async function loadCosmeticCatalogAudit'), html.indexOf('async function cleanupStale'));
+assert.doesNotMatch(auditAdmin, /requestGeneration/, 'Activity loading must not depend on a request generation it does not own');
 assert.match(auditAdmin, /finally\s*\{\s*root\.setAttribute\('aria-busy',\s*'false'\)/,
   'Activity must always clear its own loading state');
 
@@ -324,7 +221,7 @@ function element(id, initial = {}) {
   return value;
 }
 for (const id of ['cosmeticCategoryCount', 'cosmeticPackCount', 'cosmeticItemCount',
-  'cosmeticCheckoutState', 'cosmeticCatalogStatus', 'cosmeticCategoryList', 'cosmeticPackList',
+  'cosmeticSubscriptionState', 'cosmeticCatalogStatus', 'cosmeticCategoryList', 'cosmeticPackList',
   'cosmeticItemList', 'cosmeticItemFilterCount', 'cosmeticPackItems', 'cosmeticPackSelectionCount',
   'cosmeticPackRuleHint']) element(id);
 element('cosmeticPackEditor', {open:true});
@@ -592,96 +489,4 @@ await deleteContext.deleteCosmeticEntity('pack', 'starter-pack', 'cosmeticPackRe
 assert.match(deleteResult.textContent, /deleted:/, 'deleted:true should show success');
 assert.equal(localAudit.length, 1, 'only a confirmed deletion should create a success audit event');
 
-const orderElements = new Map([
-  ['cosmeticOrderSearch', {value:'<img src=x onerror=alert(1)>'}],
-  ['cosmeticOrderStatusFilter', {value:'paid'}],
-  ['cosmeticOrderStatus', {textContent:'', style:{}}],
-  ['cosmeticOrderList', {
-    textContent:'', innerHTML:'', attributes:new Map(),
-    setAttribute(name, value) { this.attributes.set(name, String(value)); },
-  }],
-]);
-const escaped = value => String(value ?? '')
-  .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
-  .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
-const orderFixture = Array.from({length:55}, (_, index) => ({
-  id:`order-${index}<img src=x onerror=alert(1)>`,
-  account_email:index === 0 ? 'buyer<img src=x onerror=alert(1)>@example.com' : `buyer${index}@example.com`,
-  pack_name:index === 0 ? 'Launch <script>alert(1)</script> Set' : `Launch Set ${index}`,
-  quantity:2,
-  currency:'usd',
-  expected_subtotal_cents:1000,
-  amount_received_cents:1000,
-  amount_refunded_cents:index === 1 ? 250 : 0,
-  status:'paid',
-  checkout_session_id:`cs_test_${String(index).padStart(4, '0')}_full_identifier`,
-  payment_intent_id:`pi_test_${String(index).padStart(4, '0')}_full_identifier`,
-  fulfilled_license_count:2,
-  created_at:'2026-07-11T12:00:00Z',
-  updated_at:'2026-07-11T12:05:00Z',
-}));
-let orderAPIResult = {orders:orderFixture};
-let orderPath = '';
-const orderContext = {
-  cosmeticOrderRequestGeneration:0,
-  document:{getElementById:id => orderElements.get(id)},
-  api:async path => {
-    orderPath = path;
-    if (orderAPIResult instanceof Error) throw orderAPIResult;
-    return orderAPIResult;
-  },
-  URLSearchParams,
-  Intl,
-  esc:escaped,
-  escAttr:escaped,
-  prettyLabel:value => String(value).replaceAll('_', ' '),
-  fmtTime:value => String(value),
-};
-runInNewContext(orderAdmin, orderContext);
-await orderContext.loadCosmeticOrders({preventDefault(){}});
-const orderParams = new URLSearchParams(orderPath.slice(orderPath.indexOf('?') + 1));
-assert.equal(orderPath.startsWith('/cosmetics/orders?'), true);
-assert.equal(orderParams.get('query'), '<img src=x onerror=alert(1)>', 'search text must round-trip only through URL encoding');
-assert.equal(orderParams.get('status'), 'paid', 'status filter must be sent independently');
-assert.equal(orderParams.get('limit'), '50');
-assert.equal((orderElements.get('cosmeticOrderList').innerHTML.match(/<article/g) || []).length, 50,
-  'an over-returning endpoint must still render at most 50 compact rows');
-assert.doesNotMatch(orderElements.get('cosmeticOrderList').innerHTML, /<(?:img|script)\b/i,
-  'untrusted order data must not render executable HTML');
-assert.match(orderElements.get('cosmeticOrderList').innerHTML, /&lt;script&gt;/,
-  'untrusted order data should remain visible as escaped support text');
-assert.match(orderElements.get('cosmeticOrderList').innerHTML, /10\.00/,
-  'minor-unit amounts need operator-readable currency formatting');
-assert.match(orderElements.get('cosmeticOrderList').innerHTML, /title="cs_test_0000_full_identifier"/,
-  'terse provider IDs need the full copy-safe value in the title');
-assert.match(orderElements.get('cosmeticOrderStatus').textContent, /Showing 50 of 55 orders/);
-assert.equal(orderElements.get('cosmeticOrderList').attributes.get('aria-busy'), 'false');
-
-orderAPIResult = {orders:[]};
-await orderContext.loadCosmeticOrders();
-assert.match(orderElements.get('cosmeticOrderList').textContent, /No commerce orders/i,
-  'empty checkout history is a normal, explicit state');
-orderAPIResult = new Error('checkout disabled');
-await orderContext.loadCosmeticOrders();
-assert.match(orderElements.get('cosmeticOrderList').textContent, /Orders unavailable/i,
-  'orders failure needs a local error state instead of rejecting catalog load');
-assert.match(orderElements.get('cosmeticOrderStatus').textContent, /Catalog editing is unaffected/i);
-assert.equal(orderElements.get('cosmeticOrderList').attributes.get('aria-busy'), 'false');
-
-const pendingOrders = [];
-orderContext.api = path => new Promise(resolve => pendingOrders.push({path, resolve}));
-orderElements.get('cosmeticOrderSearch').value = '';
-const staleOrderLoad = orderContext.loadCosmeticOrders();
-orderElements.get('cosmeticOrderSearch').value = 'newest filter';
-const newestOrderLoad = orderContext.loadCosmeticOrders();
-pendingOrders[0].resolve({orders:orderFixture});
-await staleOrderLoad;
-assert.equal(orderElements.get('cosmeticOrderList').attributes.get('aria-busy'), 'true',
-  'a stale request must not clear the newest request loading state');
-pendingOrders[1].resolve({orders:[]});
-await newestOrderLoad;
-assert.match(orderElements.get('cosmeticOrderList').textContent, /No commerce orders/i,
-  'a stale unfiltered order response must not overwrite the newest filter state');
-assert.equal(orderElements.get('cosmeticOrderList').attributes.get('aria-busy'), 'false');
-
-console.log('admin cosmetic fulfillment is email-owned, idempotent, and exact-copy revocable');
+console.log('admin cosmetics is catalog-only: the subscription is read from Angel Accounts, nothing is granted or sold here');

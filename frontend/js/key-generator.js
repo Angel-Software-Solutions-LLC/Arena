@@ -84,7 +84,7 @@ function showKey(container, data) {
         <p class="keygen-warning">Copy this token now. Arena cannot show it again.</p>
         <p class="keygen-bot-id">Bot ID: <code>${escapeHTML(data.bot_id || '')}</code></p>
       </div>
-      <a class="keygen-next-link" href="#" data-keygen-dashboard>Claim this bot in My Dashboard to buy and equip cosmetics</a>
+      <a class="keygen-next-link" href="#" data-keygen-dashboard>Claim this bot in My Dashboard to equip cosmetics</a>
     </div>`;
 
   const keyField = container.querySelector('#key-display');

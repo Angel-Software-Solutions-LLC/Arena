@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"math"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -98,146 +99,33 @@ func TestValidateAFKConfigRejectsUnsafeTimeouts(t *testing.T) {
 	}
 }
 
-func validCosmeticsCheckoutConfig() Config {
-	return Config{
-		DBOptional:               false,
-		CustomerOIDCEnabled:      true,
-		CustomerOIDCIssuer:       "https://identity.example",
-		CustomerOIDCClientID:     "arena-customers",
-		CustomerOIDCClientSecret: "client-secret",
-		CustomerOIDCRedirectURI:  "https://arena.example/api/v1/account/callback",
-		CustomerOIDCSessionTTL:   24,
-		CosmeticsCheckoutEnabled: true,
-		StripeSecretKey:          "sk_test_checkout",
-		StripePublishableKey:     "pk_test_checkout",
-		StripeWebhookSecrets:     "whsec_current,whsec_previous",
-		StripeSuccessURL:         "https://arena.example/dashboard?checkout=success",
-		StripeCancelURL:          "https://arena.example/shop?checkout=cancelled",
-		StripeReturnURL:          "https://arena.example/dashboard?checkout=return&session_id={CHECKOUT_SESSION_ID}",
-		StripePortalReturnURL:    "https://arena.example/dashboard?tab=cosmetics",
-		CosmeticsCheckoutRPM:     10,
-		CosmeticsAccountReadRPM:  60,
+func TestValidateCosmeticsConfig(t *testing.T) {
+	if err := ValidateCosmeticsConfig(Config{CosmeticsAccountReadRPM: 60}); err != nil {
+		t.Fatalf("no shop address is a supported configuration: %v", err)
+	}
+	if err := ValidateCosmeticsConfig(Config{CosmeticsAccountReadRPM: 60, AccountsShopURL: "https://accounts.angel-serv.com/portal"}); err != nil {
+		t.Fatalf("an https shop address was rejected: %v", err)
+	}
+	if err := ValidateCosmeticsConfig(Config{CosmeticsAccountReadRPM: 0}); err == nil || !strings.Contains(err.Error(), "ARENA_COSMETICS_ACCOUNT_READ_RPM") {
+		t.Fatalf("read-rate validation error = %v", err)
+	}
+	for _, bad := range []string{"/portal", "http://accounts.angel-serv.com/portal", "javascript:alert(1)", "https://"} {
+		if err := ValidateCosmeticsConfig(Config{CosmeticsAccountReadRPM: 60, AccountsShopURL: bad}); err == nil ||
+			!strings.Contains(err.Error(), "ARENA_ACCOUNTS_SHOP_URL") {
+			t.Fatalf("shop address %q validation error = %v, want the https requirement", bad, err)
+		}
 	}
 }
 
-func TestValidateCosmeticsCheckoutConfigFailsClosed(t *testing.T) {
-	tests := []struct {
-		name   string
-		mutate func(*Config)
-		want   string
-	}{
-		{name: "customer OIDC disabled", mutate: func(cfg *Config) { cfg.CustomerOIDCEnabled = false }, want: "customer OIDC"},
-		{name: "customer OIDC issuer missing", mutate: func(cfg *Config) { cfg.CustomerOIDCIssuer = "" }, want: "customer OIDC"},
-		{name: "customer OIDC client ID missing", mutate: func(cfg *Config) { cfg.CustomerOIDCClientID = "" }, want: "customer OIDC"},
-		{name: "customer OIDC client secret missing", mutate: func(cfg *Config) { cfg.CustomerOIDCClientSecret = "" }, want: "customer OIDC"},
-		{name: "customer OIDC redirect missing", mutate: func(cfg *Config) { cfg.CustomerOIDCRedirectURI = "" }, want: "customer OIDC"},
-		{name: "customer OIDC session disabled", mutate: func(cfg *Config) { cfg.CustomerOIDCSessionTTL = 0 }, want: "customer OIDC"},
-		{name: "database optional", mutate: func(cfg *Config) { cfg.DBOptional = true }, want: "database"},
-		{name: "Stripe key missing", mutate: func(cfg *Config) { cfg.StripeSecretKey = " " }, want: "ARENA_STRIPE_SECRET_KEY"},
-		{name: "Stripe publishable key missing", mutate: func(cfg *Config) { cfg.StripePublishableKey = " " }, want: "ARENA_STRIPE_PUBLISHABLE_KEY"},
-		{name: "Stripe secret key unknown", mutate: func(cfg *Config) { cfg.StripeSecretKey = "private_checkout" }, want: "ARENA_STRIPE_SECRET_KEY"},
-		{name: "Stripe publishable key unknown", mutate: func(cfg *Config) { cfg.StripePublishableKey = "browser_checkout" }, want: "ARENA_STRIPE_PUBLISHABLE_KEY"},
-		{name: "Stripe key modes mismatch", mutate: func(cfg *Config) { cfg.StripeSecretKey = "rk_live_checkout" }, want: "same Stripe mode"},
-		{name: "webhook secrets missing", mutate: func(cfg *Config) { cfg.StripeWebhookSecrets = ", " }, want: "ARENA_STRIPE_WEBHOOK_SECRETS"},
-		{name: "relative success URL", mutate: func(cfg *Config) { cfg.StripeSuccessURL = "/dashboard" }, want: "ARENA_STRIPE_SUCCESS_URL"},
-		{name: "insecure public success URL", mutate: func(cfg *Config) { cfg.StripeSuccessURL = "http://arena.example/dashboard" }, want: "ARENA_STRIPE_SUCCESS_URL"},
-		{name: "relative cancel URL", mutate: func(cfg *Config) { cfg.StripeCancelURL = "/shop" }, want: "ARENA_STRIPE_CANCEL_URL"},
-		{name: "unsupported cancel URL scheme", mutate: func(cfg *Config) { cfg.StripeCancelURL = "ftp://arena.example/shop" }, want: "ARENA_STRIPE_CANCEL_URL"},
-		{name: "relative embedded return URL", mutate: func(cfg *Config) { cfg.StripeReturnURL = "/dashboard" }, want: "ARENA_STRIPE_RETURN_URL"},
-		{name: "embedded return URL missing session token", mutate: func(cfg *Config) { cfg.StripeReturnURL = "https://arena.example/dashboard" }, want: "{CHECKOUT_SESSION_ID}"},
-		{name: "relative portal return URL", mutate: func(cfg *Config) { cfg.StripePortalReturnURL = "/dashboard" }, want: "ARENA_STRIPE_PORTAL_RETURN_URL"},
-		{name: "checkout rate disabled", mutate: func(cfg *Config) { cfg.CosmeticsCheckoutRPM = 0 }, want: "ARENA_COSMETICS_CHECKOUT_RPM"},
-		{name: "account cosmetics read rate disabled", mutate: func(cfg *Config) { cfg.CosmeticsAccountReadRPM = 0 }, want: "ARENA_COSMETICS_ACCOUNT_READ_RPM"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := validCosmeticsCheckoutConfig()
-			tt.mutate(&cfg)
-			err := ValidateCosmeticsCheckoutConfig(cfg)
-			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("ValidateCosmeticsCheckoutConfig() error = %v, want error containing %q", err, tt.want)
-			}
-		})
-	}
-}
-
-func TestValidateCosmeticsCheckoutConfigRequiresStripeAPIKeyDuringWebhookSalesPause(t *testing.T) {
-	cfg := Config{
-		CosmeticsCheckoutEnabled: false,
-		StripeWebhookSecrets:     "whsec_existing_subscriptions",
-		CosmeticsAccountReadRPM:  60,
-		StripePortalReturnURL:    "https://arena.example/dashboard?tab=cosmetics",
-	}
-	if err := ValidateCosmeticsCheckoutConfig(cfg); err == nil || !strings.Contains(err.Error(), "ARENA_STRIPE_SECRET_KEY") {
-		t.Fatalf("sales-pause validation error = %v, want retained Stripe API key requirement", err)
-	}
-	cfg.StripeSecretKey = "mistyped-retained-key"
-	if err := ValidateCosmeticsCheckoutConfig(cfg); err == nil || !strings.Contains(err.Error(), "sk_test") {
-		t.Fatalf("sales-pause malformed key error = %v, want Stripe API key shape validation", err)
-	}
-	cfg.StripeSecretKey = "sk_live_retained_for_subscription_reconciliation"
-	portalReturnURL := cfg.StripePortalReturnURL
-	cfg.StripePortalReturnURL = ""
-	if err := ValidateCosmeticsCheckoutConfig(cfg); err == nil || !strings.Contains(err.Error(), "ARENA_STRIPE_PORTAL_RETURN_URL") {
-		t.Fatalf("sales-pause portal validation error = %v", err)
-	}
-	cfg.StripePortalReturnURL = portalReturnURL
-	if err := ValidateCosmeticsCheckoutConfig(cfg); err != nil {
-		t.Fatalf("sales pause with retained Stripe API key rejected: %v", err)
-	}
-}
-
-func TestValidateCosmeticsCheckoutConfigRequiresAccountReadRateDuringSalesPause(t *testing.T) {
-	cfg := Config{CosmeticsAccountReadRPM: 0}
-	if err := ValidateCosmeticsCheckoutConfig(cfg); err == nil || !strings.Contains(err.Error(), "ARENA_COSMETICS_ACCOUNT_READ_RPM") {
-		t.Fatalf("disabled checkout read-rate validation error = %v", err)
-	}
-}
-
-func TestValidateCosmeticsCheckoutConfigAllowsDisabledAndLoopbackDevelopment(t *testing.T) {
-	if err := ValidateCosmeticsCheckoutConfig(Config{CosmeticsAccountReadRPM: 60}); err != nil {
-		t.Fatalf("disabled checkout should not require payment config: %v", err)
-	}
-
-	cfg := validCosmeticsCheckoutConfig()
-	cfg.StripeSuccessURL = "http://localhost:8000/dashboard"
-	cfg.StripeCancelURL = "http://127.0.0.1:8000/shop"
-	cfg.StripeReturnURL = "http://localhost:8000/dashboard?session_id={CHECKOUT_SESSION_ID}"
-	cfg.StripePortalReturnURL = "http://localhost:8000/dashboard"
-	if err := ValidateCosmeticsCheckoutConfig(cfg); err != nil {
-		t.Fatalf("loopback HTTP checkout URLs should be allowed for development: %v", err)
-	}
-
-	cfg.StripeSuccessURL = "http://[::1]:8000/dashboard"
-	if err := ValidateCosmeticsCheckoutConfig(cfg); err != nil {
-		t.Fatalf("IPv6 loopback HTTP checkout URL should be allowed for development: %v", err)
-	}
-}
-
-func TestCosmeticsCheckoutRequiresAccountsSignIn(t *testing.T) {
-	// The inverse of what used to be asserted here. Checkout could once be
-	// satisfied by Arena's own verified-email sign-in *instead of* OIDC; that
-	// path is gone, so the only thing that can satisfy it is a fully
-	// configured Accounts client, and its absence must fail closed.
-	cfg := validCosmeticsCheckoutConfig()
-	cfg.CustomerOIDCEnabled = false
-	if err := ValidateCosmeticsCheckoutConfig(cfg); err == nil {
-		t.Fatal("checkout was accepted with no way for a customer to sign in")
-	}
-
-	cfg = validCosmeticsCheckoutConfig()
-	cfg.CustomerOIDCClientSecret = ""
-	if err := ValidateCosmeticsCheckoutConfig(cfg); err == nil {
-		t.Fatal("checkout was accepted with a half-configured Accounts client")
-	}
-}
-
-func TestLoadReadsCosmeticsCheckoutDefaultsAndSecretRotation(t *testing.T) {
+// TestStripeConfigurationIsRetired pins the removal: the variables that used
+// to configure Arena's own checkout are not read, and setting them changes
+// nothing. Commerce lives in Angel Accounts.
+func TestStripeConfigurationIsRetired(t *testing.T) {
 	previous := C
 	t.Cleanup(func() { C = previous })
 	for _, key := range []string{
 		"ARENA_COSMETICS_CHECKOUT_ENABLED",
+		"ARENA_COSMETICS_CHECKOUT_RPM",
 		"ARENA_STRIPE_SECRET_KEY",
 		"ARENA_STRIPE_PUBLISHABLE_KEY",
 		"ARENA_STRIPE_WEBHOOK_SECRETS",
@@ -246,65 +134,36 @@ func TestLoadReadsCosmeticsCheckoutDefaultsAndSecretRotation(t *testing.T) {
 		"ARENA_STRIPE_RETURN_URL",
 		"ARENA_STRIPE_PORTAL_RETURN_URL",
 		"ARENA_STRIPE_AUTOMATIC_TAX",
-		"ARENA_COSMETICS_CHECKOUT_RPM",
 	} {
-		value, existed := os.LookupEnv(key)
-		if err := os.Unsetenv(key); err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() {
-			if existed {
-				_ = os.Setenv(key, value)
-			} else {
-				_ = os.Unsetenv(key)
-			}
-		})
+		t.Setenv(key, "set-but-ignored")
 	}
+	t.Setenv("ARENA_ACCOUNTS_SHOP_URL", "https://accounts.angel-serv.com/portal")
 	C = Config{}
 	Load()
-	if C.CosmeticsCheckoutEnabled || C.StripeAutomaticTax {
-		t.Fatal("cosmetics checkout and automatic tax must default disabled")
-	}
-	if C.CosmeticsCheckoutRPM != 10 {
-		t.Fatalf("CosmeticsCheckoutRPM = %d, want 10", C.CosmeticsCheckoutRPM)
+	if C.AccountsShopURL != "https://accounts.angel-serv.com/portal" {
+		t.Fatalf("AccountsShopURL = %q", C.AccountsShopURL)
 	}
 	if C.CosmeticsAccountReadRPM != 60 {
 		t.Fatalf("CosmeticsAccountReadRPM = %d, want 60", C.CosmeticsAccountReadRPM)
 	}
-
-	t.Setenv("ARENA_COSMETICS_CHECKOUT_ENABLED", "true")
-	t.Setenv("ARENA_CUSTOMER_OIDC_ENABLED", "true")
-	t.Setenv("ARENA_CUSTOMER_OIDC_ISSUER", "https://identity.example")
-	t.Setenv("ARENA_CUSTOMER_OIDC_CLIENT_ID", "arena-customers")
-	t.Setenv("ARENA_CUSTOMER_OIDC_CLIENT_SECRET", "client-secret")
-	t.Setenv("ARENA_CUSTOMER_OIDC_REDIRECT_URI", "https://arena.example/api/v1/account/callback")
-	t.Setenv("ARENA_CUSTOMER_OIDC_SESSION_TTL_HOURS", "24")
-	t.Setenv("ARENA_DB_OPTIONAL", "false")
-	t.Setenv("ARENA_STRIPE_SECRET_KEY", "sk_test_checkout")
-	t.Setenv("ARENA_STRIPE_PUBLISHABLE_KEY", "pk_test_checkout")
-	t.Setenv("ARENA_STRIPE_WEBHOOK_SECRETS", "whsec_current, whsec_previous")
-	t.Setenv("ARENA_STRIPE_SUCCESS_URL", "https://arena.example/dashboard")
-	t.Setenv("ARENA_STRIPE_CANCEL_URL", "https://arena.example/shop")
-	t.Setenv("ARENA_STRIPE_RETURN_URL", "https://arena.example/dashboard?session_id={CHECKOUT_SESSION_ID}")
-	t.Setenv("ARENA_STRIPE_PORTAL_RETURN_URL", "https://arena.example/dashboard")
-	C = Config{}
-	Load()
-	secrets := ParseStripeWebhookSecrets(C.StripeWebhookSecrets)
-	if len(secrets) != 2 || secrets[0] != "whsec_current" || secrets[1] != "whsec_previous" {
-		t.Fatalf("ParseStripeWebhookSecrets() = %#v, want normalized rotation list", secrets)
+	configType := reflect.TypeOf(C)
+	for index := 0; index < configType.NumField(); index++ {
+		field := configType.Field(index)
+		if strings.Contains(field.Name, "Stripe") || strings.Contains(field.Name, "Checkout") {
+			t.Fatalf("Config still carries a checkout field: %s", field.Name)
+		}
 	}
 }
 
-func TestLoadInvokesCosmeticsCheckoutValidation(t *testing.T) {
+func TestLoadInvokesCosmeticsValidation(t *testing.T) {
 	previous := C
 	t.Cleanup(func() { C = previous })
-	t.Setenv("ARENA_COSMETICS_CHECKOUT_ENABLED", "true")
-	t.Setenv("ARENA_CUSTOMER_OIDC_ENABLED", "false")
+	t.Setenv("ARENA_ACCOUNTS_SHOP_URL", "http://accounts.example/portal")
 	C = Config{}
 
 	defer func() {
 		if recover() == nil {
-			t.Fatal("Load() did not fail closed for incomplete checkout configuration")
+			t.Fatal("Load() did not fail closed for an insecure shop address")
 		}
 	}()
 	Load()

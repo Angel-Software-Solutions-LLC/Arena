@@ -5,6 +5,18 @@ an in-process, same-database strangler. The migration keeps the existing
 PostgreSQL records authoritative while callers move behind one port. It does
 not copy ownership state, dual-write records, or enable checkout.
 
+> **Status note.** The per-item licence model this document's W1b checkpoints
+> were built around has been retired: Arena now sells nothing itself, and one
+> Arena subscription held in Angel Accounts unlocks every cosmetic (see
+> [cosmetics-and-monetization.md](cosmetics-and-monetization.md)). The
+> `LicenseLifecycleAuthority` facet, the licence assignment/grant/revocation
+> operations and the administrator-membership reconciliation described below
+> no longer exist in `internal/platform`; what remains is identity binding
+> (`UpsertVerifiedIdentity`, `SetSubscription`), the catalog, customer
+> inventory and account-agent link/unlink. The retired tables stay in the
+> database, unread, as recorded in that document. The W1b sections are kept
+> as the history of the boundary, not as its current shape.
+
 ## W1b.1 boundary
 
 W1b.1 merged to Arena `main` in

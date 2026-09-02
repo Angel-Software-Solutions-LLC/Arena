@@ -503,8 +503,8 @@ tr:hover td{background:rgba(71,215,255,.035)}
   background:radial-gradient(circle at top right,rgba(71,215,255,.13),transparent 38%),rgba(6,12,20,.68);
 }
 .cosmetic-account-summary h2,.cosmetic-inventory-head h2{margin:5px 0 3px;color:#ecf4ff;font-size:18px;letter-spacing:-.03em}
-.cosmetic-account-summary p,.cosmetic-sidebar p,.cosmetic-rule,.cosmetic-license p{color:#91a6bd;font-size:11px}
-.all-access-plan{
+.cosmetic-account-summary p,.cosmetic-sidebar p,.cosmetic-rule,.cosmetic-card p{color:#91a6bd;font-size:11px}
+.subscription-card{
   display:grid;
   grid-template-columns:minmax(0,1fr) minmax(220px,auto);
   align-items:center;
@@ -515,20 +515,18 @@ tr:hover td{background:rgba(71,215,255,.035)}
   border-radius:18px;
   background:rgba(20,17,11,.72);
 }
-.all-access-copy{min-width:0}
-.all-access-copy h2{margin:5px 0 6px;color:#ecf4ff;font-size:24px;letter-spacing:-.04em}
-.all-access-copy p{max-width:76ch;margin:0;color:#c4cfdb;font-size:12px;line-height:1.55}
-.all-access-copy .all-access-removal{margin-top:7px;color:#91a6bd;font:500 9px/1.55 'IBM Plex Mono',monospace}
-.all-access-copy .all-access-grant-note{margin-top:7px;color:#58e58f;font:600 9px/1.55 'IBM Plex Mono',monospace}
-.all-access-offer{display:grid;justify-items:end;gap:8px;min-width:220px;text-align:right}
-.all-access-offer>strong{color:#f0c040;font:700 24px/1 'IBM Plex Mono',monospace;white-space:nowrap}
-.all-access-offer>strong small{color:#a9b8c9;font-size:10px;font-weight:500}
-.all-access-status{display:inline-flex;align-items:center;min-height:24px;padding:0 8px;border:1px solid rgba(126,166,207,.2);border-radius:999px;color:#a9b8c9;font:600 8px/1 'IBM Plex Mono',monospace;text-transform:uppercase}
-.all-access-status.is-active{border-color:rgba(88,229,143,.28);background:rgba(88,229,143,.08);color:#58e58f}
-.all-access-status.is-warning{border-color:rgba(255,154,146,.28);background:rgba(255,123,114,.08);color:#ff9a92}
-.all-access-action{min-height:44px;border-color:rgba(240,192,64,.38);color:#f0c040}
-.all-access-unavailable,.all-access-feedback{margin:0;color:#91a6bd;font:500 9px/1.4 'IBM Plex Mono',monospace}
-.all-access-feedback.is-error{max-width:250px;color:#ff9a92}
+.subscription-card.is-active{border-color:rgba(88,229,143,.26);background:rgba(8,20,14,.7)}
+.subscription-copy{min-width:0}
+.subscription-copy h2{margin:5px 0 6px;color:#ecf4ff;font-size:24px;letter-spacing:-.04em}
+.subscription-copy p{max-width:76ch;margin:0;color:#c4cfdb;font-size:12px;line-height:1.55}
+.subscription-copy .subscription-read{margin-top:7px;color:#91a6bd;font:500 9px/1.55 'IBM Plex Mono',monospace}
+.subscription-offer{display:grid;justify-items:end;gap:8px;min-width:220px;text-align:right}
+.subscription-status{display:inline-flex;align-items:center;min-height:24px;padding:0 8px;border:1px solid rgba(126,166,207,.2);border-radius:999px;color:#a9b8c9;font:600 8px/1 'IBM Plex Mono',monospace;text-transform:uppercase}
+.subscription-status.is-active{border-color:rgba(88,229,143,.28);background:rgba(88,229,143,.08);color:#58e58f}
+.subscription-action{display:inline-flex;align-items:center;min-height:44px;padding:6px 14px;border:1px solid rgba(240,192,64,.38);border-radius:999px;color:#f0c040;font-size:12px;text-decoration:none}
+.subscription-action:hover{border-color:#f0c040;background:rgba(240,192,64,.12);color:#ffe08b}
+.subscription-card.is-active .subscription-action{border-color:rgba(88,229,143,.32);color:#58e58f}
+.subscription-unavailable{margin:0;color:#91a6bd;font:500 9px/1.4 'IBM Plex Mono',monospace}
 .account-key-manager{margin-bottom:16px;padding:18px;border:1px solid rgba(71,215,255,.2);border-radius:18px;background:rgba(6,12,20,.62)}
 .account-key-form{display:grid;grid-template-columns:minmax(180px,1fr) auto;align-items:end;gap:8px;margin:14px 0}
 .account-key-form label{grid-column:1/-1;color:#ecf4ff;font-size:11px;font-weight:700}
@@ -570,7 +568,7 @@ tr:hover td{background:rgba(71,215,255,.035)}
 .linked-bot-list li span:first-child{min-width:0;display:flex;flex-direction:column}
 .linked-bot-actions{display:flex;align-items:center;gap:5px;flex-shrink:0}
 .linked-bot-list strong{overflow:hidden;text-overflow:ellipsis;color:#ecf4ff;font-size:12px}
-.linked-bot-list small,.cosmetic-license-id{color:#73859a;font:400 9px/1.4 'IBM Plex Mono',monospace}
+.linked-bot-list small{color:#73859a;font:400 9px/1.4 'IBM Plex Mono',monospace}
 .linked-bot-state{min-height:22px;padding:0 8px;font-size:8px}
 .linked-bot-state.inactive,.ownership-badge.inactive{border-color:rgba(255,123,114,.28);background:rgba(255,123,114,.08);color:#ff9a92}
 .link-bot-form{display:flex;flex-direction:column;gap:8px;padding-top:14px;border-top:1px solid rgba(126,166,207,.1)}
@@ -579,58 +577,32 @@ tr:hover td{background:rgba(71,215,255,.035)}
 .link-bot-form small{color:#91a6bd;font:400 9px/1.5 'IBM Plex Mono',monospace}
 .cosmetic-inventory-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .cosmetic-inventory-head>span{color:#91a6bd;font:500 10px/1 'IBM Plex Mono',monospace}
-/* The collection head carries an action once purchases live in the Angel
-   account: the licence count keeps its place and the refresh sits beside it,
-   rather than the count moving to make room. */
-.cosmetic-inventory-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end}
-.cosmetic-inventory-actions>span{color:#91a6bd;font:500 10px/1 'IBM Plex Mono',monospace}
 .cosmetic-rule{margin:5px 0 17px;padding:10px 12px;border-left:2px solid #47d7ff;background:rgba(71,215,255,.05)}
 .cosmetic-group+.cosmetic-group{margin-top:20px}
-.cosmetic-license-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}
-.cosmetic-license{min-width:0;padding:14px;border:1px solid rgba(126,166,207,.13);border-radius:18px;background:linear-gradient(180deg,rgba(14,25,38,.76),rgba(9,16,25,.66))}
-.cosmetic-license-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
-.cosmetic-license h3{margin:4px 0 0;color:#ecf4ff;font-size:14px;letter-spacing:-.02em}
-.cosmetic-license p{min-height:34px;margin:8px 0}
+.cosmetic-collection-filter{display:grid;grid-template-columns:minmax(180px,2fr) minmax(140px,1fr) auto;align-items:end;gap:10px;margin:0 0 16px}
+.cosmetic-collection-filter label{display:grid;gap:5px;color:#ecf4ff;font-size:11px;font-weight:700}
+.cosmetic-collection-filter input,.cosmetic-collection-filter select{min-width:0;min-height:40px;width:100%}
+.cosmetic-collection-count{color:#91a6bd;font:500 10px/1 'IBM Plex Mono',monospace;padding-bottom:13px}
+.cosmetic-card-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}
+.cosmetic-card{min-width:0;padding:14px;border:1px solid rgba(126,166,207,.13);border-radius:18px;background:linear-gradient(180deg,rgba(14,25,38,.76),rgba(9,16,25,.66))}
+.cosmetic-card.locked{border-style:dashed;background:linear-gradient(180deg,rgba(20,17,11,.6),rgba(9,16,25,.66))}
+.cosmetic-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.cosmetic-card h3{margin:4px 0 0;color:#ecf4ff;font-size:14px;letter-spacing:-.02em}
+.cosmetic-card p{min-height:34px;margin:8px 0}
 .ownership-badge{min-height:23px;padding:0 8px;border-color:rgba(71,215,255,.22);background:rgba(71,215,255,.07);color:#47d7ff;font-size:8px}
-.cosmetic-assignment{margin:10px 0 6px;padding:8px 10px;border:1px solid rgba(126,166,207,.12);border-radius:12px;color:#91a6bd;font-size:10px}
-.cosmetic-assignment.assigned{border-color:rgba(88,229,143,.2);background:rgba(88,229,143,.05);color:#a8eec3}
+.ownership-badge.locked{border-color:rgba(240,192,64,.3);background:rgba(240,192,64,.08);color:#f0c040}
 .cosmetic-equip-state{margin:0 0 10px;padding:6px 10px;border-radius:10px;background:rgba(255,255,255,.025);color:#91a6bd;font-size:10px}
 .cosmetic-equip-state.equipped{background:rgba(71,215,255,.07);color:#7ee4ff}
 .cosmetic-equip{border-color:rgba(71,215,255,.32);color:#7ee4ff}
-.cosmetic-license-actions{display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin-bottom:7px}
-.cosmetic-license-actions select{min-width:150px;flex:1}
+.cosmetic-card-actions{display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin-bottom:7px}
+.cosmetic-equip-hint{color:#91a6bd;font:500 9px/1.4 'IBM Plex Mono',monospace}
+.cosmetic-card.locked .cosmetic-equip-hint{color:#f0c040}
+.cosmetic-show-more{display:block;margin:16px auto 0}
 button:disabled,input:disabled,select:disabled{cursor:not-allowed;opacity:.5;transform:none!important;box-shadow:none!important}
 .cosmetic-empty{color:#91a6bd!important;font-size:10px!important;line-height:1.55}
 .cosmetic-empty-inventory{padding:24px;text-align:center;border:1px dashed rgba(126,166,207,.18);border-radius:16px}
 .cosmetic-loading{padding:40px;text-align:center;color:#91a6bd;font:500 11px/1.5 'IBM Plex Mono',monospace}
 .cosmetic-shop{margin-bottom:16px;padding:18px;border:1px solid rgba(240,192,64,.18);border-radius:22px;background:rgba(6,12,20,.55)}
-.cosmetic-shop-grid{display:grid;gap:9px;content-visibility:auto}
-.cosmetic-shop-pack{display:grid;grid-template-columns:88px minmax(0,1fr) auto;gap:14px;align-items:center;min-width:0;padding:12px;border:1px solid rgba(126,166,207,.14);border-radius:17px;background:rgba(9,16,25,.74)}
-.cosmetic-shop-swatch{width:88px;aspect-ratio:1;border:1px solid rgba(255,255,255,.13);border-radius:14px;background:linear-gradient(135deg,#24364a,#0c141f);box-shadow:inset 0 0 0 5px rgba(4,9,15,.28)}
-.cosmetic-shop-pack-copy{min-width:0}
-.cosmetic-shop-pack-copy h3{margin:4px 0;color:#ecf4ff;font-size:14px;letter-spacing:-.02em}
-.cosmetic-shop-pack-copy p{display:-webkit-box;margin:0 0 8px;overflow:hidden;color:#91a6bd;font-size:10px;line-height:1.45;-webkit-box-orient:vertical;-webkit-line-clamp:2}
-.cosmetic-shop-contents{display:flex;gap:5px;flex-wrap:wrap}
-.cosmetic-shop-contents span{padding:4px 7px;border:1px solid rgba(126,166,207,.12);border-radius:999px;color:#a9b8c9;font:500 8px/1.2 'IBM Plex Mono',monospace}
-.cosmetic-shop-offer{display:grid;gap:8px;justify-items:end;min-width:132px}
-.cosmetic-shop-offer>strong{color:#f0c040;font:700 13px/1 'IBM Plex Mono',monospace}
-.cosmetic-shop-state{color:#91a6bd;font:500 9px/1.3 'IBM Plex Mono',monospace;text-align:end}
-.cosmetic-shop-buy{min-height:44px;border-color:rgba(240,192,64,.35);color:#f0c040}
-.cosmetic-shop-buy:hover{border-color:#f0c040;background:rgba(240,192,64,.12);color:#ffe08b}
-.cosmetic-purchases{margin-bottom:16px;padding:18px;border:1px solid rgba(126,166,207,.14);border-radius:22px;background:rgba(6,12,20,.55)}
-.cosmetic-purchase-list{display:grid;gap:9px}
-.cosmetic-purchase{min-width:0;padding:13px;border:1px solid rgba(126,166,207,.13);border-radius:17px;background:rgba(9,16,25,.74)}
-.cosmetic-purchase-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
-.cosmetic-purchase-head>div{min-width:0}
-.cosmetic-purchase-head h3{margin:4px 0 0;overflow-wrap:anywhere;color:#ecf4ff;font-size:14px;letter-spacing:-.02em}
-.cosmetic-purchase-head code{overflow-wrap:anywhere;color:#a9b8c9;font:500 9px/1.3 'IBM Plex Mono',monospace}
-.cosmetic-purchase-status{display:inline-flex;align-items:center;min-height:23px;padding:0 8px;border:1px solid rgba(126,166,207,.22);border-radius:999px;color:#a9b8c9;font:600 8px/1 'IBM Plex Mono',monospace;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap}
-.cosmetic-purchase-status.is-paid{border-color:rgba(88,229,143,.28);background:rgba(88,229,143,.08);color:#58e58f}
-.cosmetic-purchase-status.is-warning{border-color:rgba(255,154,146,.28);background:rgba(255,123,114,.08);color:#ff9a92}
-.cosmetic-purchase-facts,.cosmetic-purchase-money{display:flex;gap:7px;flex-wrap:wrap;margin-top:9px;color:#91a6bd;font:500 9px/1.4 'IBM Plex Mono',monospace}
-.cosmetic-purchase-facts span,.cosmetic-purchase-facts time,.cosmetic-purchase-money span{padding:5px 7px;border:1px solid rgba(126,166,207,.1);border-radius:9px;background:rgba(255,255,255,.02)}
-.cosmetic-purchase-money strong{color:#ecf4ff}
-.cosmetic-purchase-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;color:#91a6bd;font:500 9px/1.4 'IBM Plex Mono',monospace}
 .account-profile-form{margin-bottom:16px;padding:18px;border:1px solid rgba(71,215,255,.2);border-radius:18px;background:rgba(6,12,20,.62)}
 .profile-field{margin-bottom:14px}
 .profile-field:last-child{margin-bottom:0}
@@ -656,7 +628,7 @@ button:disabled,input:disabled,select:disabled{cursor:not-allowed;opacity:.5;tra
 .profile-bot-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;margin-top:10px}
 .profile-bot-card{padding:10px 12px;border:1px solid rgba(126,166,207,.12);border-radius:14px;background:rgba(255,255,255,.025)}
 .profile-bot-card strong{display:block;margin-bottom:6px;color:#ecf4ff;font-size:12px}
-:is(.tbtn,.cosmetic-shop-buy,.all-access-plan button,.account-key-manager button,.account-key-manager input,.account-profile-form button,.account-profile-form input,.account-profile-form textarea,.profile-color-swatch):focus-visible{outline:2px solid #7ee4ff;outline-offset:3px}
-@media (max-width:760px){.all-access-plan{grid-template-columns:minmax(0,1fr)}.all-access-offer{justify-items:start;min-width:0;text-align:left}.account-key-form,.account-generated-key-field,.account-key-row{grid-template-columns:minmax(0,1fr)}.account-key-meta{justify-content:flex-start}.account-key-row button{justify-self:start}.cosmetic-account-summary{align-items:flex-start;flex-direction:column}.linked-bot-list li{align-items:flex-start;flex-wrap:wrap}.linked-bot-actions{flex-wrap:wrap}.cosmetic-license-grid{grid-template-columns:minmax(0,1fr)}.cosmetic-license-actions select{flex-basis:100%;min-width:0;width:100%}.cosmetic-shop-pack{grid-template-columns:68px minmax(0,1fr)}.cosmetic-shop-swatch{width:68px}.cosmetic-shop-offer{grid-column:1/-1;grid-template-columns:1fr auto;align-items:center;justify-items:start;width:100%}.cosmetic-shop-offer .cosmetic-shop-buy{justify-self:end}}
-@media (pointer:coarse){.cosmetic-shop button,.all-access-plan button,.account-key-manager button,.tbtn{min-height:44px}.account-key-manager input{font-size:16px}.account-profile-form button{min-height:44px}.account-profile-form input[type=text],.account-profile-form textarea{font-size:16px}}
-@media (prefers-reduced-motion:reduce){.cosmetic-shop *,.all-access-plan *,.account-key-manager *{scroll-behavior:auto!important;transition-duration:.01ms!important}}
+:is(.tbtn,.subscription-action,.subscription-card button,.account-key-manager button,.account-key-manager input,.account-profile-form button,.account-profile-form input,.account-profile-form textarea,.profile-color-swatch):focus-visible{outline:2px solid #7ee4ff;outline-offset:3px}
+@media (max-width:760px){.subscription-card{grid-template-columns:minmax(0,1fr)}.subscription-offer{justify-items:start;min-width:0;text-align:left}.account-key-form,.account-generated-key-field,.account-key-row{grid-template-columns:minmax(0,1fr)}.account-key-meta{justify-content:flex-start}.account-key-row button{justify-self:start}.cosmetic-account-summary{align-items:flex-start;flex-direction:column}.linked-bot-list li{align-items:flex-start;flex-wrap:wrap}.linked-bot-actions{flex-wrap:wrap}.cosmetic-card-grid{grid-template-columns:minmax(0,1fr)}.cosmetic-collection-filter{grid-template-columns:minmax(0,1fr)}.cosmetic-collection-count{padding-bottom:0}}
+@media (pointer:coarse){.cosmetic-shop button,.subscription-card button,.cosmetic-card button,.account-key-manager button,.tbtn{min-height:44px}.account-key-manager input{font-size:16px}.account-profile-form button{min-height:44px}.account-profile-form input[type=text],.account-profile-form textarea{font-size:16px}}
+@media (prefers-reduced-motion:reduce){.cosmetic-shop *,.subscription-card *,.account-key-manager *{scroll-behavior:auto!important;transition-duration:.01ms!important}}

@@ -136,19 +136,18 @@ let accountSession = {
 let accountSnapshot = null;
 let accountCatalog = null;
 let accountCatalogError = '';
-let accountOrders = null;
-let accountOrdersError = '';
 let accountKeys = null;
 let accountKeysError = '';
 let accountKeyCreateBusy = false;
-// True while a "Refresh purchases" sign-in is in flight. See
+// True while a "Refresh subscription" sign-in is in flight. See
 // refreshAccountEntitlements for why a refresh is a sign-in.
 let accountEntitlementsBusy = false;
 let accountBusyKeyID = '';
 let accountGeneratedKey = null;
-let accountSubscriptionState = {status:'idle',message:''};
-let accountBusyLicenseID = '';
-let accountBusyOrderID = '';
+let accountBusyCosmeticID = '';
+// The collection filter survives re-renders so a search does not reset every
+// time an equip or a refresh redraws the panel.
+let accountCollectionFilter = {query:'',slot:'all',visible:0};
 let accountViewError = '';
 let accountViewNotice = '';
 let accountRefreshSequence = 0;
@@ -161,15 +160,6 @@ let accountProfile = null;
 let accountProfileError = '';
 let accountProfileLoadSequence = 0;
 const DASHBOARD_PARAMS = new URLSearchParams(window.location.search);
-let accountPendingPackID = DASHBOARD_PARAMS.get('pack') || '';
-const checkoutReturn = String(DASHBOARD_PARAMS.get('checkout') || DASHBOARD_PARAMS.get('checkout_status') || '').toLowerCase();
-let accountCheckoutState = checkoutReturn === 'success'
-  ? {status:'success',packID:'',message:''}
-  : checkoutReturn === 'return'
-    ? {status:'reconciling',packID:'',message:"Arena is confirming Stripe's signed payment event before changing your collection."}
-    : ['cancel','cancelled','canceled'].includes(checkoutReturn)
-      ? {status:'cancelled',packID:'',message:''}
-      : {status:'idle',packID:'',message:''};
 const DASHBOARD_VIEW = DASHBOARD_PARAMS.get('view') === 'public' ? 'public' : 'private';
 // Deep links (e.g. dashboard/?tab=profile from the Cosmetics shop or key
 // generator) request an account-auth tab by id. Only honor the request if it
@@ -321,7 +311,7 @@ async function startAccountLogin() {
 }
 
 /**
- * Read this account's purchases from Angel Accounts again.
+ * Read this account's Arena subscription from Angel Accounts again.
  *
  * Which means: sign in again. Arena keeps no credential for the Accounts API
  * -- it reads entitlements once, with the token from a sign-in, and never
@@ -425,8 +415,8 @@ function updatePrivateAuthUI() {
 
 const ACCOUNT_PREVIEW_SLOTS = ['bot_skin','weapon_skin','attachment','trail'];
 
-function accountPreviewAssetName(slot, license, assetKey) {
-  if (license?.item?.name) return license.item.name;
+function accountPreviewAssetName(slot, item, assetKey) {
+  if (item?.name) return item.name;
   if (slot === 'attachment' && assetKey === 'none') return 'None';
   if (assetKey === 'standard') return slot === 'bot_skin' ? 'Standard bot' : 'Standard';
   return String(assetKey || 'None').replaceAll('_', ' ');
@@ -529,10 +519,10 @@ function renderAccountCosmeticsOutfitter() {
   name.textContent = model.bot?.name || 'Linked bot';
   reset.disabled = !model.hasStaged;
   slots.innerHTML = ACCOUNT_PREVIEW_SLOTS.map(slot => {
-    const currentLicense = model.currentLicenses[slot] || null;
-    const stagedLicense = model.stagedLicenses[slot] || null;
-    const currentName = accountPreviewAssetName(slot, currentLicense, currentLoadout[slot]);
-    const previewName = accountPreviewAssetName(slot, stagedLicense || currentLicense, model.previewLoadout[slot]);
+    const currentItem = model.currentItems[slot] || null;
+    const stagedItem = model.stagedItems[slot] || null;
+    const currentName = accountPreviewAssetName(slot, currentItem, currentLoadout[slot]);
+    const previewName = accountPreviewAssetName(slot, stagedItem || currentItem, model.previewLoadout[slot]);
     const changed = model.previewLoadout[slot] !== currentLoadout[slot];
     return `<article class="cosmetics-preview-slot${changed ? ' is-staged' : ''}" data-preview-slot="${safe(slot)}">
       <span class="cosmetics-preview-slot-name">${safe(window.ArenaAccountCosmetics.slotLabel(slot))}</span>
@@ -552,7 +542,7 @@ function renderAccountCosmetics() {
       root.innerHTML = `<div class="tip warn" role="alert"><b>Could not load cosmetics:</b> ${esc(accountViewError)} <button type="button" class="sm" data-account-retry>Retry</button></div>`;
     } else {
       root.className = 'cosmetic-loading';
-      root.textContent = 'Loading your account-owned cosmetics...';
+      root.textContent = 'Loading your subscription and cosmetics...';
     }
     renderAccountCosmeticsOutfitter();
     renderAccountBotsAndKeys();
@@ -560,18 +550,14 @@ function renderAccountCosmetics() {
   }
   root.className = '';
   root.innerHTML = window.ArenaAccountCosmetics.renderPanel(accountSnapshot, {
-    busyLicenseID: accountBusyLicenseID,
+    busyCosmeticID: accountBusyCosmeticID,
     error: accountViewError,
     notice: accountViewNotice,
     catalog: accountCatalog,
     catalogError: accountCatalogError,
-    pendingPackID: accountPendingPackID,
-    checkoutState: accountCheckoutState,
-    busyOrderID: accountBusyOrderID,
-    orders: accountOrders,
-    ordersError: accountOrdersError,
     entitlementsBusy: accountEntitlementsBusy,
-    subscriptionState: accountSubscriptionState,
+    selectedBotID: accountPreviewBotID,
+    filter: accountCollectionFilter,
   });
   renderAccountCosmeticsOutfitter();
   renderAccountBotsAndKeys();
@@ -610,26 +596,8 @@ function renderAccountBotsAndKeys() {
 
 async function refreshAccountCosmetics(notice='') {
   const requestID = ++accountRefreshSequence;
-  accountOrders = null;
-  accountOrdersError = '';
   accountKeys = null;
   accountKeysError = '';
-  const ordersRequest = accountRequest(window.ArenaAccountCosmetics.accountRoute('orders')+'?limit=20')
-    .then(payload => {
-      if (requestID !== accountRefreshSequence) return;
-      if (!payload || typeof payload !== 'object' || !Array.isArray(payload.orders)) {
-        throw new Error('The purchase history service returned an invalid response.');
-      }
-      accountOrders = payload.orders.slice(0, 20);
-      accountOrdersError = '';
-      renderAccountCosmetics();
-    })
-    .catch(error => {
-      if (requestID !== accountRefreshSequence) return;
-      accountOrders = null;
-      accountOrdersError = error?.message || 'Purchase history could not be loaded.';
-      renderAccountCosmetics();
-    });
   const keysRequest = accountRequest(window.ArenaAccountCosmetics.accountRoute('keys'))
     .then(payload => {
       if (requestID !== accountRefreshSequence) return;
@@ -662,7 +630,7 @@ async function refreshAccountCosmetics(notice='') {
       accountCatalog = window.ArenaAccountCosmetics.normalizeCatalog(catalogResult.value);
       accountCatalogError = '';
     } else {
-      accountCatalogError = catalogResult.reason?.message || 'The set catalog could not be loaded. Your owned cosmetics remain available.';
+      accountCatalogError = catalogResult.reason?.message || 'The catalog could not be loaded. Your equipped cosmetics are unaffected.';
     }
     accountViewError = '';
     accountViewNotice = notice;
@@ -672,7 +640,7 @@ async function refreshAccountCosmetics(notice='') {
     accountViewNotice = '';
   }
   renderAccountCosmetics();
-  await Promise.all([ordersRequest, keysRequest]);
+  await keysRequest;
 }
 
 // ========== Profile tab ==========
@@ -845,7 +813,7 @@ async function revokeAccountKey(keyID) {
   try {
     await accountRequest(window.ArenaAccountCosmetics.accountRoute('key', keyID), {method:'DELETE'});
     accountBusyKeyID = '';
-    await refreshAccountCosmetics('API key revoked. Account purchases and owned cosmetics were not removed.');
+    await refreshAccountCosmetics('API key revoked. Your subscription and equipped cosmetics were not touched.');
   } catch (error) {
     accountBusyKeyID = '';
     accountKeysError = error?.message || 'Could not revoke that API key.';
@@ -876,271 +844,12 @@ function clearGeneratedAccountKey() {
   renderAccountCosmetics();
 }
 
-let accountCheckoutOperationGeneration = 0;
-let accountCheckoutRequestController = null;
-let accountCheckoutActiveOperation = null;
-let accountCheckoutReconciliationGeneration = 0;
-let accountCheckoutReconcileTarget = {kind:'',id:'',sessionID:''};
-
-function cancelAccountCheckoutReconciliation() {
-  accountCheckoutReconciliationGeneration += 1;
-}
-
-function beginAccountCheckoutOperation() {
-	cancelAccountCheckoutReconciliation();
-	accountCheckoutReconcileTarget = {kind:'',id:'',sessionID:''};
-	const previousOperation = accountCheckoutActiveOperation;
-	if (previousOperation?.embeddedReservation && window.ArenaEmbeddedCheckout?.abort) {
-	  window.ArenaEmbeddedCheckout.abort('Checkout replaced by a newer request.', previousOperation.embeddedReservation);
-	}
-  accountCheckoutOperationGeneration += 1;
-  const previous = accountCheckoutRequestController;
-  accountCheckoutRequestController = new AbortController();
-	if (previous && !previous.signal.aborted) previous.abort();
-  if (accountCheckoutState.status === 'pending') accountCheckoutState = {status:'idle',packID:'',message:''};
-  if (accountSubscriptionState.status === 'pending') accountSubscriptionState = {status:'idle',message:''};
-  accountBusyOrderID = '';
-	const operation = {generation:accountCheckoutOperationGeneration,controller:accountCheckoutRequestController,embeddedReservation:null};
-	accountCheckoutActiveOperation = operation;
-	return operation;
-}
-
-function invalidateAccountCheckoutOperation() {
-  accountCheckoutOperationGeneration += 1;
-  const controller = accountCheckoutRequestController;
-  accountCheckoutRequestController = null;
-	accountCheckoutActiveOperation = null;
-  if (controller && !controller.signal.aborted) controller.abort();
-}
-
-function accountCheckoutOperationCurrent(operation) {
-  return Boolean(operation && operation.generation === accountCheckoutOperationGeneration &&
-    operation.controller === accountCheckoutRequestController && !operation.controller.signal.aborted);
-}
-
-function requireCurrentAccountCheckoutOperation(operation) {
-  if (accountCheckoutOperationCurrent(operation)) return;
-  const error = new Error('A newer checkout action replaced this request.');
-  error.name = 'AbortError';
-  throw error;
-}
-
-function finishAccountCheckoutOperation(operation) {
-  if (accountCheckoutOperationCurrent(operation)) accountCheckoutRequestController = null;
-}
-
-function persistedAccountCheckoutPresentation(value) {
-  const presentation = String(value || '').trim().toLowerCase();
-  return ['embedded','hosted'].includes(presentation) ? presentation : '';
-}
-
-function embeddedCheckoutAbortMatchesActiveOperation(event) {
-	const requestID = String(event?.detail?.request_id || '').trim();
-	const activeRequestID = String(accountCheckoutActiveOperation?.embeddedReservation?.request_id || '').trim();
-	return !requestID || requestID === activeRequestID;
-}
-
-function embeddedCheckoutCompletionMatchesActiveOperation(event) {
-	const requestID = String(event?.detail?.request_id || '').trim();
-	const sessionID = String(event?.detail?.session_id || '').trim();
-	const activeRequestID = String(accountCheckoutActiveOperation?.embeddedReservation?.request_id || '').trim();
-	if (requestID && requestID !== activeRequestID) return false;
-	if (sessionID && accountCheckoutReconcileTarget.sessionID && sessionID !== accountCheckoutReconcileTarget.sessionID) return false;
-	return true;
-}
-
-function completedAccountCheckoutSettled(target) {
-	if (!target || !target.kind || !target.id) return false;
-	if (target.kind === 'order') {
-	  const order = Array.isArray(accountOrders)
-		? accountOrders.find(entry => String(entry?.id || '').trim() === target.id)
-		: null;
-	  if (!order) return false;
-	  const status = String(order.status || '').trim().toLowerCase();
-	  const fulfilled = Number(order.fulfilled_license_count || 0);
-	  return (Number.isFinite(fulfilled) && fulfilled > 0) ||
-		['expired','payment_failed','refunded','disputed'].includes(status);
-	}
-	if (target.kind === 'subscription') {
-	  const subscription = accountSnapshot?.subscription;
-	  if (!subscription || String(subscription.id || '').trim() !== target.id) return false;
-	  const status = String(subscription.status || '').trim().toLowerCase();
-	  return subscription.has_access === true || subscription.terminal === true ||
-		['active','trialing','canceled','expired','billing_mismatch'].includes(status);
-	}
-	return false;
-}
-
-async function reconcileCompletedAccountCheckout(target, delays=[0,400,900,1800,3200]) {
-	const generation = ++accountCheckoutReconciliationGeneration;
-	for (const rawDelay of delays) {
-	  if (generation !== accountCheckoutReconciliationGeneration || document.visibilityState === 'hidden') return false;
-	  const delay = Math.max(0, Number(rawDelay) || 0);
-	  if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay));
-	  if (generation !== accountCheckoutReconciliationGeneration || document.visibilityState === 'hidden') return false;
-	  await refreshAccountCosmetics('Stripe accepted the checkout. Arena is confirming the signed payment event before granting access.');
-	  if (generation !== accountCheckoutReconciliationGeneration || document.visibilityState === 'hidden') return false;
-	  if (completedAccountCheckoutSettled(target)) return true;
-	}
-	return false;
-}
-
-async function prepareAccountCheckoutPresentation(operation) {
-  const controller = window.ArenaEmbeddedCheckout;
-  if (controller && typeof controller.prepare === 'function') {
-    try {
-	  const reservation = await controller.prepare();
-	  if (operation) {
-		requireCurrentAccountCheckoutOperation(operation);
-		operation.embeddedReservation = reservation;
-	  }
-      return 'embedded';
-    } catch (error) {
-	  if (operation && !accountCheckoutOperationCurrent(operation)) throw error;
-      const useHosted = window.confirm(
-        'The on-site payment window could not load. Open Stripe\'s secure hosted checkout instead?'
-      );
-      if (useHosted) return 'hosted';
-      throw error;
-    }
-  }
-  const useHosted = window.confirm(
-    'This browser cannot open the on-site payment window. Open Stripe\'s secure hosted checkout instead?'
-  );
-  if (useHosted) return 'hosted';
-  throw new Error('Secure checkout is unavailable in this browser.');
-}
-
-async function presentAccountCheckout(data, preparedPresentation='', operation=null) {
-  if (operation) requireCurrentAccountCheckoutOperation(operation);
-  const presentation = String(data?.presentation || '').trim();
-  if (presentation === 'embedded') {
-    const sessionID = String(data?.session_id || '').trim();
-    const clientSecret = String(data?.client_secret || '').trim();
-    if (!sessionID || !clientSecret || String(data?.checkout_url || '').trim()) {
-      throw new Error('The checkout service did not return a valid embedded session.');
-    }
-    if (!window.ArenaEmbeddedCheckout || typeof window.ArenaEmbeddedCheckout.mount !== 'function') {
-      throw new Error('The on-site payment window is unavailable.');
-    }
-    if (preparedPresentation !== 'embedded') {
-      if (typeof window.ArenaEmbeddedCheckout.prepare !== 'function') {
-        throw new Error('This on-site checkout session cannot be reopened in this browser.');
-      }
-	  const reservation = await window.ArenaEmbeddedCheckout.prepare();
-	  if (operation) operation.embeddedReservation = reservation;
-      if (operation) requireCurrentAccountCheckoutOperation(operation);
-    }
-    if (operation) requireCurrentAccountCheckoutOperation(operation);
-	const orderID = String(data?.order_id || '').trim();
-	const subscriptionID = String(data?.subscription_id || '').trim();
-	accountCheckoutReconcileTarget = orderID
-	  ? {kind:'order',id:orderID,sessionID}
-	  : (subscriptionID ? {kind:'subscription',id:subscriptionID,sessionID} : {kind:'',id:'',sessionID});
-	await window.ArenaEmbeddedCheckout.mount(data, operation?.embeddedReservation);
-    if (operation) requireCurrentAccountCheckoutOperation(operation);
-    return;
-  }
-  if (presentation !== 'hosted' || String(data?.client_secret || '').trim()) {
-    throw new Error('The checkout service returned an invalid hosted session.');
-  }
-  const rawCheckoutURL = String(data?.checkout_url || '').trim();
-  if (!rawCheckoutURL) throw new Error('The checkout service did not return a hosted redirect.');
-  const checkoutURL = new URL(rawCheckoutURL, window.location.href);
-  if (!['http:','https:'].includes(checkoutURL.protocol)) throw new Error('The checkout service returned an unsafe redirect.');
-  if (operation) requireCurrentAccountCheckoutOperation(operation);
-  if (preparedPresentation === 'embedded') {
-	abortPreparedAccountCheckout('Continuing in Stripe secure checkout.', operation);
-  }
-  navigateAccount(checkoutURL.href);
-}
-
-function abortPreparedAccountCheckout(message, operation=null) {
-  const controller = window.ArenaEmbeddedCheckout;
-	if (controller && typeof controller.abort === 'function') {
-	  controller.abort(message || 'Secure checkout could not continue.', operation?.embeddedReservation);
-	}
-}
-
-async function reconcileClosedAccountCheckout(data, packID, operation) {
-  if (data?.resumable !== false) return false;
-  requireCurrentAccountCheckoutOperation(operation);
-  const status = String(data?.checkout_status || '').trim().toLowerCase();
-  const message = status === 'expired'
-    ? 'That Stripe session expired. Arena is reconciling the signed expiry event before you try again.'
-    : 'Stripe reports that checkout finished. Arena is confirming the signed payment event before changing your collection.';
-  accountCheckoutState = {status:'reconciling',packID,message};
-  renderAccountCosmetics();
-  await refreshAccountCosmetics(message);
-  requireCurrentAccountCheckoutOperation(operation);
-  return true;
-}
-
-async function openAccountSubscription() {
-  const offer = accountSnapshot?.subscription_offer?.enabled
-    ? accountSnapshot.subscription_offer
-    : accountCatalog?.subscription_offer;
-  const intent = window.ArenaAccountCosmetics.subscriptionIntent(
-    offer, accountSnapshot?.subscription, accountCatalog?.purchase_handoff_url);
-  // Subscribing and managing both live over there now, and both are one
-  // navigation rather than a request that returns a redirect.
-  if (intent.ok && intent.kind === 'handoff') {
-    navigateAccount(intent.url);
-    return;
-  }
-  if (!intent.ok || accountSubscriptionState.status === 'pending') return;
-  const operation = beginAccountCheckoutOperation();
-  accountSubscriptionState = {status:'pending',message:''};
-  renderAccountCosmetics();
-  let presentation = '';
-  try {
-    if (intent.kind === 'portal') {
-      const data = await accountRequest(intent.path, {method:'POST',signal:operation.controller.signal});
-      requireCurrentAccountCheckoutOperation(operation);
-      const rawURL = String(data?.portal_url || '').trim();
-      if (!rawURL) throw new Error('The subscription portal did not return a redirect.');
-      const destination = new URL(rawURL, window.location.href);
-      if (!['http:','https:'].includes(destination.protocol)) throw new Error('The subscription service returned an unsafe redirect.');
-      requireCurrentAccountCheckoutOperation(operation);
-      navigateAccount(destination.href);
-      return;
-    }
-    const subscription = accountSnapshot?.subscription;
-    const subscriptionStatus = String(subscription?.status || '').trim().toLowerCase();
-    const persistedPresentation = ['created','checkout_pending'].includes(subscriptionStatus)
-      ? persistedAccountCheckoutPresentation(subscription?.checkout_presentation)
-      : '';
-    if (persistedPresentation === 'embedded') {
-      if (!window.ArenaEmbeddedCheckout || typeof window.ArenaEmbeddedCheckout.prepare !== 'function') {
-        throw new Error('This on-site subscription checkout cannot be reopened in this browser.');
-      }
-	  operation.embeddedReservation = await window.ArenaEmbeddedCheckout.prepare();
-      requireCurrentAccountCheckoutOperation(operation);
-      presentation = 'embedded';
-    } else if (persistedPresentation === 'hosted') {
-      presentation = 'hosted';
-    } else {
-	  presentation = await prepareAccountCheckoutPresentation(operation);
-      requireCurrentAccountCheckoutOperation(operation);
-    }
-    const data = await accountRequest(intent.path, {
-      method:'POST',body:JSON.stringify({presentation}),signal:operation.controller.signal,
-    });
-    requireCurrentAccountCheckoutOperation(operation);
-    await presentAccountCheckout(data, presentation, operation);
-    requireCurrentAccountCheckoutOperation(operation);
-  } catch (error) {
-    if (!accountCheckoutOperationCurrent(operation)) return;
-	if (presentation === 'embedded') abortPreparedAccountCheckout(error?.message, operation);
-    accountSubscriptionState = {status:'error',message:error?.message || 'Try again in a moment.'};
-    renderAccountCosmetics();
-    void refreshAccountCosmetics();
-  } finally {
-    finishAccountCheckoutOperation(operation);
-  }
-}
-
 async function handleAccountPanelSubmit(event) {
+  if (event.target?.classList?.contains('cosmetic-collection-filter')) {
+    // Enter in the search box: the filter already applied as it was typed.
+    event.preventDefault();
+    return;
+  }
   if (event.target?.id === 'accountKeyForm') {
     event.preventDefault();
     await createAccountKey(event.target);
@@ -1159,7 +868,7 @@ async function handleAccountPanelSubmit(event) {
   input.value = '';
   try {
     await accountRequest(window.ArenaAccountCosmetics.accountRoute('bots'), {method:'POST',body:JSON.stringify({api_key:rawKey})});
-    await refreshAccountCosmetics('Bot linked. Cosmetic ownership remains with your account.');
+    await refreshAccountCosmetics('Bot linked. Everything your subscription includes is available to it now.');
   } catch (e) {
     accountViewError = e.message || 'Could not link that bot.';
     renderAccountCosmetics();
@@ -1172,152 +881,25 @@ async function handleAccountPanelSubmit(event) {
   }
 }
 
-async function startCosmeticCheckout(packID) {
-  const intent = window.ArenaAccountCosmetics.checkoutIntent(accountCatalog, packID);
-  /*
-   * Buying happens in the Angel account now. Leave before anything else runs:
-   * there is no order to reserve here, no Stripe script to load, and no
-   * pending state worth showing for a navigation that is about to replace
-   * this page anyway.
-   */
-  if (intent.ok && intent.kind === 'handoff') {
-    navigateAccount(intent.url);
-    return;
-  }
-  if (!intent.ok) {
-    accountCheckoutState = {
-      status: intent.reason === 'checkout-disabled' ? 'disabled' : 'error',
-      packID,
-      message: intent.reason === 'pack-not-purchasable'
-        ? 'That set is not currently available for purchase.'
-        : 'Checkout is not available for that set.',
-    };
-    renderAccountCosmetics();
-    return;
-  }
-  if (accountCheckoutState.status === 'pending') return;
-  const operation = beginAccountCheckoutOperation();
-  accountCheckoutState = {status:'pending',packID,message:''};
-  renderAccountCosmetics();
-  let presentation = '';
-  try {
-	presentation = await prepareAccountCheckoutPresentation(operation);
-    requireCurrentAccountCheckoutOperation(operation);
-    const data = await accountRequest(intent.path, {
-      method:'POST',
-      body:JSON.stringify({...intent.body,presentation}),
-	  signal:operation.controller.signal,
-    });
-    requireCurrentAccountCheckoutOperation(operation);
-    if (await reconcileClosedAccountCheckout(data, packID, operation)) return;
-    requireCurrentAccountCheckoutOperation(operation);
-    await presentAccountCheckout(data, presentation, operation);
-    requireCurrentAccountCheckoutOperation(operation);
-  } catch (error) {
-    if (!accountCheckoutOperationCurrent(operation)) return;
-	if (presentation === 'embedded') abortPreparedAccountCheckout(error?.message, operation);
-    accountCheckoutState = {status:'error',packID,message:error.message || 'Try again in a moment.'};
-    renderAccountCosmetics();
-	void refreshAccountCosmetics();
-  } finally {
-	finishAccountCheckoutOperation(operation);
-  }
-}
-
-async function resumeCosmeticCheckout(orderID) {
-  orderID = String(orderID || '').trim();
-  if (!orderID || accountBusyOrderID) return;
-  const order = Array.isArray(accountOrders) ? accountOrders.find(entry => String(entry?.id || '').trim() === orderID) : null;
-	if (!order) return;
-	const status = String(order.status || '').trim().toLowerCase();
-	const checkoutSessionID = String(order.checkout_session_id || '').trim();
-	const storedPresentation = persistedAccountCheckoutPresentation(order.checkout_presentation);
-	const attachedSession = status === 'checkout_pending' && Boolean(checkoutSessionID);
-	const retryableReservation = ['created','payment_failed'].includes(status) && !checkoutSessionID && Boolean(storedPresentation);
-	if (!attachedSession && !retryableReservation) return;
-  const packID = String(order.pack_id || '').trim();
-	const operation = beginAccountCheckoutOperation();
-  accountBusyOrderID = orderID;
-  accountCheckoutState = {status:'pending',packID,message:''};
-  renderAccountCosmetics();
-  let embeddedPrepared = false;
-  try {
-	const data = await accountRequest(window.ArenaAccountCosmetics.accountRoute('orderCheckout', orderID), {
-	  method:'POST',signal:operation.controller.signal,
-	});
-	requireCurrentAccountCheckoutOperation(operation);
-	if (await reconcileClosedAccountCheckout(data, packID, operation)) return;
-	requireCurrentAccountCheckoutOperation(operation);
-    const presentation = String(data?.presentation || '').trim();
-    if (presentation === 'embedded') {
-      const controller = window.ArenaEmbeddedCheckout;
-      if (!controller || typeof controller.prepare !== 'function') {
-        throw new Error('This on-site checkout session cannot be reopened in this browser.');
-      }
-	  operation.embeddedReservation = await controller.prepare();
-	  requireCurrentAccountCheckoutOperation(operation);
-      embeddedPrepared = true;
-    }
-	await presentAccountCheckout(data, embeddedPrepared ? 'embedded' : '', operation);
-	requireCurrentAccountCheckoutOperation(operation);
-  } catch (error) {
-	if (!accountCheckoutOperationCurrent(operation)) return;
-	if (embeddedPrepared) abortPreparedAccountCheckout(error?.message, operation);
-    accountCheckoutState = {status:'error',packID,message:error?.message || 'Could not resume that checkout.'};
-  } finally {
-	const current = accountCheckoutOperationCurrent(operation);
-	finishAccountCheckoutOperation(operation);
-	if (current && accountBusyOrderID === orderID) {
-	  accountBusyOrderID = '';
-	  renderAccountCosmetics();
-	}
-  }
-}
-
-async function assignAccountLicense(licenseID, botID) {
-  const intent = window.ArenaAccountCosmetics.assignmentIntent(accountSnapshot, licenseID, botID);
-  if (!intent.ok) {
-    if (intent.reason !== 'already-assigned') {
-      accountViewError = intent.reason === 'license-inactive'
-        ? 'That license is no longer active and cannot be assigned.'
-        : intent.reason === 'bot-key-inactive'
-          ? 'That bot key is inactive. Link an active replacement bot before assigning this cosmetic.'
-          : 'Choose a linked bot before assigning this cosmetic.';
-      renderAccountCosmetics();
-    }
-    return;
-  }
-  accountBusyLicenseID = licenseID;
-  accountViewError = '';
-  accountViewNotice = '';
-  renderAccountCosmetics();
-  try {
-    await accountRequest(window.ArenaAccountCosmetics.accountRoute('assignment', licenseID), {
-      method:'PUT',
-      body:JSON.stringify({bot_id:botID}),
-    });
-    accountBusyLicenseID = '';
-    await refreshAccountCosmetics(intent.kind === 'move'
-      ? 'Cosmetic moved. The previous bot can no longer use this license; equip it on the new bot when ready.'
-      : 'Cosmetic assigned to the selected bot. Equip it when ready.');
-  } catch (e) {
-    accountBusyLicenseID = '';
-    accountViewError = e.message || 'Could not assign that cosmetic.';
-    renderAccountCosmetics();
-  }
-}
-
-function previewAccountLicense(licenseID) {
-  const license = accountSnapshot?.licenses.find(entry => entry.id === licenseID);
-  if (license?.status !== 'active' || license?.item?.is_active !== true) return;
-  if (!ACCOUNT_PREVIEW_SLOTS.includes(license.item.slot)) return;
+/*
+ * Staging a look and saving it.
+ *
+ * Preview stages an item in its slot on the selected bot without touching the
+ * server; Equip is the one write, PUT /account/bots/{id}/cosmetics with the
+ * slot and item. There is no assignment step in between any more: with the
+ * subscription on the account, every linked bot may wear every item, so the
+ * only question the server asks is whether this account subscribes.
+ */
+function previewAccountCosmetic(itemID) {
+  const item = accountSnapshot?.items.find(entry => entry.id === itemID);
+  if (!item?.is_active || !ACCOUNT_PREVIEW_SLOTS.includes(item.slot)) return;
   if (!accountPreviewBotID || !accountSnapshot?.bots.some(bot => bot.id === accountPreviewBotID)) {
     accountPreviewBotID = accountSnapshot?.bots[0]?.id || '';
   }
   if (!accountPreviewBotID) return;
   accountPreviewStagedBySlot = {
     ...accountPreviewStagedBySlot,
-    [license.item.slot]: license.id,
+    [item.slot]: item.id,
   };
   renderAccountCosmeticsOutfitter();
   const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true;
@@ -1332,66 +914,50 @@ function resetAccountCosmeticsPreview() {
   renderAccountCosmeticsOutfitter();
 }
 
-async function equipAccountLicense(licenseID) {
-  const license = accountSnapshot?.licenses.find(entry => entry.id === licenseID);
-  if (license?.status !== 'active') {
-    accountViewError = 'That license is no longer active and cannot be equipped.';
-    renderAccountCosmetics();
-    return;
-  }
-  if (!license?.assigned_bot_id) {
-    accountViewError = 'Assign this cosmetic to a linked bot before equipping it.';
-    renderAccountCosmetics();
-    return;
-  }
-  const assignedBot = accountSnapshot?.bots.find(entry => entry.id === license.assigned_bot_id);
-  if (!assignedBot?.key_is_active) {
-    accountViewError = 'That bot key is inactive. Link an active replacement bot before equipping this cosmetic.';
-    renderAccountCosmetics();
-    return;
-  }
-  accountBusyLicenseID = licenseID;
-  accountViewError = '';
-  accountViewNotice = '';
-  renderAccountCosmetics();
-  try {
-    await accountRequest(window.ArenaAccountCosmetics.accountRoute('equip', license.assigned_bot_id), {
-      method:'PUT',
-      body:JSON.stringify({license_id:licenseID}),
-    });
-    accountBusyLicenseID = '';
-    await refreshAccountCosmetics('Cosmetic equipped. Any previous cosmetic in that bot slot was replaced explicitly.');
-  } catch (e) {
-    accountBusyLicenseID = '';
-    accountViewError = e.message || 'Could not equip that cosmetic.';
-    renderAccountCosmetics();
-  }
-}
+const EQUIP_REFUSALS = {
+  'verified-account-required': 'Sign in with a verified Angel account to equip cosmetics.',
+  'bot-not-linked': 'Choose a linked bot before equipping this cosmetic.',
+  'bot-key-inactive': 'That bot key is inactive. Link an active replacement bot before equipping this cosmetic.',
+  'item-not-found': 'That cosmetic is not in the catalog any more.',
+  'item-inactive': 'That cosmetic is not available right now.',
+  'subscription-required': 'Included with an Arena subscription. Subscribe in your Angel account, then refresh your subscription here.',
+};
 
-async function unassignAccountLicense(licenseID) {
-  accountBusyLicenseID = licenseID;
+async function equipAccountCosmetic(itemID) {
+  if (accountBusyCosmeticID) return;
+  const intent = window.ArenaAccountCosmetics.equipIntent(accountSnapshot, accountPreviewBotID, itemID);
+  if (!intent.ok) {
+    if (intent.reason !== 'already-equipped') {
+      accountViewError = EQUIP_REFUSALS[intent.reason] || 'Could not equip that cosmetic.';
+      renderAccountCosmetics();
+    }
+    return;
+  }
+  accountBusyCosmeticID = itemID;
   accountViewError = '';
   accountViewNotice = '';
   renderAccountCosmetics();
   try {
-    await accountRequest(window.ArenaAccountCosmetics.accountRoute('assignment', licenseID), {method:'DELETE'});
-    accountBusyLicenseID = '';
-    await refreshAccountCosmetics('Cosmetic removed from the bot. It remains owned by your account.');
+    await accountRequest(intent.path, {method:'PUT', body:JSON.stringify(intent.body)});
+    accountBusyCosmeticID = '';
+    accountPreviewStagedBySlot = {...accountPreviewStagedBySlot};
+    delete accountPreviewStagedBySlot[intent.slot];
+    await refreshAccountCosmetics('Cosmetic equipped. Any previous cosmetic in that slot was replaced.');
   } catch (e) {
-    accountBusyLicenseID = '';
-    accountViewError = e.message || 'Could not remove that cosmetic.';
+    accountBusyCosmeticID = '';
+    accountViewError = e.message || 'Could not equip that cosmetic.';
     renderAccountCosmetics();
   }
 }
 
 async function unlinkAccountBot(botID) {
   const bot = accountSnapshot?.bots.find(entry => entry.id === botID);
-  if (!bot || !confirm(`Unlink ${bot.name}? Assigned cosmetics will return to your account, but the API key itself will not be revoked.`)) return;
+  if (!bot || !confirm(`Unlink ${bot.name}? It will stop wearing subscription cosmetics, but the API key itself will not be revoked.`)) return;
   accountViewError = '';
   accountViewNotice = '';
   try {
     await accountRequest(window.ArenaAccountCosmetics.accountRoute('bot', botID), {method:'DELETE'});
-    await refreshAccountCosmetics('Bot unlinked. Its API key was not revoked, and your cosmetics remain on this account.');
+    await refreshAccountCosmetics('Bot unlinked. Its API key was not revoked, and your subscription stays with this account.');
   } catch (e) {
     accountViewError = e.message || 'Could not unlink that bot.';
     renderAccountCosmetics();
@@ -1409,19 +975,14 @@ function handleAccountPanelClick(event) {
     openArenaShop();
     return;
   }
-  const previewButton = event.target.closest('[data-license-preview]');
+  const previewButton = event.target.closest('[data-cosmetic-preview]');
   if (previewButton) {
-    previewAccountLicense(previewButton.dataset.licensePreview);
+    previewAccountCosmetic(previewButton.dataset.cosmeticPreview);
     return;
   }
   const previewResetButton = event.target.closest('[data-cosmetics-preview-reset]');
   if (previewResetButton) {
     resetAccountCosmeticsPreview();
-    return;
-  }
-  const subscriptionButton = event.target.closest('[data-subscription-checkout],[data-subscription-portal]');
-  if (subscriptionButton) {
-    openAccountSubscription();
     return;
   }
   const copyKeyButton = event.target.closest('[data-account-key-copy]');
@@ -1445,19 +1006,17 @@ function handleAccountPanelClick(event) {
     refreshAccountCosmetics();
     return;
   }
-  const entitlementsButton = event.target.closest('[data-entitlements-refresh]');
-  if (entitlementsButton) {
+  const subscriptionRefreshButton = event.target.closest('[data-subscription-refresh]');
+  if (subscriptionRefreshButton) {
     refreshAccountEntitlements();
     return;
   }
-  const checkoutButton = event.target.closest('[data-pack-checkout]');
-  if (checkoutButton) {
-    startCosmeticCheckout(checkoutButton.dataset.packCheckout);
-    return;
-  }
-  const resumeOrderButton = event.target.closest('[data-order-resume]');
-  if (resumeOrderButton) {
-    resumeCosmeticCheckout(resumeOrderButton.dataset.orderResume);
+  const showMoreButton = event.target.closest('[data-collection-more]');
+  if (showMoreButton) {
+    const pageSize = window.ArenaAccountCosmetics.COLLECTION_PAGE_SIZE;
+    const visible = accountCollectionFilter.visible > 0 ? accountCollectionFilter.visible : pageSize;
+    accountCollectionFilter = {...accountCollectionFilter, visible: visible + pageSize};
+    renderAccountCosmetics();
     return;
   }
   const retryButton = event.target.closest('[data-account-retry]');
@@ -1467,22 +1026,9 @@ function handleAccountPanelClick(event) {
     refreshAccountCosmetics();
     return;
   }
-  const assignButton = event.target.closest('[data-license-assign]');
-  if (assignButton) {
-    const licenseID = assignButton.dataset.licenseAssign;
-    const select = [...document.querySelectorAll('[data-license-target]')]
-      .find(node => node.dataset.licenseTarget === licenseID);
-    assignAccountLicense(licenseID, select?.value || '');
-    return;
-  }
-  const unassignButton = event.target.closest('[data-license-unassign]');
-  if (unassignButton) {
-    unassignAccountLicense(unassignButton.dataset.licenseUnassign);
-    return;
-  }
-  const equipButton = event.target.closest('[data-license-equip]');
+  const equipButton = event.target.closest('[data-cosmetic-equip]');
   if (equipButton) {
-    equipAccountLicense(equipButton.dataset.licenseEquip);
+    equipAccountCosmetic(equipButton.dataset.cosmeticEquip);
     return;
   }
   const unlinkButton = event.target.closest('[data-bot-unlink]');
@@ -1494,51 +1040,48 @@ function handleAccountPanelChange(event) {
   if (previewBot) {
     accountPreviewBotID = previewBot.value;
     accountPreviewStagedBySlot = {};
-    renderAccountCosmeticsOutfitter();
+    // The collection's equip buttons name the selected bot, so it redraws too.
+    renderAccountCosmetics();
     return;
   }
-  const select = event.target.closest('[data-license-target]');
-  if (!select) return;
-  const card = select.closest('[data-license-id]');
-  const button = card?.querySelector('[data-license-assign]');
-  if (button) button.disabled = !select.value || accountBusyLicenseID === card.dataset.licenseId;
-}
-
-async function handleEmbeddedCheckoutComplete(event) {
-	if (!embeddedCheckoutCompletionMatchesActiveOperation(event)) return;
-	invalidateAccountCheckoutOperation();
-	const sessionID = String(event?.detail?.session_id || '').trim();
-	const target = sessionID && accountCheckoutReconcileTarget.sessionID === sessionID
-	  ? {...accountCheckoutReconcileTarget}
-	  : {kind:'',id:'',sessionID};
-  accountCheckoutState = {status:'success',packID:'',message:''};
-  accountSubscriptionState = {status:'idle',message:''};
-  renderAccountCosmetics();
-	if (target.kind) await reconcileCompletedAccountCheckout(target);
-	else await refreshAccountCosmetics('Stripe accepted the checkout. Arena is confirming the signed payment event before granting access.');
-}
-
-async function handleEmbeddedCheckoutAbort(event) {
-	if (!embeddedCheckoutAbortMatchesActiveOperation(event)) return;
-	invalidateAccountCheckoutOperation();
-	cancelAccountCheckoutReconciliation();
-  const sessionID = String(event?.detail?.session_id || '').trim();
-  if (accountSubscriptionState.status === 'pending') {
-    accountSubscriptionState = {status:'idle',message:''};
-    accountViewNotice = sessionID
-      ? 'Subscription checkout closed. Reopen All Access when you are ready; Stripe will reuse the pending session.'
-      : '';
-  } else {
-    accountCheckoutState = sessionID
-      ? {
-          status:'paused',
-          packID:accountCheckoutState.packID || '',
-          message:'Resume the same Stripe session from Recent purchases when you are ready.',
-        }
-      : {status:'idle',packID:'',message:''};
+  const slotSelect = event.target.closest('[data-collection-slot]');
+  if (slotSelect) {
+    accountCollectionFilter = {...accountCollectionFilter, slot: slotSelect.value, visible: 0};
+    renderAccountCosmetics();
   }
-  renderAccountCosmetics();
-  if (sessionID) await refreshAccountCosmetics(accountViewNotice || 'Checkout saved. Resume the same Stripe session from Recent purchases when you are ready.');
+}
+
+/*
+ * The search box is typed into, and a full panel redraw on every keystroke
+ * would replace the input under the cursor. Redraw only the collection and
+ * put the caret back where it was.
+ */
+function handleAccountPanelInput(event) {
+  const query = event.target.closest('[data-collection-query]');
+  if (!query || !accountSnapshot) return;
+  accountCollectionFilter = {...accountCollectionFilter, query: query.value, visible: 0};
+  const collection = document.querySelector('[data-cosmetic-collection]');
+  if (!collection) {
+    renderAccountCosmetics();
+    return;
+  }
+  const {selectionStart, selectionEnd} = query;
+  const template = document.createElement('template');
+  template.innerHTML = window.ArenaAccountCosmetics.renderPanel(accountSnapshot, {
+    busyCosmeticID: accountBusyCosmeticID,
+    catalog: accountCatalog,
+    entitlementsBusy: accountEntitlementsBusy,
+    selectedBotID: accountPreviewBotID,
+    filter: accountCollectionFilter,
+  });
+  const fresh = template.content.querySelector('[data-cosmetic-collection]');
+  if (!fresh) return;
+  collection.replaceWith(fresh);
+  const input = fresh.querySelector('[data-collection-query]');
+  if (input) {
+    input.focus({preventScroll:true});
+    try { input.setSelectionRange(selectionStart, selectionEnd); } catch (_) { /* search inputs may refuse */ }
+  }
 }
 
 function bindAccountCosmeticsUI() {
@@ -1553,6 +1096,7 @@ function bindAccountCosmeticsUI() {
     panel.addEventListener('submit', handleAccountPanelSubmit);
     panel.addEventListener('click', handleAccountPanelClick);
     panel.addEventListener('change', handleAccountPanelChange);
+    panel.addEventListener('input', handleAccountPanelInput);
   }
   window.addEventListener('pagehide', event => {
     if (event.persisted) return;
@@ -1562,11 +1106,6 @@ function bindAccountCosmeticsUI() {
   window.addEventListener('pageshow', event => {
     if (event.persisted) renderAccountCosmeticsOutfitter();
   });
-  window.addEventListener('arena:stripe-checkout:complete', handleEmbeddedCheckoutComplete);
-  window.addEventListener('arena:stripe-checkout:abort', handleEmbeddedCheckoutAbort);
-	document.addEventListener('visibilitychange', () => {
-	  if (document.visibilityState === 'hidden') cancelAccountCheckoutReconciliation();
-	});
 }
 
 async function initializeAccountMode() {
