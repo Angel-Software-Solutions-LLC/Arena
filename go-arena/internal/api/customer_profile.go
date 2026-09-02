@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"regexp"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -25,6 +26,10 @@ const (
 // 8-hex-char discriminator hashed from the account id. Duplicated (rather
 // than exported from the ws package) to keep the api package from importing
 // ws just for a five-line string formula.
+// profileAvatarColorPattern is a CSS hex colour (#rgb, #rgba, #rrggbb,
+// #rrggbbaa) or empty, which clears the colour.
+var profileAvatarColorPattern = regexp.MustCompile(`^(#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8}))?$`)
+
 func chatDisplayHandle(accountID, name string) string {
 	clean, _ := sanitizeProfileText(name, 24)
 	if clean == "" {
@@ -138,8 +143,12 @@ func UpdateAccountProfileHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.AvatarColor != nil {
 		color := strings.TrimSpace(*req.AvatarColor)
-		if len(color) > profileAvatarColorMaxLen {
-			writeError(w, http.StatusBadRequest, "avatar color is invalid")
+		// A hex colour or nothing. Every consumer puts this inside a CSS
+		// `background:` declaration, and the length check alone let a
+		// declaration terminator through; the profile popup already insists
+		// on hex, so the server now states the same contract.
+		if len(color) > profileAvatarColorMaxLen || !profileAvatarColorPattern.MatchString(color) {
+			writeError(w, http.StatusBadRequest, "avatar color must be a hex colour like #22ccff")
 			return
 		}
 		update.AvatarColor = &color
@@ -158,5 +167,8 @@ func UpdateAccountProfileHandler(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to update profile")
 		return
 	}
+	// The session cache copied the old display name at sign-in and chat
+	// posts under it; drop the copies so the next request reads the row.
+	activeCustomerOIDCHandler().ForgetAccountSessions(session.AccountID)
 	writeJSON(w, http.StatusOK, profileJSON(profile))
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"arena-server/internal/accounts"
 	"arena-server/internal/api"
 	"arena-server/internal/config"
 	"arena-server/internal/db"
@@ -24,8 +26,9 @@ import (
 type commandMode string
 
 const (
-	commandServe   commandMode = "serve"
-	commandMigrate commandMode = "migrate"
+	commandServe     commandMode = "serve"
+	commandMigrate   commandMode = "migrate"
+	commandCheckOIDC commandMode = "check-oidc"
 )
 
 var databaseRolePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_$]{0,62}$`)
@@ -166,6 +169,9 @@ func main() {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+	if mode == commandCheckOIDC {
+		os.Exit(runCustomerOIDCCheck(ctx, os.Stdout))
+	}
 	if mode == commandMigrate {
 		if err := runDatabaseMigrations(ctx); err != nil {
 			slog.Error("database migration failed", "error", err)
@@ -361,7 +367,44 @@ func parseCommand(args []string) (commandMode, error) {
 	if len(args) == 1 && args[0] == string(commandMigrate) {
 		return commandMigrate, nil
 	}
-	return "", fmt.Errorf("usage: arena-server [migrate]")
+	if len(args) == 1 && args[0] == string(commandCheckOIDC) {
+		return commandCheckOIDC, nil
+	}
+	return "", fmt.Errorf("usage: arena-server [migrate|check-oidc]")
+}
+
+// runCustomerOIDCCheck asks Angel Accounts whether it accepts the customer
+// OIDC credential this Arena is configured with, and prints the verdict.
+//
+// It is the first thing to run after the Arena client is reinstated, restored
+// or rotated in the Accounts console — before a customer is asked to try.
+// It needs no database and touches nothing; the secret is never printed.
+func runCustomerOIDCCheck(ctx context.Context, out io.Writer) int {
+	cfg := &config.C
+	if !cfg.CustomerOIDCEnabled {
+		fmt.Fprintln(out, "FAIL disabled")
+		fmt.Fprintln(out, "customer OIDC is not enabled here (ARENA_CUSTOMER_OIDC_ENABLED), so there is no credential to check")
+		return 1
+	}
+	verdict := accounts.VerifyClientCredential(ctx, cfg.CustomerOIDCIssuer, cfg.CustomerOIDCClientID, cfg.CustomerOIDCClientSecret, nil)
+	status := "FAIL"
+	if verdict.OK {
+		status = "OK"
+	}
+	fmt.Fprintf(out, "%s %s\n", status, verdict.Outcome)
+	fmt.Fprintf(out, "issuer    %s\n", verdict.Issuer)
+	fmt.Fprintf(out, "client id %s\n", verdict.ClientID)
+	if verdict.Product != "" {
+		fmt.Fprintf(out, "product   %s\n", verdict.Product)
+	}
+	if verdict.Scope != "" {
+		fmt.Fprintf(out, "scope     %s\n", verdict.Scope)
+	}
+	fmt.Fprintln(out, verdict.Message)
+	if verdict.OK {
+		return 0
+	}
+	return 1
 }
 
 func runDatabaseMigrations(ctx context.Context) error {

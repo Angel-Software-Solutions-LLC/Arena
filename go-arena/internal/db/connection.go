@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/url"
+	"strconv"
 	"sync"
 	"time"
 
@@ -164,19 +167,30 @@ func Connect(ctx context.Context) error {
 	return nil
 }
 
+// connectionString builds the PostgreSQL URL from the configuration.
+//
+// The user and password are escaped as URL components rather than pasted in.
+// The old fmt.Sprintf meant a password containing "/", "#", "?" or a space —
+// which is most of what `openssl rand -base64` produces, and exactly what
+// warnInsecureDefaults asks operators to set — failed to parse, burned every
+// connection retry and stopped the server with "invalid port" pointing at the
+// wrong thing. sslmode comes from ARENA_DB_SSLMODE so a managed or remote
+// database can require TLS; the compose default stays "disable".
+func connectionString(cfg config.Config) string {
+	u := url.URL{
+		Scheme:   "postgres",
+		User:     url.UserPassword(cfg.DBUser, cfg.DBPassword),
+		Host:     net.JoinHostPort(cfg.DBHost, strconv.Itoa(cfg.DBPort)),
+		Path:     "/" + cfg.DBName,
+		RawQuery: url.Values{"sslmode": {cfg.DBSSLMode}}.Encode(),
+	}
+	return u.String()
+}
+
 // connectOnce performs a single connect-and-ping attempt and returns the
 // resulting pool. It is the unit of work retried by connectWithRetry.
 func connectOnce(ctx context.Context) (*pgxpool.Pool, error) {
-	connStr := fmt.Sprintf(
-		"postgres://%s:%s@%s:%d/%s?sslmode=disable",
-		config.C.DBUser,
-		config.C.DBPassword,
-		config.C.DBHost,
-		config.C.DBPort,
-		config.C.DBName,
-	)
-
-	poolCfg, err := pgxpool.ParseConfig(connStr)
+	poolCfg, err := pgxpool.ParseConfig(connectionString(config.C))
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse connection config: %w", err)
 	}

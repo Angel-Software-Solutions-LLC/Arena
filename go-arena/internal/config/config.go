@@ -28,6 +28,11 @@ type Config struct {
 	DBName     string `envconfig:"ARENA_DB_NAME" default:"arena"`
 	DBUser     string `envconfig:"ARENA_DB_USER" default:"arena"`
 	DBPassword string `envconfig:"ARENA_DB_PASSWORD" default:"arena"`
+	// DBSSLMode is passed through as libpq's sslmode. "disable" is right for
+	// the compose deployment, where the database is a sibling container on a
+	// private network; a managed or remote database wants "require" or
+	// "verify-full", and before this there was no way to ask for either.
+	DBSSLMode string `envconfig:"ARENA_DB_SSLMODE" default:"disable"`
 	// DBRuntimeUser is the least-privilege application role that an owner-run
 	// `arena-server migrate` command grants access to. It is normally supplied
 	// only to the one-shot migration container.
@@ -832,6 +837,28 @@ func ValidateMovementConfig(cfg Config) error {
 // unexpectedly short timeout when the server tick rate changes. In particular,
 // it fails closed on the historical 30-tick value, which is only three seconds
 // at the default 10 Hz cadence.
+// ValidateSizeConfig refuses the sizes that are used as slice bounds or
+// divisors. A negative ARENA_CHAT_HISTORY_SIZE reached `ring[over:]` and
+// panicked on every chat post (each poster's socket died, quietly), and a
+// zero cell size divides by zero in the spatial index.
+func ValidateSizeConfig(cfg Config) error {
+	if cfg.ChatHistorySize <= 0 {
+		return fmt.Errorf("ARENA_CHAT_HISTORY_SIZE must be positive, got %d", cfg.ChatHistorySize)
+	}
+	if cfg.SpatialCellSize <= 0 {
+		return fmt.Errorf("ARENA_SPATIAL_CELL_SIZE must be positive, got %v", cfg.SpatialCellSize)
+	}
+	if cfg.PathfindingCellSize <= 0 {
+		return fmt.Errorf("ARENA_PATHFINDING_CELL_SIZE must be positive, got %v", cfg.PathfindingCellSize)
+	}
+	switch cfg.DBSSLMode {
+	case "disable", "allow", "prefer", "require", "verify-ca", "verify-full":
+	default:
+		return fmt.Errorf("ARENA_DB_SSLMODE must be a libpq sslmode, got %q", cfg.DBSSLMode)
+	}
+	return nil
+}
+
 func ValidateAFKConfig(cfg Config) error {
 	if cfg.TickRate <= 0 {
 		return fmt.Errorf("ARENA_AFK_TIMEOUT_TICKS requires ARENA_TICK_RATE to be greater than 0")
@@ -901,6 +928,10 @@ func Load() {
 	}
 	if err := ValidateAFKConfig(C); err != nil {
 		slog.Error("invalid AFK configuration", "error", err)
+		panic(err)
+	}
+	if err := ValidateSizeConfig(C); err != nil {
+		slog.Error("invalid size configuration", "error", err)
 		panic(err)
 	}
 	if err := ValidateCosmeticsCheckoutConfig(C); err != nil {

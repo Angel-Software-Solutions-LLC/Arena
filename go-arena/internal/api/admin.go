@@ -136,6 +136,20 @@ func (h *AdminHandler) reloadTokenHashes() {
 	h.tokenMu.Unlock()
 }
 
+// hasDatabaseTokens reports whether any database-issued admin token is
+// loaded, under the same lock reloadTokenHashes writes under. The middleware
+// read this slice bare while a concurrent token issue reloaded it, which the
+// race detector flags and which could answer "not configured" to a caller
+// whose token was merely wrong.
+func (h *AdminHandler) hasDatabaseTokens() bool {
+	if h == nil {
+		return false
+	}
+	h.tokenMu.RLock()
+	defer h.tokenMu.RUnlock()
+	return len(h.tokenHashes) > 0
+}
+
 // IsValidAdminToken checks if the given token is either the env var token or
 // one of the database-stored tokens.
 func (h *AdminHandler) IsValidAdminToken(token string) bool {
@@ -264,7 +278,7 @@ func MakeAdminAuthMiddlewareWithPlatformAdmins(handler *AdminHandler, customerHa
 			}
 
 			// If no token configured at all.
-			if cfg.AdminToken == "" && (handler == nil || len(handler.tokenHashes) == 0) {
+			if cfg.AdminToken == "" && !handler.hasDatabaseTokens() {
 				writeError(w, http.StatusServiceUnavailable, "admin token not configured")
 				return
 			}
