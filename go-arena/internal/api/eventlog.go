@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"arena-server/internal/security"
 )
 
 // EventType categorises dashboard events.
@@ -392,15 +394,13 @@ func (w *statusWriter) Flush() {
 	}
 }
 
-// extractIP gets the client IP from the request (simplified).
+// extractIP is the client address as the rate limiter sees it: forwarded
+// headers are honoured only from a trusted proxy. This used to believe
+// CF-Connecting-IP and X-Forwarded-For from any peer, so a caller abusing the
+// public client-error endpoint could have the admin log attribute it to an
+// address of their choosing.
 func extractIP(r *http.Request) string {
-	if cf := r.Header.Get("CF-Connecting-IP"); cf != "" {
-		return cf
-	}
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		return xff
-	}
-	return r.RemoteAddr
+	return security.ExtractClientIP(r)
 }
 
 // StructuredError is the enhanced error response format.

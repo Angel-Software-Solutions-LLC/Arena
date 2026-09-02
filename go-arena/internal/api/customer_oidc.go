@@ -118,6 +118,20 @@ func customerAccountAuthEnabled(handler *CustomerOIDCHandler) bool {
 	return handler != nil && handler.oauth2Config != nil
 }
 
+// activeCustomerOIDC is the handler whose session cache serves requests, so
+// plain handlers that change what the cache copies (the profile rename) can
+// reach it without threading the handler through every route constructor.
+var (
+	activeCustomerOIDCMu sync.RWMutex
+	activeCustomerOIDC   *CustomerOIDCHandler
+)
+
+func activeCustomerOIDCHandler() *CustomerOIDCHandler {
+	activeCustomerOIDCMu.RLock()
+	defer activeCustomerOIDCMu.RUnlock()
+	return activeCustomerOIDC
+}
+
 func newCustomerOIDCHandlerWithAuthority(authority platform.IdentityAuthority) *CustomerOIDCHandler {
 	cfg := &config.C
 	if !cfg.CustomerOIDCEnabled {
@@ -128,6 +142,9 @@ func newCustomerOIDCHandlerWithAuthority(authority platform.IdentityAuthority) *
 		states:    make(map[string]customerOIDCTransaction),
 		authority: authority,
 	}
+	activeCustomerOIDCMu.Lock()
+	activeCustomerOIDC = h
+	activeCustomerOIDCMu.Unlock()
 	if cfg.CustomerOIDCEnabled {
 		if cfg.CustomerOIDCIssuer == "" || cfg.CustomerOIDCClientID == "" ||
 			cfg.CustomerOIDCClientSecret == "" || cfg.CustomerOIDCRedirectURI == "" {
@@ -518,7 +535,7 @@ func (h *CustomerOIDCHandler) refreshSessionCookie(w http.ResponseWriter, r *htt
 	if err != nil || cookie.Value == "" {
 		return
 	}
-	maxAge := int(time.Until(session.ExpiresAt).Seconds())
+	maxAge := int(time.Until(h.sessionExpiry(session)).Seconds())
 	if maxAge <= 0 {
 		return
 	}
@@ -591,12 +608,44 @@ func (h *CustomerOIDCHandler) GetSession(r *http.Request) *CustomerSession {
 		h.mu.Lock()
 		h.sessions[cookie.Value] = session
 		h.mu.Unlock()
-	} else if time.Now().After(session.ExpiresAt) {
+	} else if time.Now().After(h.sessionExpiry(session)) {
 		return nil
 	}
 
 	h.maybeSlideSessionExpiry(r.Context(), cookie.Value, session)
 	return session
+}
+
+// sessionExpiry reads ExpiresAt under the handler lock.
+//
+// maybeSlideSessionExpiry writes the field under h.mu while two requests
+// from the same browser can be in flight together, and time.Time is two
+// words: an unsynchronised read could tear and make a live session read as
+// expired mid-page, or the other way round. Every reader goes through here.
+func (h *CustomerOIDCHandler) sessionExpiry(session *CustomerSession) time.Time {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return session.ExpiresAt
+}
+
+// ForgetAccountSessions drops every cached session for an account, so the
+// next request rehydrates it from the database.
+//
+// The cache holds a copy of the display name for the whole sliding thirty-day
+// session, and chat derives its visible handle from that copy; a rename in
+// the dashboard otherwise kept posting under the old name until the process
+// restarted. The durable row is untouched: the cookie stays valid.
+func (h *CustomerOIDCHandler) ForgetAccountSessions(accountID string) {
+	if h == nil || accountID == "" {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for id, session := range h.sessions {
+		if session.AccountID == accountID {
+			delete(h.sessions, id)
+		}
+	}
 }
 
 // maybeSlideSessionExpiry extends a session that is more than halfway to
@@ -605,7 +654,7 @@ func (h *CustomerOIDCHandler) GetSession(r *http.Request) *CustomerSession {
 // indefinitely while an abandoned or stolen cookie still lapses.
 func (h *CustomerOIDCHandler) maybeSlideSessionExpiry(ctx context.Context, sessionID string, session *CustomerSession) {
 	ttl := customerSessionTTL()
-	remaining := time.Until(session.ExpiresAt)
+	remaining := time.Until(h.sessionExpiry(session))
 	if remaining > time.Duration(float64(ttl)*customerSessionSlideFraction) {
 		return
 	}
@@ -676,7 +725,7 @@ func (h *CustomerOIDCHandler) SessionInfoHandler(w http.ResponseWriter, r *http.
 		},
 		"csrf_token":       session.CSRFToken,
 		"created_at":       session.CreatedAt,
-		"expires_at":       session.ExpiresAt,
+		"expires_at":       h.sessionExpiry(session),
 		"login_url":        customerAPIDashboardPath(r, "/login"),
 		"logout_url":       customerAPIDashboardPath(r, "/logout"),
 		"email_start_url":  customerAccountAPIPath(r, "/email/start"),

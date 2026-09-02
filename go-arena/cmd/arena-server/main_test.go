@@ -18,6 +18,8 @@ func TestParseCommand(t *testing.T) {
 	}{
 		{name: "default starts server", want: commandServe},
 		{name: "migration only", args: []string{"migrate"}, want: commandMigrate},
+		{name: "credential check only", args: []string{"check-oidc"}, want: commandCheckOIDC},
+		{name: "credential check rejects extra arguments", args: []string{"check-oidc", "extra"}, wantErr: true},
 		{name: "unknown command", args: []string{"unknown"}, wantErr: true},
 		{name: "migration rejects extra arguments", args: []string{"migrate", "extra"}, wantErr: true},
 	}
