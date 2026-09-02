@@ -84,12 +84,31 @@ func signRS256(t *testing.T, key *rsa.PrivateKey, claims map[string]any) string 
 	return input + "." + base64URL(signature)
 }
 
+// The fake Accounts signs with one 2048-bit RSA key per test binary. Every
+// sign-in test builds its own Accounts, and generating a fresh key each time
+// was the single largest cost in this package; nothing here depends on two
+// Accounts holding different keys (the kid is a constant already), so sharing
+// it changes nothing about what the tests prove.
+var (
+	testAngelKeyOnce sync.Once
+	testAngelKey     *rsa.PrivateKey
+	testAngelKeyErr  error
+)
+
+func angelSigningKey(t *testing.T) *rsa.PrivateKey {
+	t.Helper()
+	testAngelKeyOnce.Do(func() {
+		testAngelKey, testAngelKeyErr = rsa.GenerateKey(rand.Reader, 2048)
+	})
+	if testAngelKeyErr != nil {
+		t.Fatalf("generate signing key: %v", testAngelKeyErr)
+	}
+	return testAngelKey
+}
+
 func newAngelAccounts(t *testing.T) *angelAccounts {
 	t.Helper()
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("generate signing key: %v", err)
-	}
+	key := angelSigningKey(t)
 	accounts := &angelAccounts{key: key}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, _ *http.Request) {
