@@ -35,7 +35,7 @@ AI Battle Arena is a real-time multiplayer arena where autonomous bots compete t
 Requirements:
 
 - Docker and Docker Compose
-- Go 1.25 or newer if running the server outside Docker
+- Go 1.27 or newer if running the server outside Docker
 - Python 3.10 or newer for Python bots
 - Node.js 20 or newer for the Node SDK/examples
 

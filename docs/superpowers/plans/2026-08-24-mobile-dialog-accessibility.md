@@ -121,10 +121,10 @@
 
 - [ ] Run the focused browser spec, existing static delivery check, and syntax checks from Task 1 against the final tree.
 
-- [ ] Run the repository gate. If host Go is unavailable, use the official Go 1.25 container with the repository Go module mounted read-only:
+- [ ] Run the repository gate. If host Go is unavailable, use the official Go 1.27 container with the repository Go module mounted read-only:
 
   ```bash
-  docker run --rm -v "$PWD/go-arena:/src:ro" -w /src golang:1.25 go test ./...
+  docker run --rm -v "$PWD/go-arena:/src:ro" -w /src golang:1.27 go test ./...
   git diff --check
   ```
 
