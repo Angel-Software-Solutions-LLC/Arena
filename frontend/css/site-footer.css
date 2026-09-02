@@ -245,6 +245,11 @@
     font-size: 17px;
     font-weight: 600;
     letter-spacing: -0.02em;
+    /* letter-spacing is applied after every character INCLUDING the space, so
+       negative tracking shrinks the word gap as well as the letter fit. This
+       restores exactly what the tracking removed from the space, leaving the
+       letterforms as tight as designed. */
+    word-spacing: 0.02em;
     color: var(--text-primary, #ecf4ff);
   }
 

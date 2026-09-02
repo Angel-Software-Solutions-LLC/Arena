@@ -164,8 +164,13 @@ body.shop-embedded .shop-open-new-tab {
   margin: 0;
   color: var(--text-primary);
   font-size: clamp(2.35rem, 4.4vw, 4.7rem);
-  line-height: 0.94;
+  line-height: 1.02;
   letter-spacing: -0.065em;
+  /* letter-spacing is applied after every character INCLUDING the space, so
+     negative tracking shrinks the word gap as well as the letter fit. This
+     restores exactly what the tracking removed from the space, leaving the
+     letterforms as tight as designed. */
+  word-spacing: 0.065em;
   text-wrap: balance;
 }
 
@@ -235,6 +240,11 @@ body.shop-embedded .shop-open-new-tab {
   font-size: clamp(1.65rem, 3vw, 2.5rem);
   line-height: 1;
   letter-spacing: -0.045em;
+  /* letter-spacing is applied after every character INCLUDING the space, so
+     negative tracking shrinks the word gap as well as the letter fit. This
+     restores exactly what the tracking removed from the space, leaving the
+     letterforms as tight as designed. */
+  word-spacing: 0.045em;
 }
 
 .shop-subscription-copy > p:not(.shop-kicker) {
@@ -385,6 +395,11 @@ body.shop-embedded .shop-open-new-tab {
   color: var(--text-primary);
   line-height: 1.15;
   letter-spacing: -0.025em;
+  /* letter-spacing is applied after every character INCLUDING the space, so
+     negative tracking shrinks the word gap as well as the letter fit. This
+     restores exactly what the tracking removed from the space, leaving the
+     letterforms as tight as designed. */
+  word-spacing: 0.025em;
 }
 
 .shop-panel-heading h2 {
@@ -974,7 +989,7 @@ body.shop-embedded .shop-open-new-tab {
 
   .shop-masthead h1 {
     font-size: clamp(2.2rem, 12.5vw, 4.2rem);
-    line-height: 0.97;
+    line-height: 1.02;
   }
 
   .shop-catalog-state {

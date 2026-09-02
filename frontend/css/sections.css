@@ -50,9 +50,17 @@
 .hero h1 {
   max-width: 11ch;
   font-size: clamp(3.4rem, 9vw, 6.8rem);
-  line-height: 0.95;
+  /* max-width: 11ch guarantees this wraps, so a line box shorter than the
+     glyphs guarantees the lines collide. 1.02 keeps the tight display look
+     and leaves the descenders somewhere to go. */
+  line-height: 1.02;
   font-weight: 800;
   letter-spacing: -0.06em;
+  /* letter-spacing is applied after every character INCLUDING the space, so
+     negative tracking shrinks the word gap as well as the letter fit. This
+     restores exactly what the tracking removed from the space, leaving the
+     letterforms as tight as designed. */
+  word-spacing: 0.06em;
   margin-bottom: 18px;
 }
 
@@ -103,6 +111,11 @@
   font-size: clamp(1.5rem, 3vw, 2.4rem);
   line-height: 1.04;
   letter-spacing: -0.04em;
+  /* letter-spacing is applied after every character INCLUDING the space, so
+     negative tracking shrinks the word gap as well as the letter fit. This
+     restores exactly what the tracking removed from the space, leaving the
+     letterforms as tight as designed. */
+  word-spacing: 0.04em;
 }
 
 .hero-spotlight-kicker {
@@ -285,8 +298,13 @@
 
 .arena-shell-title {
   font-size: clamp(2rem, 4vw, 3rem);
-  line-height: 0.94;
+  line-height: 1.02;
   letter-spacing: -0.05em;
+  /* letter-spacing is applied after every character INCLUDING the space, so
+     negative tracking shrinks the word gap as well as the letter fit. This
+     restores exactly what the tracking removed from the space, leaving the
+     letterforms as tight as designed. */
+  word-spacing: 0.05em;
   margin-bottom: 10px;
 }
 
@@ -390,6 +408,11 @@
   font-size: 1.3rem;
   line-height: 1.02;
   letter-spacing: -0.04em;
+  /* letter-spacing is applied after every character INCLUDING the space, so
+     negative tracking shrinks the word gap as well as the letter fit. This
+     restores exactly what the tracking removed from the space, leaving the
+     letterforms as tight as designed. */
+  word-spacing: 0.04em;
   margin-bottom: 8px;
 }
 
@@ -859,6 +882,11 @@ body.arena-fullscreen {
   font-size: 0.82rem;
   font-weight: 700;
   letter-spacing: -0.03em;
+  /* letter-spacing is applied after every character INCLUDING the space, so
+     negative tracking shrinks the word gap as well as the letter fit. This
+     restores exactly what the tracking removed from the space, leaving the
+     letterforms as tight as designed. */
+  word-spacing: 0.03em;
 }
 
 .hud-title-row {
@@ -872,15 +900,35 @@ body.arena-fullscreen {
 .hud-title {
   font-family: var(--font-sans);
   font-size: 0.98rem;
-  line-height: 0.94;
-  letter-spacing: -0.04em;
+  /* Display type elsewhere on the site sets line-height below 1 deliberately,
+     which is fine for a single-line masthead. This label is small AND it wraps
+     every round the map has a shape ("Round 77 . diamond"), and a line box
+     shorter than the glyphs makes the two lines sit on top of each other.
+     1.12 keeps it tight without letting wrapped lines collide. */
+  line-height: 1.12;
+  /* -0.04em was pulling glyphs together at ~16px, where there is no display
+     size to carry it. */
+  letter-spacing: -0.02em;
+  /* letter-spacing is applied after every character INCLUDING the space, so
+     negative tracking shrinks the word gap as well as the letter fit. This
+     restores exactly what the tracking removed from the space, leaving the
+     letterforms as tight as designed. */
+  word-spacing: 0.02em;
   text-shadow: 0 0 12px rgba(71, 215, 255, 0.22);
+  /* A flex item defaults to min-width:auto, so this refused to shrink and
+     instead forced its own early wrap next to the phase chip. */
+  min-width: 0;
+  text-wrap: balance;
 }
 
 .hud-phase {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  /* The chip is short and fixed; let the title take the remaining width
+     instead of both of them competing and the title wrapping early. */
+  flex-shrink: 0;
+  white-space: nowrap;
   padding: 5px 8px;
   border-radius: 999px;
   border: 1px solid rgba(126, 166, 207, 0.12);
@@ -957,6 +1005,11 @@ body.arena-fullscreen {
   font-size: 0.92rem;
   font-weight: 700;
   letter-spacing: -0.03em;
+  /* letter-spacing is applied after every character INCLUDING the space, so
+     negative tracking shrinks the word gap as well as the letter fit. This
+     restores exactly what the tracking removed from the space, leaving the
+     letterforms as tight as designed. */
+  word-spacing: 0.03em;
 }
 
 .arena-controls {
@@ -1218,6 +1271,11 @@ body.arena-fullscreen {
   font-size: 1.4rem;
   font-weight: 800;
   letter-spacing: -0.04em;
+  /* letter-spacing is applied after every character INCLUDING the space, so
+     negative tracking shrinks the word gap as well as the letter fit. This
+     restores exactly what the tracking removed from the space, leaving the
+     letterforms as tight as designed. */
+  word-spacing: 0.04em;
 }
 
 .podium-substats {
@@ -1757,6 +1815,11 @@ body.arena-fullscreen {
   font-size: clamp(1.5rem, 2vw, 2rem);
   line-height: 1.05;
   letter-spacing: -0.04em;
+  /* letter-spacing is applied after every character INCLUDING the space, so
+     negative tracking shrinks the word gap as well as the letter fit. This
+     restores exactly what the tracking removed from the space, leaving the
+     letterforms as tight as designed. */
+  word-spacing: 0.04em;
 }
 
 .keygen-panel-copy {
@@ -2157,6 +2220,11 @@ pre.code-block {
   font-size: 1rem;
   font-weight: 600;
   letter-spacing: -0.03em;
+  /* letter-spacing is applied after every character INCLUDING the space, so
+     negative tracking shrinks the word gap as well as the letter fit. This
+     restores exactly what the tracking removed from the space, leaving the
+     letterforms as tight as designed. */
+  word-spacing: 0.03em;
 }
 
 .footer a {
