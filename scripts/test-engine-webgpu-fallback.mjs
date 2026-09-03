@@ -63,3 +63,28 @@ for (const search of ['', '?webgpu', '?webgpu=1', '?webgpu=false', '?other=0']) 
 }
 
 console.log('render-loop failures are contained, and WebGPU stays default with a ?webgpu=0 escape hatch');
+
+// Regression gate for the leaked-engine blank arena, measured live 2026-09-03.
+//
+// B.WebGPUEngine attaches to the canvas in its CONSTRUCTOR, before initAsync()
+// can fail. If the catch replaces the local `engine` without disposing it, that
+// half-built engine keeps a configured GPUCanvasContext on the SAME canvas for
+// the life of the page: it was never assigned to this.engine, so dispose()
+// cannot reach it and nothing else ever will. On a client whose WebGPU init
+// fails, the canvas then presents a dead context while a live WebGL engine
+// renders into nothing visible, which is the blank arena with a working HUD.
+//
+// Measured on https://arena.angel-serv.com: the default path left
+// EngineStore.Instances at 3 (two WebGPU, zero scenes, zero render loops, all
+// undisposed, all bound to #arena-canvas) against exactly 1 under ?webgpu=0.
+const initAsyncAt = source.indexOf('await engine.initAsync();');
+assert.ok(initAsyncAt >= 0, 'the WebGPU init await must stay discoverable');
+const fallbackCatchAt = source.indexOf('} catch {', initAsyncAt);
+const webglEngineAt = source.indexOf('new B.Engine(this.canvas, false, {', fallbackCatchAt);
+assert.ok(fallbackCatchAt > initAsyncAt && webglEngineAt > fallbackCatchAt,
+  'the WebGPU-to-WebGL fallback must stay discoverable');
+const fallbackSrc = source.slice(fallbackCatchAt, webglEngineAt);
+assert.match(fallbackSrc, /engine\.dispose\(\)/,
+  'the failed WebGPU engine must be disposed before a second engine is attached to the same canvas');
+
+console.log('a failed WebGPU init disposes its half-built engine instead of stranding it on the canvas');

@@ -181,6 +181,24 @@ export class ArenaEngine {
         throw new Error(forceWebGL ? 'WebGL forced by ?webgpu=0' : 'WebGPU not supported');
       }
     } catch {
+      // A WebGPUEngine attaches to the canvas in its CONSTRUCTOR, before
+      // initAsync() has had the chance to fail. Dropping the reference here
+      // strands that half-built engine holding a configured GPUCanvasContext
+      // on this same canvas: it was never assigned to this.engine, so
+      // dispose() cannot reach it and nothing else ever will.
+      //
+      // Measured live 2026-09-03: the default path left EngineStore.Instances
+      // at 3 (two WebGPU, zero scenes, zero render loops, undisposed) against
+      // exactly 1 under ?webgpu=0, so every failed WebGPU init leaked one.
+      // Free it before putting a second engine on the same canvas.
+      if (engine) {
+        try {
+          engine.dispose();
+        } catch {
+          /* half-built: free whatever exists and carry on */
+        }
+        engine = null;
+      }
       engine = new B.Engine(this.canvas, false, {
         preserveDrawingBuffer: false,
         // PickupRenderer uses Babylon's HighlightLayer, whose WebGL path
