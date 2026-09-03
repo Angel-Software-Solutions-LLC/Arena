@@ -167,8 +167,16 @@ function sandbox(overrides = {}) {
 {
   const logoutSource = html.slice(html.indexOf('function logout()'), html.indexOf('function showApp()'));
   assert.match(logoutSource, /deskCsrfToken = ''/, 'signing out of the panel must forget the CSRF token');
-  assert.match(logoutSource, /if \(ssoEnabled\) document\.getElementById\('ssoSection'\)\.style\.display = ''/,
+  // Asserted as "inside the ssoEnabled guard", not as one exact line: what
+  // matters is that a lapse puts the way back in on screen and takes the
+  // no-grant explanation off it. That explanation answers a different
+  // question — "you signed in and hold no grant" — and is wrong for a session
+  // that lapsed, where signing in again is exactly the thing to offer.
+  const lapseGuard = logoutSource.slice(logoutSource.indexOf('if (ssoEnabled)'));
+  assert.match(lapseGuard, /getElementById\('ssoSection'\)\.style\.display = ''/,
     'a desk grant that lapses mid-session must leave the sign-in control on screen');
+  assert.match(lapseGuard, /getElementById\('ssoNoGrant'\)\.style\.display = 'none'/,
+    'a lapsed session must not be told it is signed in without a grant');
 }
 
 // --- the bootstrap read is what decides whether the panel is drawn --------
