@@ -183,47 +183,124 @@ func TestMachineAdminPathsAuthorizeExactlyAsBefore(t *testing.T) {
 	})
 }
 
-// TestAdminPanelReachesTheAdminAppOnADeskClaim is the browser question the
-// retirement had to answer before it could ship: with no admin SSO cookie left
-// to hold, can a support-desk sign-in actually open /admin/ and act there?
+// TestAdminPanelStaysShutForAnUnprovisionedDeskIdentity is the whole of the
+// change that made the per-product grant the only key, read from the browser.
 //
-// It walks the three requests the panel makes, in order: the bootstrap read
-// that decides whether to draw the panel or the sign-in button, a read, and a
-// mutation carrying the CSRF token the bootstrap handed over.
-func TestAdminPanelReachesTheAdminAppOnADeskClaim(t *testing.T) {
+// The desk claim used to open this panel, which meant every owner and admin of
+// the support desk administered Arena — and every other Angel product — with
+// nothing provisioned and nothing to revoke per product. Working the desk now
+// admits nobody: the bootstrap read draws the sign-in button rather than the
+// panel, hands over no CSRF token, and the admin subtree answers a desk owner
+// exactly as it answers a stranger.
+func TestAdminPanelStaysShutForAnUnprovisionedDeskIdentity(t *testing.T) {
 	accounts := newAngelAccounts(t)
 	handler, _ := newArenaSignedInWithAngel(t, accounts)
-	_, cookie := signInThroughAngel(t, handler, accounts, map[string]any{"staff": true, "staff_role": "owner"})
 
-	bootstrap := httptest.NewRequest(http.MethodGet, "https://arena.example/api/v1/admin/session", nil)
-	bootstrap.AddCookie(cookie)
-	recorder := httptest.NewRecorder()
-	handler.AdminSessionInfoHandler(recorder, bootstrap)
-	var panel struct {
-		Authenticated bool   `json:"authenticated"`
-		Role          string `json:"role"`
-		CSRFToken     string `json:"csrf_token"`
-		LogoutURL     string `json:"logout_url"`
+	for _, role := range []string{"owner", "admin", "incident-commander", ""} {
+		t.Run("staff_role="+role, func(t *testing.T) {
+			claims := map[string]any{"staff": true}
+			if role != "" {
+				claims["staff_role"] = role
+			}
+			session, cookie := signInThroughAngel(t, handler, accounts, claims)
+
+			bootstrap := httptest.NewRequest(http.MethodGet, "https://arena.example/api/v1/admin/session", nil)
+			bootstrap.AddCookie(cookie)
+			recorder := httptest.NewRecorder()
+			handler.AdminSessionInfoHandler(recorder, bootstrap)
+			var panel map[string]any
+			if err := json.Unmarshal(recorder.Body.Bytes(), &panel); err != nil {
+				t.Fatalf("decode admin session: %v (%s)", err, recorder.Body.String())
+			}
+			if panel["authenticated"] != false {
+				t.Fatalf("admin session = %v, want the panel kept shut for an unprovisioned desk identity", panel)
+			}
+			if _, leaked := panel["csrf_token"]; leaked {
+				t.Fatalf("admin session handed a CSRF token to a desk identity with no grant: %v", panel)
+			}
+
+			// A read, and a mutation carrying everything a mutation could
+			// carry. Neither is a way in.
+			if status, principal := callAdminRoute(t, handler, cookie, http.MethodGet, nil); status != http.StatusUnauthorized || principal != "" {
+				t.Fatalf("panel read = %d %q, want 401 and no principal", status, principal)
+			}
+			mutate := func(r *http.Request) {
+				r.Header.Set("Origin", "https://arena.example")
+				r.Header.Set("X-CSRF-Token", session.CSRFToken)
+			}
+			if status, principal := callAdminRoute(t, handler, cookie, http.MethodPut, mutate); status != http.StatusUnauthorized || principal != "" {
+				t.Fatalf("panel mutation = %d %q, want 401 and no principal", status, principal)
+			}
+
+			// And the sign-in itself still worked: this is a customer, kept
+			// signed in, simply not an administrator.
+			signedIn := httptest.NewRequest(http.MethodGet, "https://arena.example/api/v1/account/session", nil)
+			signedIn.AddCookie(cookie)
+			if handler.GetSession(signedIn) == nil {
+				t.Fatal("refusing the panel signed the desk identity out of Arena")
+			}
+		})
 	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &panel); err != nil {
+}
+
+// TestAdminPanelTellsASignedInVisitorWhatIsMissing is the difference between
+// "nobody is here" and "somebody is here who may not come in".
+//
+// Both are `authenticated: false`, and offering the same sign-in button to
+// each is how a desk owner ends up pressing it forever: the sign-in already
+// worked, and the grant is what is absent. `signed_in` is what lets the panel
+// say so, and it is never true for a browser holding no session.
+func TestAdminPanelTellsASignedInVisitorWhatIsMissing(t *testing.T) {
+	accounts := newAngelAccounts(t)
+	handler, _ := newArenaSignedInWithAngel(t, accounts)
+
+	read := func(cookie *http.Cookie) map[string]any {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodGet, "https://arena.example/api/v1/admin/session", nil)
+		if cookie != nil {
+			request.AddCookie(cookie)
+		}
+		recorder := httptest.NewRecorder()
+		handler.AdminSessionInfoHandler(recorder, request)
+		var body map[string]any
+		if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode admin session: %v (%s)", err, recorder.Body.String())
+		}
+		return body
+	}
+
+	if body := read(nil); body["authenticated"] != false || body["signed_in"] != false {
+		t.Fatalf("admin session for no cookie at all = %v, want signed_in false", body)
+	}
+
+	// A desk owner and an ordinary customer are the same answer here, which
+	// is the point: neither has been granted Arena.
+	for _, claims := range []map[string]any{nil, {"staff": true, "staff_role": "owner"}} {
+		_, cookie := signInThroughAngel(t, handler, accounts, claims)
+		body := read(cookie)
+		if body["authenticated"] != false || body["signed_in"] != true {
+			t.Fatalf("admin session for %v = %v, want authenticated false and signed_in true", claims, body)
+		}
+		if _, leaked := body["csrf_token"]; leaked {
+			t.Fatalf("admin session handed a CSRF token to a non-administrator: %v", body)
+		}
+	}
+
+	_, adminCookie := signInThroughAngel(t, handler, accounts, map[string]any{"product_admin": true})
+	if body := read(adminCookie); body["authenticated"] != true || body["signed_in"] != true {
+		t.Fatalf("admin session for an administrator = %v, want both true", body)
+	}
+
+	// The no-Accounts bootstrap says the same thing about a browser it knows
+	// nothing about, so the panel reads one shape everywhere.
+	recorder := httptest.NewRecorder()
+	AdminSessionUnavailableHandler(recorder, httptest.NewRequest(http.MethodGet, "https://arena.example/api/v1/admin/session", nil))
+	var unavailable map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &unavailable); err != nil {
 		t.Fatalf("decode admin session: %v (%s)", err, recorder.Body.String())
 	}
-	if !panel.Authenticated || panel.Role != "owner" {
-		t.Fatalf("admin session = %+v, want the panel drawn for a desk owner", panel)
-	}
-	if panel.CSRFToken == "" || panel.LogoutURL == "" {
-		t.Fatalf("admin session = %+v, want the panel given what its mutations need", panel)
-	}
-
-	if status, _ := callAdminRoute(t, handler, cookie, http.MethodGet, nil); status != http.StatusNoContent {
-		t.Fatalf("panel read status = %d, want the administrator through", status)
-	}
-	mutate := func(r *http.Request) {
-		r.Header.Set("Origin", "https://arena.example")
-		r.Header.Set("X-CSRF-Token", panel.CSRFToken)
-	}
-	if status, _ := callAdminRoute(t, handler, cookie, http.MethodPut, mutate); status != http.StatusNoContent {
-		t.Fatalf("panel mutation status = %d, want it accepted on the bootstrap's CSRF token", status)
+	if unavailable["authenticated"] != false || unavailable["signed_in"] != false || unavailable["login_enabled"] != false {
+		t.Fatalf("unconfigured admin session = %v, want every door reported shut", unavailable)
 	}
 }
 
@@ -259,6 +336,30 @@ func TestAdminPanelReachesTheAdminAppOnAProductGrant(t *testing.T) {
 	status, principal := callAdminRoute(t, handler, cookie, http.MethodPut, mutate)
 	if status != http.StatusNoContent || principal != "accounts-product-admin:"+session.AccountID {
 		t.Fatalf("panel mutation = %d %q, want it accepted under the product-admin principal", status, principal)
+	}
+
+	// The same walk for somebody who works the desk *and* has been granted
+	// Arena. The grant is what admits them; the desk role rides along in the
+	// principal and the panel so an audit line can say who acted.
+	deskSession, deskCookie := signInThroughAngel(t, handler, accounts,
+		map[string]any{"staff": true, "staff_role": "owner", "product_admin": true})
+	deskBootstrap := httptest.NewRequest(http.MethodGet, "https://arena.example/api/v1/admin/session", nil)
+	deskBootstrap.AddCookie(deskCookie)
+	deskRecorder := httptest.NewRecorder()
+	handler.AdminSessionInfoHandler(deskRecorder, deskBootstrap)
+	if err := json.Unmarshal(deskRecorder.Body.Bytes(), &panel); err != nil {
+		t.Fatalf("decode admin session: %v (%s)", err, deskRecorder.Body.String())
+	}
+	if !panel.Authenticated || panel.Authority != "product_admin" || panel.Role != "owner" {
+		t.Fatalf("admin session = %+v, want the grant reported with the desk role beside it", panel)
+	}
+	deskMutate := func(r *http.Request) {
+		r.Header.Set("Origin", "https://arena.example")
+		r.Header.Set("X-CSRF-Token", panel.CSRFToken)
+	}
+	status, principal = callAdminRoute(t, handler, deskCookie, http.MethodPut, deskMutate)
+	if want := "accounts-product-admin:" + deskSession.AccountID + ":owner"; status != http.StatusNoContent || principal != want {
+		t.Fatalf("panel mutation = %d %q, want %q", status, principal, want)
 	}
 }
 
