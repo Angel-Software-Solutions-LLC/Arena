@@ -81,6 +81,27 @@ const WATCH_TIMEOUT_MS = 5 * 60 * 1000;
 const CLOSE_POLL_MS = 400;
 
 /**
+ * The cross-tab session key `dashboard/signed-in.js` touches when a popup
+ * sign-in finishes. Owned by account-session.js; named here because a storage
+ * event is the one notification that survives what COOP does to this flow.
+ */
+const SESSION_TOUCHED_KEY = 'arena_session_touched';
+
+/**
+ * Below this, a `closed` reading is the browser, not a person.
+ *
+ * Accounts serves `Cross-Origin-Opener-Policy: same-origin`, so as soon as the
+ * popup reaches `/connect` it moves to a new browsing context group and the
+ * handle held here starts reporting `closed === true` while the window is
+ * plainly still open. Polling alone could not tell that from somebody shutting
+ * the window, and read it as an abandoned sign-in within one poll of opening —
+ * which is why the dashboard used to fall back to signed-out while the person
+ * was still typing their password. Nobody opens a window and closes it inside
+ * a second and a half; that reading is severance, and the flow is still live.
+ */
+const SEVERANCE_WINDOW_MS = 1500;
+
+/**
  * The contract size, clamped to what this screen can actually show.
  *
  * A window bigger than the work area does not get the space it asked for --
@@ -169,9 +190,21 @@ export function signInWithAccounts(options = {}) {
       if (settled) return;
       settled = true;
       window.removeEventListener('message', onMessage);
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener('visibilitychange', onVisible);
       clearInterval(closeTimer);
       clearTimeout(giveUpTimer);
       resolve(signedIn);
+    };
+
+    /*
+     * The storage write from the popup. This is the signal that actually
+     * arrives: it is same-origin and crosses browsing context groups, so
+     * unlike postMessage it is unaffected by the opener being severed.
+     */
+    const onStorage = (event) => {
+      if (event.key !== SESSION_TOUCHED_KEY) return;
+      finish(true);
     };
 
     const onMessage = (event) => {
@@ -191,6 +224,7 @@ export function signInWithAccounts(options = {}) {
     };
 
     window.addEventListener('message', onMessage);
+    window.addEventListener('storage', onStorage);
 
     /*
      * A window closed by hand sends nothing. Polling `closed` is the only way
@@ -201,9 +235,35 @@ export function signInWithAccounts(options = {}) {
      * the person simply closed the window early — the caller re-reads the
      * session either way, and the server is what decides.
      */
+    const openedAt = Date.now();
+    let severed = false;
+
     const closeTimer = setInterval(() => {
-      if (popup.closed) finish(false);
+      if (!popup.closed) return;
+      if (Date.now() - openedAt < SEVERANCE_WINDOW_MS) {
+        /*
+         * COOP, not a person. The handle is useless from here, so stop asking
+         * it: the storage write is what will report the sign-in, and the
+         * timeout is what ends an abandoned one.
+         */
+        severed = true;
+        clearInterval(closeTimer);
+        window.addEventListener('visibilitychange', onVisible);
+        return;
+      }
+      finish(false);
     }, CLOSE_POLL_MS);
+
+    /*
+     * With the handle severed there is no way to see the popup close, so the
+     * person coming back to this window is the only other evidence that the
+     * flow is over. Resolve false and let the caller re-read the session — the
+     * server decides, and a sign-in that did complete still announces itself
+     * through the page's own session sync.
+     */
+    function onVisible() {
+      if (severed && document.visibilityState === 'visible') finish(false);
+    }
 
     const giveUpTimer = setTimeout(() => finish(false), WATCH_TIMEOUT_MS);
   });
