@@ -28,6 +28,34 @@ for (const retired of ['ssoLoginUrl', 'ssoLogoutUrl', "'/admin/login'", "'/admin
 assert.ok(!/SSO Login/.test(html), 'the sign-in control must name Angel Accounts, not "SSO"');
 assert.match(html, /Sign in with Angel Accounts/, 'the panel needs an Accounts sign-in control');
 
+// --- a person signs in through Accounts, and only through Accounts ---------
+
+/*
+ * The token form is gone. A token a browser can hold is a token anything that
+ * reaches this origin can read, and an admin credential is the worst thing to
+ * keep there. Machine access is unaffected — see the X-Admin-Token assertion
+ * further down, which is the whole point of removing this and not that.
+ */
+for (const humanEntry of ['id="tokenInput"', 'function doLogin', 'doLogin()']) {
+  assert.ok(!html.includes(humanEntry),
+    `the admin panel still offers a human a way to type an admin token: ${humanEntry}`);
+}
+assert.ok(!/localStorage\.setItem\(\s*'arena_admin_token'/.test(html),
+  'the panel must never write an admin token into storage');
+assert.match(html, /localStorage\.removeItem\('arena_admin_token'\)/,
+  'and must clear one an older version of the panel left behind');
+
+assert.match(
+  html,
+  /Requires a support-desk role, or an Arena administrator grant/,
+  'the sign-in hint names both claims that admit, not just the desk role',
+);
+assert.match(
+  html,
+  /id="ssoUnavailable"/,
+  'an Arena with no Accounts sign-in says so instead of showing an empty screen',
+);
+
 // --- slice out the functions under test -----------------------------------
 
 function slice(startMarker, endMarker) {
