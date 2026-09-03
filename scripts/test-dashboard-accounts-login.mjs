@@ -170,15 +170,45 @@ assert.match(
 assert.doesNotMatch(landing, /token|code|secret|id_token|access_token/i,
   'the popup hands over no credential of any kind');
 
-/* ------------------------------------------------ the popup that is not one */
+/* ------------------------------- the popup whose opener COOP took away */
 
+/*
+ * Accounts serves Cross-Origin-Opener-Policy: same-origin, so by the time the
+ * popup is redirected back here its `window.opener` is null for good. Reading
+ * that as "this was never a popup" is what used to leave the window parked on
+ * the dashboard instead of closing, and left the opener holding a stale CSRF
+ * token because it was never told the sign-in finished.
+ */
+assert.doesNotMatch(
+  landing,
+  /if \(!opener \|\| opener\.closed\)\s*\{[\s\S]{0,200}?window\.location\.replace/,
+  'a missing opener must not short-circuit straight to a redirect: COOP removes it from a real popup',
+);
 assert.match(
   landing,
-  /if \(!opener \|\| opener\.closed\)/,
-  'a window with no opener is not a popup and must not dead-end',
+  /localStorage\.setItem\(SESSION_TOUCHED_KEY/,
+  'the opener is told through storage, which crosses browsing context groups when postMessage cannot',
+);
+assert.match(
+  landing,
+  /announceSession\(\);[\s\S]{0,400}?window\.close\(\)/,
+  'it announces before it closes, so the notification is not racing the window going away',
 );
 assert.match(landing, /window\.location\.replace\(dashboardHref\(\)\)/,
-  'it continues to the dashboard instead');
+  'and still continues to the dashboard when the close is refused');
+
+/* the opener side of the same fault */
+
+assert.match(
+  login,
+  /event\.key !== SESSION_TOUCHED_KEY/,
+  'the opener listens for that storage write',
+);
+assert.match(
+  login,
+  /Date\.now\(\) - openedAt < SEVERANCE_WINDOW_MS/,
+  'and does not read a severed handle reporting `closed` as somebody abandoning the sign-in',
+);
 assert.match(landingHTML, /<title>Signed in<\/title>/);
 assert.match(landingHTML, /name="robots" content="noindex"/, 'this page should not be indexed');
 
