@@ -287,6 +287,11 @@ func EnsureCoreSchema(ctx context.Context) error {
 	if err := EnsureCustomerSessionsSchema(ctx); err != nil {
 		return fmt.Errorf("EnsureCoreSchema customer sessions: %w", err)
 	}
+	// An in-flight sign-in outlives the process that started it, so a redeploy
+	// mid-login does not strand the browser at Accounts.
+	if err := EnsureCustomerLoginTransactionsSchema(ctx); err != nil {
+		return fmt.Errorf("EnsureCoreSchema customer login transactions: %w", err)
+	}
 	if err := EnsureConsentSchema(ctx); err != nil {
 		return fmt.Errorf("EnsureCoreSchema consent: %w", err)
 	}

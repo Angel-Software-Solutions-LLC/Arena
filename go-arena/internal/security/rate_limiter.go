@@ -238,6 +238,21 @@ func ExtractClientIP(r *http.Request) string {
 	return clientIP
 }
 
+// RequestFromTrustedProxy reports whether the immediate network peer is inside
+// ARENA_TRUSTED_PROXY_CIDRS.
+//
+// Callers use it to decide whether a forwarding header may be believed at all.
+// ExtractClientIP already applies this to the client address; anything else
+// that reads an X-Forwarded-* header needs the same gate, or a direct client
+// gets to describe its own connection.
+func RequestFromTrustedProxy(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	remote, ok := parseRemoteIP(r.RemoteAddr)
+	return ok && isTrustedProxy(remote, configuredTrustedProxies())
+}
+
 func configuredTrustedProxies() []netip.Prefix {
 	return configuredProxyPrefixes(config.C.TrustedProxyCIDRs, &trustedProxyCache)
 }
