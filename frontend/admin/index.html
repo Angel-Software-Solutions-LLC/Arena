@@ -21,6 +21,7 @@ input:focus,select:focus{border-color:var(--accent)}
 
 /* Layout */
 #login{display:flex;align-items:center;justify-content:center;height:100dvh;flex-direction:column;gap:12px}
+#login>*{display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center}
 #login h1{color:var(--accent);font-size:18px}
 #login input{width:300px;padding:8px 12px}
 #login button{padding:8px 24px}
@@ -1180,7 +1181,6 @@ tr:hover td{background:rgba(88,166,255,0.07)}
   <h1>// ARENA ADMIN</h1>
   <div id="ssoSection" style="display:none">
     <button onclick="startDeskSignIn()" style="background:var(--accent);color:#fff;border-color:var(--accent);padding:8px 24px">Sign in with Angel Accounts</button>
-    <div style="color:var(--text2);font-size:10px;margin-top:6px">Requires a support-desk role, or an Arena administrator grant, on your Angel account.</div>
   </div>
   <div id="ssoUnavailable" style="display:none;color:var(--text2);font-size:11px;max-width:42ch;line-height:1.6">
     Angel Accounts sign-in is not configured on this Arena, so there is no way in from a browser.

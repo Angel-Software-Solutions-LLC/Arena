@@ -38,16 +38,20 @@ if (window.self !== window.top) {
 
 <div id="login">
   <h1>// BOT DASHBOARD</h1>
-  <p>Your Angel account holds the Arena subscription. API keys only prove which bots you control and can be replaced without losing anything.</p>
   <div class="error" id="loginError"></div>
   <div class="login-shell">
+    <!--
+      One button and the way to get an account. Everything this panel used to
+      explain up front — what an API key is for, that Arena never sees a
+      password, what a subscription covers — was answering questions nobody has
+      while looking at a sign-in screen, and the wall of it made the one press
+      hard to find. What is true is still true; it is said where it matters, on
+      the Shop and the Dashboard, to somebody who has asked.
+    -->
     <section class="login-choice primary">
-      <h2>Sign in</h2>
-      <p>One press. Arena opens an Angel Accounts window, you sign in there, and it closes itself — Arena never sees your password, and no longer keeps your email address.</p>
       <div class="account-email-setup" id="accountEmailSetup" role="status">Checking sign-in...</div>
       <button class="account-sign-in" id="accountSignInButton" type="button" hidden disabled>Sign in with Angel Accounts</button>
-      <p class="login-register">No Angel account yet? <a data-accounts-register>Create one</a> — the same account works across every Angel product.</p>
-      <div class="login-privacy">One subscription unlocks every cosmetic for every bot you link. Linking a key never makes that key the subscriber.</div>
+      <p class="login-register">New here? <a data-accounts-register>Create an account</a></p>
     </section>
     <!--
       Bot operators still need this, and it is still here — but it is no longer
@@ -60,16 +64,17 @@ if (window.self !== window.top) {
     <details class="login-secondary" id="botKeyDetails">
       <summary>Bot operator? Open with an API key instead</summary>
       <div class="login-secondary-body">
-        <p>Keep using a bot key for stats, comparisons, and live performance tools. This does not touch your subscription, and the key is kept only for this browser tab.</p>
+        <p>Kept in this browser tab only.</p>
         <input type="password" id="apiKeyInput" placeholder="arena_...">
         <input id="keyLabel" placeholder="Local label (optional)">
         <button type="button" onclick="doLogin()">Connect bot</button>
+        <p class="login-keygen"><a href="../#keygen">Generate a key</a></p>
         <div class="saved-keys" id="savedKeysList"></div>
       </div>
     </details>
   </div>
   <div style="margin-top:16px;font-size:11px;color:var(--text2)">
-    <a href="../">Back to Arena</a> &nbsp;|&nbsp; Don't have a key? <a href="../#keygen">Generate one</a>
+    <a href="../">Back to Arena</a>
   </div>
 </div>
 

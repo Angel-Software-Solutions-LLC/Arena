@@ -87,19 +87,6 @@ const CLOSE_POLL_MS = 400;
  */
 const SESSION_TOUCHED_KEY = 'arena_session_touched';
 
-/**
- * Below this, a `closed` reading is the browser, not a person.
- *
- * Accounts serves `Cross-Origin-Opener-Policy: same-origin`, so as soon as the
- * popup reaches `/connect` it moves to a new browsing context group and the
- * handle held here starts reporting `closed === true` while the window is
- * plainly still open. Polling alone could not tell that from somebody shutting
- * the window, and read it as an abandoned sign-in within one poll of opening —
- * which is why the dashboard used to fall back to signed-out while the person
- * was still typing their password. Nobody opens a window and closes it inside
- * a second and a half; that reading is severance, and the flow is still live.
- */
-const SEVERANCE_WINDOW_MS = 1500;
 
 /**
  * The contract size, clamped to what this screen can actually show.
@@ -191,7 +178,6 @@ export function signInWithAccounts(options = {}) {
       settled = true;
       window.removeEventListener('message', onMessage);
       window.removeEventListener('storage', onStorage);
-      window.removeEventListener('visibilitychange', onVisible);
       clearInterval(closeTimer);
       clearTimeout(giveUpTimer);
       resolve(signedIn);
@@ -235,35 +221,24 @@ export function signInWithAccounts(options = {}) {
      * the person simply closed the window early — the caller re-reads the
      * session either way, and the server is what decides.
      */
-    const openedAt = Date.now();
-    let severed = false;
-
-    const closeTimer = setInterval(() => {
-      if (!popup.closed) return;
-      if (Date.now() - openedAt < SEVERANCE_WINDOW_MS) {
-        /*
-         * COOP, not a person. The handle is useless from here, so stop asking
-         * it: the storage write is what will report the sign-in, and the
-         * timeout is what ends an abandoned one.
-         */
-        severed = true;
-        clearInterval(closeTimer);
-        window.addEventListener('visibilitychange', onVisible);
-        return;
-      }
-      finish(false);
-    }, CLOSE_POLL_MS);
-
     /*
-     * With the handle severed there is no way to see the popup close, so the
-     * person coming back to this window is the only other evidence that the
-     * flow is over. Resolve false and let the caller re-read the session — the
-     * server decides, and a sign-in that did complete still announces itself
-     * through the page's own session sync.
+     * Accounts serves Cross-Origin-Opener-Policy: same-origin, so once the
+     * popup reaches /connect this handle reports `closed` while the window is
+     * plainly still open, and this resolves false within one poll.
+     *
+     * That is now harmless, and deliberately not guessed around. Resolving
+     * false only means "the popup did not report a sign-in to *this* promise";
+     * every caller re-reads the session from the server afterwards, and the
+     * sign-in, when it finishes, announces itself through the storage write
+     * above — which every page already listens to through startSessionSync.
+     * An earlier version tried to tell severance from a real close by how
+     * quickly `closed` appeared. It could not: a window shut promptly is
+     * indistinguishable from one the browser detached, and calling that
+     * severance left the promise hanging until the five-minute timeout.
      */
-    function onVisible() {
-      if (severed && document.visibilityState === 'visible') finish(false);
-    }
+    const closeTimer = setInterval(() => {
+      if (popup.closed) finish(false);
+    }, CLOSE_POLL_MS);
 
     const giveUpTimer = setTimeout(() => finish(false), WATCH_TIMEOUT_MS);
   });

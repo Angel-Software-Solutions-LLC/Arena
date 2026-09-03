@@ -45,10 +45,16 @@ assert.ok(!/localStorage\.setItem\(\s*'arena_admin_token'/.test(html),
 assert.match(html, /localStorage\.removeItem\('arena_admin_token'\)/,
   'and must clear one an older version of the panel left behind');
 
-assert.match(
+/*
+ * The screen is the heading and the button. The sentence about which claims
+ * admit lived here and is gone on purpose: it answered a question nobody is
+ * asking at a sign-in screen, and made the one control look off-centre by
+ * setting the width of the box around it. Where it is true is documented.
+ */
+assert.doesNotMatch(
   html,
-  /Requires a support-desk role, or an Arena administrator grant/,
-  'the sign-in hint names both claims that admit, not just the desk role',
+  /Requires a support-desk role/,
+  'the admin sign-in screen carries no explanatory copy beneath the button',
 );
 assert.match(
   html,
