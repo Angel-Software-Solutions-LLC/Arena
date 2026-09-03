@@ -1178,12 +1178,13 @@ tr:hover td{background:rgba(88,166,255,0.07)}
 <!-- Login Screen -->
 <div id="login">
   <h1>// ARENA ADMIN</h1>
-  <input type="password" id="tokenInput" placeholder="Admin Token" autofocus>
-  <button onclick="doLogin()">Authenticate</button>
-  <div id="ssoSection" style="display:none;margin-top:8px">
-    <div style="color:var(--text2);font-size:11px;margin-bottom:6px">— or —</div>
+  <div id="ssoSection" style="display:none">
     <button onclick="startDeskSignIn()" style="background:var(--accent);color:#fff;border-color:var(--accent);padding:8px 24px">Sign in with Angel Accounts</button>
-    <div style="color:var(--text2);font-size:10px;margin-top:6px">Requires a support-desk role on your account.</div>
+    <div style="color:var(--text2);font-size:10px;margin-top:6px">Requires a support-desk role, or an Arena administrator grant, on your Angel account.</div>
+  </div>
+  <div id="ssoUnavailable" style="display:none;color:var(--text2);font-size:11px;max-width:42ch;line-height:1.6">
+    Angel Accounts sign-in is not configured on this Arena, so there is no way in from a browser.
+    Machine access is unchanged: send <code>X-Admin-Token</code> to <code>/api/v1/admin/*</code>.
   </div>
   <div class="error" id="loginError"></div>
 </div>
@@ -2275,7 +2276,26 @@ tr:hover td{background:rgba(88,166,255,0.07)}
 
 <script>
 // ========== State ==========
-let token = localStorage.getItem('arena_admin_token') || '';
+/*
+ * The panel holds no admin token of its own.
+ *
+ * A person signs in through Angel Accounts and the session cookie carries the
+ * authority; there is no longer anywhere to type a token, because a token that
+ * a browser can hold is a token that anything reaching this origin can read.
+ * The variable stays because api() still speaks the X-Admin-Token protocol —
+ * that is the machine path (bots, scripts, and the break-glass curl for when
+ * Accounts itself is what is down) and is deliberately untouched. Nothing in
+ * this page sets it.
+ */
+let token = '';
+try {
+  // Older versions of this panel persisted one. Take it out of storage on
+  // sight: nothing reads it now, and leaving it there leaves a live admin
+  // credential in every browser that ever signed in this way.
+  localStorage.removeItem('arena_admin_token');
+} catch (e) {
+  /* Storage unavailable. Nothing was read from it either. */
+}
 let sseSource = null; // AbortController for the active fetch stream
 let sseReconnectTimer = null;
 let sseLastEventId = 0;
@@ -2485,28 +2505,10 @@ async function api(path, opts={}) {
 }
 
 // ========== Auth ==========
-function doLogin() {
-  const t = document.getElementById('tokenInput').value.trim();
-  if (!t) return;
-  token = t;
-  localStorage.setItem('arena_admin_token', token);
-  testAuth();
-}
-
-async function testAuth() {
-  try {
-    await api('/dashboard/overview');
-    showApp();
-  } catch(e) {
-    document.getElementById('loginError').textContent = e.message || 'Invalid token';
-    localStorage.removeItem('arena_admin_token');
-    token = '';
-  }
-}
+// Signing in is startDeskSignIn(); there is no token form to submit.
 
 function logout() {
   token = '';
-  localStorage.removeItem('arena_admin_token');
   // Only forgets what this tab was using. The Accounts session itself is
   // ended by deskSignOut(); a lapsed or refused desk grant lands here too.
   ssoSession = null;
@@ -7068,12 +7070,18 @@ const urlTab = new URLSearchParams(window.location.search).get('tab');
       }
     }
   } catch(e) {
-    // No customer sign-in configured on this deployment — token auth only.
+    // The session endpoint is unreachable. There is nothing else to offer.
   }
 
-  // Fall back to token auth
-  if (token) {
-    testAuth();
+  /*
+   * Angel Accounts is the only way in from a browser. When it is not on offer
+   * — unconfigured here, or the endpoint did not answer — say so rather than
+   * leaving somebody looking at an empty screen wondering what to type. The
+   * machine path is unchanged and is how an operator gets in from a terminal
+   * when Accounts is the thing that is down.
+   */
+  if (!ssoEnabled) {
+    document.getElementById('ssoUnavailable').style.display = '';
   }
 })();
 </script>
