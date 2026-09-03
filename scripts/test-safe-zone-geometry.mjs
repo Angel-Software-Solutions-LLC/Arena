@@ -26,7 +26,7 @@ assert.ok(verticesPerRing <= 4225, `safe-zone ring vertex budget exceeded: ${ver
 assert.ok(indicesPerRing <= 25350, `safe-zone ring index budget exceeded: ${indicesPerRing}`);
 assert.ok(verticesPerRing * 2 <= 8450, 'both safe-zone rings must stay under 8,450 vertices');
 assert.ok(indicesPerRing * 2 <= 50700, 'both safe-zone rings must stay under 50,700 indices');
-assert.match(engineSource, /environment\.js\?v=20260903a/,
+assert.match(engineSource, /environment\.js\?v=20260903b/,
   'the renderer entrypoint must invalidate cached pre-budget environment geometry');
 
 console.log(`safe-zone geometry budget: ${segments} segments, <=${verticesPerRing} vertices and <=${indicesPerRing} indices per ring`);

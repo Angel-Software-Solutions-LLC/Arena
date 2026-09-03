@@ -81,21 +81,22 @@ For local experiments, `ARENA_DB_OPTIONAL=true` can let the server run in a degr
   [cosmetics-and-monetization.md](cosmetics-and-monetization.md).
 - Admin APIs separate people from machines, and admit each on its own terms.
 - **Humans:** Angel Accounts is the single source of human admin authority,
-  through two claims on the verified ID token. The support-desk role arrives
-  as `staff: true` (with `staff_role` recorded for audit); a product
-  administrator for Arena arrives as `product_admin: true`. Either claim,
-  present as the literal `true`, opens the Admin Panel and the admin API. The
-  claims are read only from the validated ID token, decided on presence
-  rather than truthiness (a string `"true"`, `false` or an absent claim admits
-  nobody), and never persisted; see `go-arena/internal/api/platform_admin.go`.
-  The audit principal says which claim admitted the actor:
-  `accounts-staff:<account_id>[:role]` for the desk role,
-  `accounts-product-admin:<account_id>` for a product grant (the desk role
-  wins when both are present), and `GET /api/v1/admin/session` reports the
-  same `authority`. Authority lapses on `ARENA_OIDC_SESSION_TTL_HOURS` and is
-  re-read at the next sign-in, so withdrawing either grant in Accounts revokes
-  it with nothing to clean up in Arena. A customer cookie without one of the
-  claims is a customer, never an administrator. Because the panel acts on the
+  through one claim on the verified ID token: `product_admin: true`, the
+  per-person, per-product grant the desk makes from somebody's record in the
+  Accounts console. Present as the literal `true`, it opens the Admin Panel
+  and the admin API; nothing else does. `staff: true` (with `staff_role`)
+  identifies a support-desk sign-in and is recorded for audit — it grants
+  nothing, and a desk owner who has not been granted Arena reaches no more of
+  the panel than any customer. The claim is read only from the validated ID
+  token, decided on presence rather than truthiness (a string `"true"`,
+  `false` or an absent claim admits nobody), and never persisted; see
+  `go-arena/internal/api/platform_admin.go`. The audit principal is
+  `accounts-product-admin:<account_id>`, with the desk role appended when the
+  administrator also works the desk, and `GET /api/v1/admin/session` reports
+  the same `authority`. Authority lapses on `ARENA_OIDC_SESSION_TTL_HOURS`
+  and is re-read at the next sign-in, so revoking the grant in Accounts
+  removes it with nothing to clean up in Arena. A customer cookie without the
+  grant is a customer, never an administrator. Because the panel acts on the
   ordinary `arena_customer_session` cookie, its mutations are held to the same
   same-origin and CSRF checks as every other customer mutation.
 - **Retired:** Arena's own admin SSO application — its issuer and client
@@ -109,7 +110,7 @@ For local experiments, `ARENA_DB_OPTIONAL=true` can let the server run in a degr
 - **Machines:** `ARENA_ADMIN_TOKEN`, database-issued admin tokens presented as
   `X-Admin-Token`, and the `ARENA_ADMIN_LOCALHOST_BYPASS` loopback path are
   unchanged. They authenticate automation, not identities, so nothing about
-  the desk claim applies to them.
+  the product-admin grant applies to them.
 - **Break-glass:** if Angel Accounts is unreachable, those machine paths are
   the way in — an operator on the host uses the loopback bypass, or a holder of
   `ARENA_ADMIN_TOKEN` or a database-issued token uses `X-Admin-Token`. That is

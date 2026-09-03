@@ -169,9 +169,9 @@ func NewRouter(engine *game.GameEngine, opts ...RouterOption) *chi.Mux {
 	 * The Arena-operated admin SSO application those served, and the
 	 * ARENA_OIDC_ADMIN_EMAILS allowlist that admitted people to it, are
 	 * retired: a human administrator signs in at Angel Accounts like any
-	 * other customer and is admitted by the support-desk role on that
+	 * other customer and is admitted by the Arena product-admin grant on that
 	 * sign-in. /api/v1/admin/session stays, because the Admin Panel reads it
-	 * to decide what to draw — it now reports that desk claim.
+	 * to decide what to draw — it now reports that grant.
 	 */
 	if customerOIDCHandler != nil {
 		r.Get("/api/v1/admin/session", customerOIDCHandler.AdminSessionInfoHandler)

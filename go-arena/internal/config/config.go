@@ -403,8 +403,8 @@ type Config struct {
 	//
 	// That application — its issuer, its client credentials, its
 	// arena_admin_session cookie and the ARENA_OIDC_ADMIN_EMAILS allowlist
-	// that admitted people to it — is retired. The support-desk role in Angel
-	// Accounts is the single source of HUMAN admin authority, so a second
+	// that admitted people to it — is retired. The Arena product-admin grant
+	// in Angel Accounts is the single source of HUMAN admin authority, so a second
 	// list of addresses maintained by hand in Arena's environment was a
 	// second answer to a question that must have exactly one, and the only
 	// one nothing revoked. ARENA_ADMIN_TOKEN, database-issued admin tokens
@@ -830,7 +830,8 @@ func warnInsecureDefaults() {
 			slog.Warn("SECURITY: ARENA_ADMIN_TOKEN is not set and " +
 				"ARENA_ADMIN_LOCALHOST_BYPASS is disabled — the admin API cannot " +
 				"be authenticated at all unless a DB-issued admin token exists or " +
-				"an Angel Accounts support-desk sign-in is configured")
+				"an Angel Accounts sign-in carrying an Arena product-admin grant " +
+				"is configured")
 		}
 	}
 }
