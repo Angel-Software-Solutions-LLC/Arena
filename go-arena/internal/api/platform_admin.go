@@ -18,24 +18,36 @@ import (
  * decision; it does not make one of its own and it does not keep a copy.
  *
  * The contract (Accounts' OIDC product integration standard, "Platform
- * administrators"): two claims admit, and either one is enough.
+ * administrators"): exactly one claim admits.
  *
- *   - `staff: true` (with `staff_role` for audit) marks the support desk —
- *     the identities that administer every Angel product.
- *   - `product_admin: true` marks a per-person, per-product grant: somebody
- *     the desk has made an administrator of Arena specifically. Accounts
- *     computes it against the product the token was minted for, so on a
- *     token Arena verified it can only mean Arena.
+ *   - `product_admin: true` is a per-person, per-product grant: somebody the
+ *     desk has deliberately made an administrator of Arena. Accounts computes
+ *     it against the product the token was minted for, so on a token Arena
+ *     verified it can only mean Arena. It is the whole of the answer.
+ *   - `staff: true` (with `staff_role`) marks the support desk. It is
+ *     identification, not authority: it says the person signing in works the
+ *     desk, and Arena records it on the sign-in line so an operator can see
+ *     who was here. It opens nothing. A desk owner who has not been granted
+ *     Arena reaches exactly as much of the admin panel as any customer does,
+ *     which is none of it.
  *   - Everybody else carries neither claim. There is deliberately no
- *     `staff: false` or `product_admin: false`, so the question Arena asks
- *     is whether a claim is PRESENT and true — never whether some value is
- *     truthy, and never anything about an address, an account name, or any
+ *     `product_admin: false` or `staff: false`, so the question Arena asks is
+ *     whether the grant claim is PRESENT and true — never whether some value
+ *     is truthy, and never anything about an address, an account name, or any
  *     other signal.
  *   - Both are computed when the token is minted. They are facts about that
  *     sign-in, not properties of the account, so they are never written down.
- *   - `staff_role` is an open vocabulary. An unrecognised value means "an
- *     administrator, nothing finer" — not "not an administrator", and not a
- *     reason to guess at a permission level Accounts did not describe.
+ *
+ * The desk claim used to admit as well, and that is the bug this shape exists
+ * to prevent: it made every owner and admin of the support desk an
+ * administrator of every Angel product at once, with nothing provisioned and
+ * nothing to revoke per product. Administering Arena is now something somebody
+ * is given, one product at a time, from that person's record in the Accounts
+ * console — and taking it away is revoking that one grant.
+ *
+ * `staff_role` is an open vocabulary and nothing branches on it: it is carried
+ * for audit, beside `staff: true`, and an unrecognised value is recorded as it
+ * arrived.
  *
  * Administering the platform is orthogonal to owning things on it. Nothing
  * here touches an entitlement check; see customer_entitlements.go.
@@ -47,22 +59,21 @@ const (
 	platformAdminProductClaim = "product_admin"
 )
 
-// The two ways a sign-in can carry administrator authority, named the way
-// the principal and the session-info endpoint report them.
-const (
-	platformAdminAuthorityStaff   = "staff"
-	platformAdminAuthorityProduct = "product_admin"
-)
+// The one way a sign-in can carry administrator authority, named the way the
+// principal and the session-info endpoint report it. It stays a named value
+// rather than a bare string because the contract says to expect further
+// administrator claims one day, and this is where a second one would land.
+const platformAdminAuthorityProduct = "product_admin"
 
-// verifiedPlatformAdmin is what one validated id_token said about whether the
-// person signing in administers the platform.
+// verifiedPlatformAdmin is what one validated id_token said about the person
+// signing in: whether they administer Arena, and whether they work the desk.
 //
-// Present is the whole answer. Staff and ProductAdmin record which claim (or
-// claims) said so — for the audit principal and the panel, never for a
-// permission decision: both admit to exactly the same routes. Role is carried
-// for audit and for a future that distinguishes roles; today nothing branches
-// on it, because the contract says an unrecognised role is still an
-// administrator and Arena has no business inventing the finer grades.
+// Present — the Arena grant, and the whole of the authority answer — is
+// ProductAdmin and nothing else. Staff and Role are the desk claim, recorded
+// so the sign-in line and the panel can say a desk identity was here; neither
+// is ever consulted to decide a route. Keeping them apart is the point: the
+// two questions "may this person administer Arena" and "does this person work
+// for us" have different answers and used to share one.
 type verifiedPlatformAdmin struct {
 	Present      bool
 	Staff        bool
@@ -70,32 +81,33 @@ type verifiedPlatformAdmin struct {
 	Role         string
 }
 
-// authority names the claim that admitted this sign-in. The desk claim is
-// reported when both are present: it is the wider authority, and the
-// per-product grant adds nothing to it.
+// authority names the claim that admitted this sign-in, or "" for a sign-in
+// that was not admitted. Only the per-product grant admits, so a desk identity
+// without one has no authority to name.
 func (a verifiedPlatformAdmin) authority() string {
-	switch {
-	case a.Staff:
-		return platformAdminAuthorityStaff
-	case a.ProductAdmin:
+	if a.ProductAdmin {
 		return platformAdminAuthorityProduct
-	default:
-		return ""
 	}
+	return ""
 }
 
 // platformAdminGrant is administrator authority as held by one signed-in
 // session, and it exists only in memory.
 //
-// There is no column for this anywhere, and that is the design: the desk role
-// in Accounts is the single source of truth, so a revocation has to take
-// effect on its own. A durable flag would need somebody to remember to clear
-// it, and the day nobody does is the day a former administrator still has the
-// panel.
+// There is no column for this anywhere, and that is the design: the grant in
+// Accounts is the single source of truth, so a revocation has to take effect
+// on its own. A durable flag would need somebody to remember to clear it, and
+// the day nobody does is the day a former administrator still has the panel.
 type platformAdminGrant struct {
-	// Authority is which claim admitted the sign-in: "staff" or
-	// "product_admin". Bounded by the same window either way.
+	// Authority is which claim admitted the sign-in. Today the per-product
+	// grant is the only one that does, so this is always "product_admin";
+	// it is reported rather than assumed so that a second administrator
+	// claim, when the contract grows one, is distinguishable in an audit
+	// line without changing what this one means.
 	Authority string
+	// Role is the desk role, when the administrator also happens to work the
+	// desk. Audit only, and empty for everybody else — a desk role has not
+	// admitted anybody since the per-product grant became the only key.
 	Role      string
 	GrantedAt time.Time
 	ExpiresAt time.Time
@@ -150,28 +162,26 @@ func claimIsTrue(claims map[string]json.RawMessage, name string) bool {
 }
 
 // platformAdminFromVerifiedClaims applies the presence rule to the claim set
-// of an already-verified token: `staff: true` or `product_admin: true`
-// admits, and nothing else does.
+// of an already-verified token: `product_admin: true` admits, and nothing
+// else does. `staff: true` is read too, but only so the sign-in can be
+// recorded as a desk identity — it decides nothing.
 func platformAdminFromVerifiedClaims(claims map[string]json.RawMessage) verifiedPlatformAdmin {
 	staff := claimIsTrue(claims, platformAdminStaffClaim)
 	productAdmin := claimIsTrue(claims, platformAdminProductClaim)
-	if !staff && !productAdmin {
-		return verifiedPlatformAdmin{}
-	}
 	role := ""
 	if staff {
 		if rawRole, ok := claims[platformAdminRoleClaim]; ok {
 			// A role that is not a string is dropped rather than rejected:
-			// the vocabulary is open and the administrator answer has already
-			// been given by `staff`. A role is only ever read beside `staff`
-			// — it describes the desk, and a product grant has no roles.
+			// the vocabulary is open and the role is audit detail either way.
+			// It is only ever read beside `staff` — it describes the desk,
+			// and a product grant has no roles.
 			var decoded string
 			if err := json.Unmarshal(rawRole, &decoded); err == nil {
 				role = strings.TrimSpace(decoded)
 			}
 		}
 	}
-	return verifiedPlatformAdmin{Present: true, Staff: staff, ProductAdmin: productAdmin, Role: role}
+	return verifiedPlatformAdmin{Present: productAdmin, Staff: staff, ProductAdmin: productAdmin, Role: role}
 }
 
 // platformAdminFromIDToken reads the claim from a token the verifier has
@@ -218,15 +228,12 @@ func (s *CustomerSession) platformAdminGrantAt(now time.Time) (platformAdminGran
 // platformAdminPrincipalName is the audit identity for one admitted session.
 //
 // The account id, and not the address — the same rule the sign-in log line
-// follows. A desk sign-in is `accounts-staff:<account_id>[:role]`, with the
-// role appended when Accounts named one; a per-product grant is
-// `accounts-product-admin:<account_id>`, so an operator reading an audit row
-// can tell which kind of authority acted without looking anything up.
+// follows. Every admitted session holds a per-product grant, so every
+// principal reads `accounts-product-admin:<account_id>`; where that person
+// also works the desk their role is appended, which is audit detail about who
+// acted and never about what let them in.
 func platformAdminPrincipalName(accountID string, grant platformAdminGrant) string {
-	if grant.Authority == platformAdminAuthorityProduct {
-		return "accounts-product-admin:" + accountID
-	}
-	principal := "accounts-staff:" + accountID
+	principal := "accounts-product-admin:" + accountID
 	if grant.Role != "" {
 		principal += ":" + grant.Role
 	}
@@ -296,8 +303,8 @@ func adminPanelPath(r *http.Request) string {
 
 /*
  * AdminSessionInfoHandler is what the Admin Panel reads before it draws
- * anything, and it is answered entirely by the Angel Accounts administrator
- * claims — the desk role or the per-product grant.
+ * anything, and it is answered entirely by the Angel Accounts per-product
+ * administrator grant.
  *
  * The panel used to ask this of an Arena-operated admin SSO application with
  * its own cookie and its own email allowlist. Both are retired: a human
@@ -316,42 +323,60 @@ func adminPanelPath(r *http.Request) string {
 func (h *CustomerOIDCHandler) AdminSessionInfoHandler(w http.ResponseWriter, r *http.Request) {
 	setCustomerNoStore(w)
 	loginEnabled := customerAccountAuthEnabled(h)
-	unauthenticated := func() {
+	/*
+	 * signedIn separates "nobody is here" from "somebody is here who may not
+	 * come in", which is the difference between offering a sign-in and
+	 * explaining why signing in again will not help. It is not a leak: the
+	 * browser holding the cookie can already read the same fact from
+	 * /api/v1/account/session, and nothing about the grant is disclosed —
+	 * only that this session does not hold one.
+	 */
+	unauthenticated := func(signedIn bool) {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"authenticated": false,
+			"signed_in":     signedIn,
 			"login_enabled": loginEnabled,
 			"login_url":     customerAPIDashboardPath(r, "/login") + "?return_to=" + url.QueryEscape(adminPanelPath(r)),
 		})
 	}
 	if h == nil {
-		unauthenticated()
+		unauthenticated(false)
 		return
 	}
 	session := h.GetSession(r)
 	if session == nil {
-		unauthenticated()
+		unauthenticated(false)
 		return
 	}
 	h.refreshSessionCookie(w, r, session)
 	grant, isAdmin := session.platformAdminGrantAt(time.Now())
 	if !isAdmin {
 		/*
-		 * Signed in, but with neither claim. This is reported as "not
+		 * Signed in, but holding no Arena grant. Reported as "not
 		 * authenticated" on purpose: as far as the Admin Panel is concerned
-		 * that is the whole truth, and the panel has nothing else to offer a
-		 * customer. Signing out first is not required — signing in again once
-		 * the desk role or the product grant exists re-reads the claims.
+		 * that is the whole truth, and the panel has nothing else to offer.
+		 * A desk identity lands here too, and that is the point — working the
+		 * desk is not administering Arena. Signing out first is not required:
+		 * signing in again once the grant exists re-reads the claims.
+		 *
+		 * `signed_in` is what stops that being a dead end. Somebody who has
+		 * just completed a sign-in and arrived back here needs to be told that
+		 * the sign-in worked and the grant is what is missing; without it the
+		 * panel can only offer the same button again.
 		 */
-		unauthenticated()
+		unauthenticated(true)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"authenticated": true,
+		"signed_in":     true,
 		"login_enabled": loginEnabled,
-		// Which claim admitted this sign-in: "staff" or "product_admin".
-		// Named for audit, exactly as the principal is. Nothing branches on it.
+		// Which claim admitted this sign-in — "product_admin", the only one
+		// that does. Named for audit, exactly as the principal is. Nothing
+		// branches on it.
 		"authority": grant.Authority,
-		// The desk role, when Accounts named one; empty for a product grant.
+		// The desk role, when this administrator also works the desk and
+		// Accounts named one. Empty for everybody else, and never authority.
 		"role": grant.Role,
 		"name": session.Name,
 		// The account id, never an address — the same rule the sign-in log
@@ -370,6 +395,7 @@ func AdminSessionUnavailableHandler(w http.ResponseWriter, _ *http.Request) {
 	setCustomerNoStore(w)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"authenticated": false,
+		"signed_in":     false,
 		"login_enabled": false,
 	})
 }
