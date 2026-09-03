@@ -18,6 +18,7 @@ import (
 	"arena-server/internal/config"
 	"arena-server/internal/db"
 	"arena-server/internal/platform"
+	"arena-server/internal/security"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
@@ -105,6 +106,12 @@ type CustomerOIDCHandler struct {
 	// subscription sync affected, so the ones in the arena can be re-read.
 	// Set by the router, which is where the engine lives.
 	onSubscriptionSynced func(context.Context, []string)
+
+	// issParamRequired mirrors the provider's
+	// authorization_response_iss_parameter_supported. When Accounts says it
+	// stamps the callback with its own issuer, a callback that arrives without
+	// one did not come from Accounts, and RFC 9207 says to refuse it.
+	issParamRequired bool
 
 	sessions map[string]*CustomerSession
 	states   map[string]customerOIDCTransaction
@@ -199,6 +206,7 @@ func newCustomerOIDCHandlerWithAuthority(authority platform.IdentityAuthority) *
 				}
 				h.verifier = provider.Verifier(&oidc.Config{ClientID: cfg.CustomerOIDCClientID})
 				h.issuer = cfg.CustomerOIDCIssuer
+				h.issParamRequired = issuerParameterSupported(provider)
 				slog.Info("customer OIDC auth initialised", "issuer", cfg.CustomerOIDCIssuer)
 			}
 		}
@@ -230,6 +238,26 @@ func entitlementsEndpoint(provider *oidc.Provider) string {
 	return strings.TrimSpace(discovery.EntitlementsEndpoint)
 }
 
+// issuerParameterSupported reports whether Accounts stamps its authorization
+// responses with an `iss` parameter (RFC 9207).
+//
+// Read from the discovery document rather than assumed, so this configures
+// itself: a provider that does not send one is not held to a check it cannot
+// pass, and the day it starts sending one the check turns itself on.
+func issuerParameterSupported(provider *oidc.Provider) bool {
+	if provider == nil {
+		return false
+	}
+	var discovery struct {
+		IssParameterSupported bool `json:"authorization_response_iss_parameter_supported"`
+	}
+	if err := provider.Claims(&discovery); err != nil {
+		slog.Warn("could not read the accounts discovery document", "error", err)
+		return false
+	}
+	return discovery.IssParameterSupported
+}
+
 func customerDashboardPath(r *http.Request) string {
 	if strings.HasPrefix(r.URL.Path, "/arena/") {
 		return "/arena/dashboard/"
@@ -244,8 +272,22 @@ func customerAPIDashboardPath(r *http.Request, suffix string) string {
 	return "/api/v1/dashboard" + suffix
 }
 
+// secureCookie decides whether the Secure attribute goes on a cookie.
+//
+// A direct TLS connection settles it. Otherwise the only evidence is
+// X-Forwarded-Proto, which is a claim made by whoever sent the request — so it
+// is believed only from a peer inside ARENA_TRUSTED_PROXY_CIDRS, exactly as
+// security.ExtractClientIP treats the forwarded client address. Arena reaches
+// the internet only through Caddy, which is that peer; a client that connects
+// some other way does not get to describe its own transport.
 func secureCookie(r *http.Request) bool {
-	return r.TLS != nil || strings.EqualFold(strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Proto"), ",")[0]), "https")
+	if r.TLS != nil {
+		return true
+	}
+	if !security.RequestFromTrustedProxy(r) {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Proto"), ",")[0]), "https")
 }
 
 func setCustomerNoStore(w http.ResponseWriter) {
@@ -287,6 +329,72 @@ func safeCustomerReturnTo(r *http.Request) string {
 	return raw
 }
 
+// rememberLoginTransaction records a sign-in that has just been sent to
+// Accounts.
+//
+// The database is authoritative, so a sign-in survives the process that
+// started it — Release Control redeploys Arena on its own, and a browser that
+// came back from Accounts to a fresh process used to be told its state was
+// invalid with no way to tell that from a forgery. The in-process map remains
+// the fallback for a run with no database at all, which is how the tests and a
+// bare local Arena come up.
+func (h *CustomerOIDCHandler) rememberLoginTransaction(ctx context.Context, state string, txn customerOIDCTransaction) {
+	stateHash := sha256.Sum256([]byte(state))
+	err := db.InsertCustomerLoginTransaction(ctx, stateHash[:], txn.BrowserBindingDigest[:],
+		txn.Nonce, txn.PKCEVerifier, txn.ReturnTo, txn.Popup, txn.ExpiresAt)
+	if err == nil {
+		return
+	}
+	if !errors.Is(err, db.ErrNoDatabase) {
+		slog.Warn("could not persist the sign-in transaction; holding it in memory", "error", err)
+	}
+	h.mu.Lock()
+	h.states[state] = txn
+	h.mu.Unlock()
+}
+
+// claimLoginTransaction consumes a sign-in exactly once and proves the browser
+// finishing it is the one that started it.
+//
+// The binding digest is compared here rather than in SQL so the comparison is
+// constant-time: a row found by state alone is worthless without the cookie,
+// and how long the comparison takes must not say how close a guess was.
+func (h *CustomerOIDCHandler) claimLoginTransaction(
+	ctx context.Context, state string, binding [sha256.Size]byte,
+) (customerOIDCTransaction, bool) {
+	stateHash := sha256.Sum256([]byte(state))
+	stored, found, err := db.ConsumeCustomerLoginTransaction(ctx, stateHash[:])
+	switch {
+	case err != nil && !errors.Is(err, db.ErrNoDatabase):
+		slog.Warn("could not read the sign-in transaction", "error", err)
+	case found:
+		if len(stored.BrowserBindingDigest) != sha256.Size ||
+			subtle.ConstantTimeCompare(stored.BrowserBindingDigest, binding[:]) != 1 {
+			return customerOIDCTransaction{}, false
+		}
+		txn := customerOIDCTransaction{
+			ExpiresAt:    stored.ExpiresAt,
+			Nonce:        stored.Nonce,
+			PKCEVerifier: stored.PKCEVerifier,
+			ReturnTo:     stored.ReturnTo,
+			Popup:        stored.Popup,
+		}
+		copy(txn.BrowserBindingDigest[:], stored.BrowserBindingDigest)
+		return txn, true
+	}
+	// No row, no database, or a database that failed: a transaction written to
+	// memory by the fallback above is still a legitimate sign-in.
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	candidate, exists := h.states[state]
+	if !exists || !time.Now().Before(candidate.ExpiresAt) ||
+		subtle.ConstantTimeCompare(binding[:], candidate.BrowserBindingDigest[:]) != 1 {
+		return customerOIDCTransaction{}, false
+	}
+	delete(h.states, state)
+	return candidate, true
+}
+
 func (h *CustomerOIDCHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	setCustomerNoStore(w)
 	if h == nil || h.oauth2Config == nil {
@@ -305,9 +413,7 @@ func (h *CustomerOIDCHandler) LoginHandler(w http.ResponseWriter, r *http.Reques
 		ReturnTo:             safeCustomerReturnTo(r),
 		Popup:                r.URL.Query().Get("popup") == "1",
 	}
-	h.mu.Lock()
-	h.states[state] = txn
-	h.mu.Unlock()
+	h.rememberLoginTransaction(r.Context(), state, txn)
 	http.SetCookie(w, &http.Cookie{
 		Name:     customerStateCookieName,
 		Value:    browserBinding,
@@ -336,18 +442,36 @@ func (h *CustomerOIDCHandler) CallbackHandler(w http.ResponseWriter, r *http.Req
 	validState := false
 	if cookieErr == nil && state != "" && stateCookie.Value != "" {
 		bindingDigest := sha256.Sum256([]byte(stateCookie.Value))
-		h.mu.Lock()
-		if candidate, exists := h.states[state]; exists && time.Now().Before(candidate.ExpiresAt) &&
-			subtle.ConstantTimeCompare(bindingDigest[:], candidate.BrowserBindingDigest[:]) == 1 {
-			txn = candidate
-			validState = true
-			delete(h.states, state)
-		}
-		h.mu.Unlock()
+		txn, validState = h.claimLoginTransaction(r.Context(), state, bindingDigest)
 	}
 	clearCustomerCookie(w, r, customerStateCookieName)
 	if !validState {
 		http.Error(w, "invalid or expired state parameter", http.StatusBadRequest)
+		return
+	}
+	/*
+	 * RFC 9207: the authorization response carries the issuer that produced
+	 * it, and a client that talks to more than one provider must check it or
+	 * an attacker can have one provider's response accepted as another's.
+	 * Arena talks only to Accounts today, which makes this cheap insurance
+	 * rather than a live defence — but it is the check that stops the day a
+	 * second issuer is added from silently being the day the mix-up becomes
+	 * possible. Kynetik already does this; the two products should not differ
+	 * on what they will accept as a sign-in.
+	 *
+	 * Required only when the provider advertises that it sends one, so a
+	 * missing parameter is a real anomaly rather than a provider that never
+	 * promised it.
+	 */
+	responseIssuer := strings.TrimSpace(r.URL.Query().Get("iss"))
+	if h.issParamRequired && responseIssuer == "" {
+		slog.Warn("customer OIDC callback omitted the iss parameter the provider advertises")
+		http.Error(w, "authorization response is missing its issuer", http.StatusForbidden)
+		return
+	}
+	if responseIssuer != "" && subtle.ConstantTimeCompare([]byte(responseIssuer), []byte(h.issuer)) != 1 {
+		slog.Warn("customer OIDC callback carried an unexpected issuer", "issuer", responseIssuer)
+		http.Error(w, "authorization response came from an unexpected issuer", http.StatusForbidden)
 		return
 	}
 	if errParam := r.URL.Query().Get("error"); errParam != "" {
@@ -848,6 +972,9 @@ func (h *CustomerOIDCHandler) cleanupLoop() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		if err := db.DeleteExpiredCustomerSessions(ctx); err != nil && !errors.Is(err, db.ErrNoDatabase) {
 			slog.Warn("failed to purge expired customer sessions", "error", err)
+		}
+		if err := db.DeleteExpiredCustomerLoginTransactions(ctx); err != nil && !errors.Is(err, db.ErrNoDatabase) {
+			slog.Warn("failed to purge expired sign-in transactions", "error", err)
 		}
 		cancel()
 	}
