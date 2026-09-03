@@ -7,8 +7,8 @@
 
 import { CameraController } from './camera.js?v=20260718b';
 import { BotRenderer } from './bots.js?v=20260718o';
-import { EnvironmentRenderer } from './environment.js?v=20260810e';
-import { ObstacleRenderer } from './obstacles.js?v=20260810e';
+import { EnvironmentRenderer } from './environment.js?v=20260903a';
+import { ObstacleRenderer } from './obstacles.js?v=20260903a';
 import { IntermissionDirector } from './intermission-director.js?v=20260718h';
 import { PickupRenderer } from './pickups.js?v=20260714f';
 import { EffectRenderer } from './effects.js?v=20260718c';
