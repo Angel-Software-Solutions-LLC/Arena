@@ -17,12 +17,12 @@ import { isSignedOut, signInAvailability, startSignIn, watchSignInState } from '
  * @module m/mobile
  */
 
-import { ArenaEngine } from '../js/renderer/engine.js?v=20260903a';
+import { ArenaEngine } from '../js/renderer/engine.js?v=20260903b';
 import { Minimap } from '../js/renderer/minimap.js?v=20260718c';
 import { SpectatorSocket } from '../js/spectator-ws.js';
 import { apiPath, appPath, wsURL } from '../js/paths.js?v=20260710a';
 import { handleServiceStatus, initServiceStatus } from '../js/service-status.js?v=20260810c';
-import { installClientErrorReporting } from '../js/client-errors.js?v=20260903a';
+import { installClientErrorReporting } from '../js/client-errors.js?v=20260903b';
 
 // Install before anything else so failures during startup are reported too.
 installClientErrorReporting();
@@ -426,8 +426,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   } catch (err) {
     console.error('[Mobile] Engine init failed:', err);
   }
+  // engine.canvas, not the element read above: a failed WebGPU init replaces
+  // the canvas, because an element that has answered getContext('webgpu') can
+  // never present a WebGL context again. The engine owns which element is
+  // live; observing the detached one would report a zero-sized box forever.
   const stopSafeViewport = observeArenaSafeViewport(
-    canvas,
+    engine.canvas,
     (viewport) => engine.setSafeViewport(viewport),
     MOBILE_SAFE_VIEWPORT_REGIONS,
   );

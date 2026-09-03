@@ -7,7 +7,7 @@ import './babylon-runtime.js?v=20260810d';
  * @module app
  */
 
-import { ArenaEngine } from './renderer/engine.js?v=20260903a';
+import { ArenaEngine } from './renderer/engine.js?v=20260903b';
 import { HudRenderer } from './renderer/hud.js?v=20260810c';
 import { Minimap } from './renderer/minimap.js?v=20260718c';
 import { SpectatorSocket } from './spectator-ws.js';
@@ -17,7 +17,7 @@ import { isEnabled, onSettingsChange } from './settings.js';
 import { initSettingsPanel } from './settings-panel.js';
 import { apiPath, appPath, wsURL } from './paths.js?v=20260710a';
 import { handleServiceStatus } from './service-status.js?v=20260810c';
-import { installClientErrorReporting } from './client-errors.js?v=20260903a';
+import { installClientErrorReporting } from './client-errors.js?v=20260903b';
 
 // Install before anything else so failures during startup are reported too.
 installClientErrorReporting();
@@ -101,8 +101,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   } catch (err) {
     console.error('[App] Engine init failed:', err);
   }
+  // arenaEngine.canvas, not the element read above: a failed WebGPU init
+  // replaces the canvas, because an element that has answered getContext
+  // ('webgpu') can never present a WebGL context again. The engine owns which
+  // element is live; observing the detached one would report a zero-sized box
+  // forever.
   const stopSafeViewport = observeArenaSafeViewport(
-    canvas,
+    arenaEngine.canvas,
     (viewport) => arenaEngine.setSafeViewport(viewport),
   );
   window.addEventListener('pagehide', stopSafeViewport, { once: true });

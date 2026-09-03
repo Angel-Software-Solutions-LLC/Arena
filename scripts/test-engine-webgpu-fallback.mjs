@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 const source = readFileSync(new URL('../frontend/js/renderer/engine.js', import.meta.url), 'utf8');
 const isolatedSource = source.replace(/import[\s\S]*?from '[^']+';\r?\n/g, '');
 const moduleURL = `data:text/javascript;base64,${Buffer.from(isolatedSource).toString('base64')}`;
-const { webGPUAvailableWithin } = await import(moduleURL);
+const { webGPUAvailableWithin, ArenaEngine, replaceCanvasElement } = await import(moduleURL);
 
 assert.match(
   source,
@@ -88,3 +88,113 @@ assert.match(fallbackSrc, /engine\.dispose\(\)/,
   'the failed WebGPU engine must be disposed before a second engine is attached to the same canvas');
 
 console.log('a failed WebGPU init disposes its half-built engine instead of stranding it on the canvas');
+
+// Regression gate for the OTHER half of that blank arena, and the half the
+// dispose above does not cover.
+//
+// A canvas element keeps its rendering context for life: the first getContext()
+// to succeed fixes the type, any later call for a different type returns null,
+// and nothing gives the element back. B.WebGPUEngine asks for 'webgpu' in its
+// CONSTRUCTOR, before initAsync() can fail, so by the time the fallback runs the
+// canvas is a WebGPU canvas permanently. Disposing frees the device and leaves
+// the element claimed and presenting nothing, while a perfectly healthy WebGL
+// engine renders into a context the compositor never reads — the blank arena
+// with a working HUD that survived the dispose fix.
+//
+// This drives the real ArenaEngine.init() against a canvas that enforces the
+// spec's one-context-per-element rule, rather than matching on source text: the
+// question is which element the WebGL engine is handed, and only running it
+// answers that.
+{
+  let nextId = 0;
+  const makeCanvas = () => ({
+    _id: nextId++,
+    _context: null,
+    parentNode: null,
+    getContext(type) {
+      if (this._context && this._context !== type) return null;
+      this._context = type;
+      return { type };
+    },
+    cloneNode() { return makeCanvas(); },
+    replaceWith(next) {
+      const parent = this.parentNode;
+      if (!parent) return;
+      parent.children[parent.children.indexOf(this)] = next;
+      next.parentNode = parent;
+      this.parentNode = null;
+    },
+    getBoundingClientRect: () => ({ width: 800, height: 600 }),
+  });
+
+  const container = { children: [] };
+  const canvas = makeCanvas();
+  container.children.push(canvas);
+  canvas.parentNode = container;
+
+  let webgpuCanvas = null;
+  let webglCanvas = null;
+  const previousWindow = globalThis.window;
+  const previousLocation = globalThis.location;
+  globalThis.location = { search: '' };
+  globalThis.window = {
+    devicePixelRatio: 1,
+    BABYLON: {
+      WebGPUEngine: class {
+        static IsSupportedAsync = Promise.resolve(true);
+        constructor(c) { webgpuCanvas = c; c.getContext('webgpu'); }
+        async initAsync() { throw new Error('WebGPU device request failed'); }
+        dispose() {}
+      },
+      Engine: class {
+        constructor(c) { webglCanvas = c; this.context = c.getContext('webgl2'); }
+        getHardwareScalingLevel() { return 1; }
+        setHardwareScalingLevel() {}
+        resize() {}
+      },
+    },
+  };
+  try {
+    // init() carries on into scene construction this harness deliberately does
+    // not stub. Both engines have been built by then, which is the whole
+    // question here, so the throw past that point is expected and ignored.
+    await new ArenaEngine(canvas, {}).init();
+  } catch { /* scene setup is out of scope */ } finally {
+    globalThis.window = previousWindow;
+    globalThis.location = previousLocation;
+  }
+
+  assert.ok(webgpuCanvas, 'the WebGPU engine must have been constructed');
+  assert.ok(webglCanvas, 'the WebGL fallback must have been constructed');
+  assert.notEqual(webglCanvas, webgpuCanvas,
+    'the WebGL fallback was handed the canvas the WebGPU engine already claimed: '
+    + 'that element can never return a WebGL context again, so it presents nothing');
+  assert.equal(webglCanvas._context, 'webgl2',
+    'the fallback canvas must actually have answered a WebGL context request');
+  assert.equal(webgpuCanvas._context, 'webgpu',
+    'the harness must really model the element the WebGPU engine claimed');
+  assert.equal(container.children.length, 1,
+    'the replacement canvas must take the old one\'s place, not sit beside it');
+  assert.equal(container.children[0], webglCanvas,
+    'the element left in the document must be the one the live engine renders into');
+}
+
+// The swap is only correct because it is confined to the branch where a
+// WebGPUEngine was really constructed. A ?webgpu=0 or unsupported start never
+// touches the canvas, so replacing it there would throw away an element that
+// was fine — and detach one the caller still holds.
+assert.match(
+  fallbackSrc,
+  /if \(engine\) \{[\s\S]*replaceCanvasElement\(this\.canvas\)[\s\S]*\}/,
+  'the canvas swap must sit inside the "a WebGPU engine was built" branch',
+);
+assert.equal(typeof replaceCanvasElement, 'function',
+  'engine.js must expose the canvas swap for this gate to exercise');
+{
+  const detached = { cloneNode: () => ({}), parentNode: null };
+  assert.equal(replaceCanvasElement(detached), detached,
+    'a detached canvas has nothing to swap into and must be returned unchanged');
+  assert.equal(replaceCanvasElement(null), null, 'no canvas is not an error');
+}
+
+console.log('the WebGL fallback renders into a canvas it can actually present');

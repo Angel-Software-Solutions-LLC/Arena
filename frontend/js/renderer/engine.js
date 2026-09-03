@@ -7,8 +7,8 @@
 
 import { CameraController } from './camera.js?v=20260718b';
 import { BotRenderer } from './bots.js?v=20260718o';
-import { EnvironmentRenderer } from './environment.js?v=20260903a';
-import { ObstacleRenderer } from './obstacles.js?v=20260903a';
+import { EnvironmentRenderer } from './environment.js?v=20260903b';
+import { ObstacleRenderer } from './obstacles.js?v=20260903b';
 import { IntermissionDirector } from './intermission-director.js?v=20260718h';
 import { PickupRenderer } from './pickups.js?v=20260714f';
 import { EffectRenderer } from './effects.js?v=20260718c';
@@ -128,6 +128,37 @@ export async function webGPUAvailableWithin(B, timeoutMs = WEBGPU_PROBE_TIMEOUT_
   }
 }
 
+/**
+ * Swap a canvas element for an identical fresh one, in place.
+ *
+ * A canvas element keeps its rendering context for life. The first
+ * getContext() to succeed fixes the type, every later call for a different
+ * type returns null, and there is no API to give the element back. So once
+ * B.WebGPUEngine has run its constructor — which asks for 'webgpu' before
+ * initAsync() has had the chance to fail — that element can never present a
+ * WebGL context again. Disposing the failed engine frees the device and
+ * leaves the element still claimed, showing nothing, while a healthy WebGL
+ * engine renders into a context the compositor never reads: the blank arena
+ * with a live HUD, a live kill feed and a normal frame rate.
+ *
+ * cloneNode(false) copies the attributes (id, class, aria-label, any width and
+ * height) and nothing else, and replaceWith puts the new element in the old
+ * one's place among its siblings — which `safe-viewport.js` selects on, and
+ * which the arena container's layout depends on. Listeners are deliberately
+ * not carried over: nothing has attached any at this point in init(), and the
+ * camera attaches its own to whatever canvas it is handed afterwards.
+ *
+ * Returns the element that is actually in the document, so the caller can drop
+ * its old reference; a detached canvas has nothing to swap into and is
+ * returned as it is.
+ */
+export function replaceCanvasElement(canvas) {
+  if (!canvas || typeof canvas.cloneNode !== 'function' || !canvas.parentNode) return canvas;
+  const fresh = canvas.cloneNode(false);
+  canvas.replaceWith(fresh);
+  return fresh;
+}
+
 /** A restarted Arena can reset its in-memory round counter to zero. */
 export function roundStateReleasesTransition(stateRound, transitionRound) {
   const round = Number(stateRound);
@@ -198,6 +229,14 @@ export class ArenaEngine {
           /* half-built: free whatever exists and carry on */
         }
         engine = null;
+        // Disposing frees the device; it cannot give the canvas back. The
+        // element is claimed by 'webgpu' for the rest of its life, so a WebGL
+        // engine attached to it renders into something the page will never
+        // present — which is the blank arena this fallback exists to avoid.
+        // The fallback needs an element no one has asked for a context on.
+        // Only reached when a WebGPUEngine was actually constructed: a
+        // ?webgpu=0 or unsupported start never touches the canvas.
+        this.canvas = replaceCanvasElement(this.canvas);
       }
       engine = new B.Engine(this.canvas, false, {
         preserveDrawingBuffer: false,
