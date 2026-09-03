@@ -7,8 +7,8 @@
 
 import { CameraController } from './camera.js?v=20260718b';
 import { BotRenderer } from './bots.js?v=20260718o';
-import { EnvironmentRenderer } from './environment.js?v=20260810e';
-import { ObstacleRenderer } from './obstacles.js?v=20260810e';
+import { EnvironmentRenderer } from './environment.js?v=20260903a';
+import { ObstacleRenderer } from './obstacles.js?v=20260903a';
 import { IntermissionDirector } from './intermission-director.js?v=20260718h';
 import { PickupRenderer } from './pickups.js?v=20260714f';
 import { EffectRenderer } from './effects.js?v=20260718c';
@@ -181,6 +181,24 @@ export class ArenaEngine {
         throw new Error(forceWebGL ? 'WebGL forced by ?webgpu=0' : 'WebGPU not supported');
       }
     } catch {
+      // A WebGPUEngine attaches to the canvas in its CONSTRUCTOR, before
+      // initAsync() has had the chance to fail. Dropping the reference here
+      // strands that half-built engine holding a configured GPUCanvasContext
+      // on this same canvas: it was never assigned to this.engine, so
+      // dispose() cannot reach it and nothing else ever will.
+      //
+      // Measured live 2026-09-03: the default path left EngineStore.Instances
+      // at 3 (two WebGPU, zero scenes, zero render loops, undisposed) against
+      // exactly 1 under ?webgpu=0, so every failed WebGPU init leaked one.
+      // Free it before putting a second engine on the same canvas.
+      if (engine) {
+        try {
+          engine.dispose();
+        } catch {
+          /* half-built: free whatever exists and carry on */
+        }
+        engine = null;
+      }
       engine = new B.Engine(this.canvas, false, {
         preserveDrawingBuffer: false,
         // PickupRenderer uses Babylon's HighlightLayer, whose WebGL path

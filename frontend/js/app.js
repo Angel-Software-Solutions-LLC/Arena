@@ -7,7 +7,7 @@ import './babylon-runtime.js?v=20260810d';
  * @module app
  */
 
-import { ArenaEngine } from './renderer/engine.js?v=20260810e';
+import { ArenaEngine } from './renderer/engine.js?v=20260903a';
 import { HudRenderer } from './renderer/hud.js?v=20260810c';
 import { Minimap } from './renderer/minimap.js?v=20260718c';
 import { SpectatorSocket } from './spectator-ws.js';
@@ -17,7 +17,7 @@ import { isEnabled, onSettingsChange } from './settings.js';
 import { initSettingsPanel } from './settings-panel.js';
 import { apiPath, appPath, wsURL } from './paths.js?v=20260710a';
 import { handleServiceStatus } from './service-status.js?v=20260810c';
-import { installClientErrorReporting } from './client-errors.js?v=20260810e';
+import { installClientErrorReporting } from './client-errors.js?v=20260903a';
 
 // Install before anything else so failures during startup are reported too.
 installClientErrorReporting();
