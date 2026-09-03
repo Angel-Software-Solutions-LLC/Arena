@@ -197,20 +197,27 @@ func MakeAdminAuthMiddleware(handler *AdminHandler) func(http.Handler) http.Hand
  * say.
  *
  * That cookie used to be refused here unconditionally, and the reason still
- * holds for every session that does not carry the Angel Accounts
- * platform-administrator claim: a customer session means "signed in", not
- * "trusted". What changed is that Accounts now states, inside a token Arena
- * verifies, which identities administer the platform — so the refusal narrows
- * from "this cookie" to "this cookie without that claim". A session that never
- * carried it, or whose grant has lapsed, is exactly as unwelcome as before;
- * TestCustomerCookieNeverAuthorizesAdmin still holds.
+ * holds for every session that does not carry the Angel Accounts per-product
+ * administrator grant: a customer session means "signed in", not "trusted".
+ * What changed is that Accounts now states, inside a token Arena verifies,
+ * which identities have been made administrators of Arena — so the refusal
+ * narrows from "this cookie" to "this cookie without that grant". A session
+ * that never carried it, or whose grant has lapsed, is exactly as unwelcome
+ * as before; TestCustomerCookieNeverAuthorizesAdmin still holds.
+ *
+ * A desk identity is not a way in. `staff: true` says somebody works the
+ * support desk, and it briefly admitted here — which made every owner and
+ * admin of the desk an administrator of every Angel product at once, with
+ * nothing provisioned per product and nothing to revoke per product. Arena is
+ * now administered by the people granted Arena, one grant at a time; see
+ * platform_admin.go.
  *
  * There used to be a third way in: an Arena-operated admin SSO application
  * with its own arena_admin_session cookie, admitted by an email allowlist
  * (ARENA_OIDC_ADMIN_EMAILS). It is retired. Two places deciding who
  * administers the platform is one too many, and the second one was a list of
  * addresses maintained by hand in Arena's environment — nothing revoked it
- * when somebody left the desk. The support-desk role in Accounts is now the
+ * when somebody left the desk. The per-product grant in Accounts is now the
  * single source of HUMAN admin authority.
  *
  * What is deliberately NOT retired is everything below that authenticates a

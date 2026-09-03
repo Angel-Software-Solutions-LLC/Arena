@@ -1182,6 +1182,12 @@ tr:hover td{background:rgba(88,166,255,0.07)}
   <div id="ssoSection" style="display:none">
     <button onclick="startDeskSignIn()" style="background:var(--accent);color:#fff;border-color:var(--accent);padding:8px 24px">Sign in with Angel Accounts</button>
   </div>
+  <div id="ssoNoGrant" style="display:none;color:var(--text2);font-size:11px;max-width:46ch;line-height:1.6">
+    You are signed in with Angel Accounts, but this account has not been granted
+    Arena administrator access, so there is nothing here for it. Signing in again
+    will not change that. Ask the support desk to grant Arena from your record in
+    Angel Accounts; the grant is read at your next sign-in.
+  </div>
   <div id="ssoUnavailable" style="display:none;color:var(--text2);font-size:11px;max-width:42ch;line-height:1.6">
     Angel Accounts sign-in is not configured on this Arena, so there is no way in from a browser.
     Machine access is unchanged: send <code>X-Admin-Token</code> to <code>/api/v1/admin/*</code>.
@@ -2397,9 +2403,11 @@ const kfDeaths = {};
  * Arena used to run its own admin SSO application: a separate login, a
  * separate arena_admin_session cookie, and an allowlist of addresses in the
  * server's environment. That is retired. An administrator now signs in at
- * Angel Accounts exactly as a customer does, and the support-desk role on that
- * sign-in is what opens this panel — so the browser is carrying the ordinary
- * arena_customer_session cookie, which it sends to every page of the site.
+ * Angel Accounts exactly as a customer does, and an Arena product-admin grant
+ * on that sign-in is what opens this panel — so the browser is carrying the
+ * ordinary arena_customer_session cookie, which it sends to every page of the
+ * site. Working the support desk opens nothing here; the grant is made per
+ * person, per product, from that person's record in the Accounts console.
  *
  * That is why deskCsrfToken exists. A cookie a browser attaches on its own
  * cannot be the whole of a mutation's authorization, so the server holds admin
@@ -2523,16 +2531,20 @@ function logout() {
   stopDebugAuto();
   document.getElementById('app').style.display = 'none';
   document.getElementById('login').style.display = 'flex';
-  // A desk grant that lapsed or was refused mid-session lands here, and the
-  // panel may have gone straight in at boot without ever drawing the sign-in.
-  // Put the way back in on screen wherever there is one.
-  if (ssoEnabled) document.getElementById('ssoSection').style.display = '';
+  // A grant that lapsed or was refused mid-session lands here, and the panel
+  // may have gone straight in at boot without ever drawing the sign-in. Put
+  // the way back in on screen wherever there is one: the session is what
+  // lapsed, so signing in again is the right thing to offer.
+  if (ssoEnabled) {
+    document.getElementById('ssoNoGrant').style.display = 'none';
+    document.getElementById('ssoSection').style.display = '';
+  }
 }
 
 function showApp() {
   document.getElementById('login').style.display = 'none';
   document.getElementById('app').style.display = 'grid';
-  // Name whoever the desk claim says is here, and their role if Accounts
+  // Name whoever the grant says is here, and their desk role if Accounts
   // named one. Never an address: the server does not send one.
   if (ssoSession && ssoSession.authenticated) {
     const who = ssoSession.name || ssoSession.account_id || 'signed in';
@@ -7060,13 +7072,17 @@ const urlTab = new URLSearchParams(window.location.search).get('tab');
         showApp();
         return;
       }
-      // Signing in is possible but this browser is not a desk administrator
-      // (signed out, signed in as an ordinary customer, or the grant window
-      // has closed) — offer the sign-in.
+      // Signing in is possible but this browser holds no Arena administrator
+      // grant (signed out, signed in without one, or the grant window has
+      // closed). Offer the sign-in — except to somebody already signed in,
+      // for whom pressing it again would change nothing and say nothing.
+      // They are told what is actually missing instead.
       if (data.login_enabled !== false) {
         ssoEnabled = true;
         ssoSession = data;
-        document.getElementById('ssoSection').style.display = '';
+        const signedInWithoutGrant = data.signed_in === true;
+        document.getElementById(signedInWithoutGrant ? 'ssoNoGrant' : 'ssoSection').style.display = '';
+        return;
       }
     }
   } catch(e) {

@@ -582,12 +582,22 @@ func (h *CustomerOIDCHandler) CallbackHandler(w http.ResponseWriter, r *http.Req
 	// The account id, and not the address. A log line is a place an address
 	// outlives the database it was deleted from.
 	slog.Info("customer signed in with Angel Accounts", "account_id", account.ID)
-	if platformAdmin.Present {
+	switch {
+	case platformAdmin.Present:
 		// Worth its own line: this is the sign-in that can reach the admin
 		// panel, and an operator asking "who administered this" needs to be
 		// able to find it — and to see which claim let them in.
 		slog.Info("customer sign-in carries platform administrator authority",
 			"account_id", account.ID, "authority", platformAdmin.authority(), "staff_role", platformAdmin.Role)
+	case platformAdmin.Staff:
+		// A desk identity holding no Arena grant. Recorded because it is the
+		// answer to "why did the panel not open for me": working the support
+		// desk has not admitted anybody here since administering Arena became
+		// something granted per product, and an operator reading this line
+		// knows to grant it in the Accounts console rather than go looking
+		// for a fault.
+		slog.Info("support-desk sign-in carries no Arena administrator grant",
+			"account_id", account.ID, "staff_role", platformAdmin.Role)
 	}
 	/*
 	 * A popup finishes on a page of Arena's own, which tells the window that
