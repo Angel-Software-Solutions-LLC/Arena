@@ -241,6 +241,16 @@ export function initCosmeticsShop(root, options = {}) {
       elements.subscriptionAction.textContent = url
         ? 'Subscribe in your Angel account'
         : 'Open your Dashboard';
+      /*
+       * Subscribing happens on another site, and somebody doing it has a shop
+       * open that they were in the middle of: send them to Accounts in a new
+       * tab so the packs they were looking at are still there when they come
+       * back. The fallback is Arena's own Dashboard, which is not another
+       * site and should not spawn a tab — so this is decided by where the
+       * link actually goes, not by which button it is.
+       */
+      elements.subscriptionAction.target = url ? '_blank' : '';
+      elements.subscriptionAction.rel = url ? 'noopener' : '';
       elements.subscriptionAction.hidden = false;
       elements.subscriptionAction.setAttribute('aria-disabled', 'false');
     }
