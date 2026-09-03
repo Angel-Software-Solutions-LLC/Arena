@@ -91,6 +91,35 @@ export function dashboardCosmeticsPath(pathname = window.location.pathname) {
  * Subscribe control that falls back to the Dashboard beats one that
  * navigates somewhere unintended.
  */
+/**
+ * What the subscription costs, exactly as Accounts sells it.
+ *
+ * Arena charges nothing and holds no price: this formats a figure the catalog
+ * quoted from the Accounts product catalog, and returns nothing at all when
+ * there is no figure to quote. Saying "how much" from a number of our own
+ * would put a second price in the world that can disagree with the card.
+ */
+export function subscriptionPrice(subscription) {
+  const cents = Number(subscription?.price_cents);
+  if (!Number.isFinite(cents) || cents <= 0) return null;
+  const currency = typeof subscription?.currency === 'string' && subscription.currency.trim()
+    ? subscription.currency.trim().toUpperCase()
+    : 'USD';
+  let amount;
+  try {
+    amount = new Intl.NumberFormat(undefined, {
+      style: 'currency',
+      currency,
+      minimumFractionDigits: cents % 100 === 0 ? 2 : 2,
+    }).format(cents / 100);
+  } catch (err) {
+    // An unrecognised currency code is not a reason to show nothing.
+    amount = `${(cents / 100).toFixed(2)} ${currency}`;
+  }
+  const interval = typeof subscription?.interval === 'string' ? subscription.interval.trim() : '';
+  return {amount, interval};
+}
+
 export function subscriptionURL(value) {
   const raw = typeof value === 'string' ? value.trim() : '';
   if (!raw.startsWith('https://') || raw.length <= 'https://'.length) return '';
@@ -179,6 +208,7 @@ export function initCosmeticsShop(root, options = {}) {
     subscription: root.querySelector('[data-shop-subscription]'),
     subscriptionAction: root.querySelector('[data-shop-subscription-action]'),
     subscriptionState: root.querySelector('[data-shop-subscription-state]'),
+    subscriptionPrice: root.querySelector('[data-shop-subscription-price]'),
   };
 
   if (!elements.canvas || !elements.packList || !elements.detail || !elements.itemList) return null;
@@ -189,6 +219,7 @@ export function initCosmeticsShop(root, options = {}) {
     // the catalog arrives or when the operator has not configured one, in
     // which case the controls point at the Dashboard, which says so.
     subscriptionURL: '',
+    subscriptionPrice: null,
     query: '',
     category: 'all',
     kind: 'all',
@@ -253,6 +284,20 @@ export function initCosmeticsShop(root, options = {}) {
       elements.subscriptionAction.rel = url ? 'noopener' : '';
       elements.subscriptionAction.hidden = false;
       elements.subscriptionAction.setAttribute('aria-disabled', 'false');
+    }
+    if (elements.subscriptionPrice) {
+      const price = state.subscriptionPrice;
+      elements.subscriptionPrice.hidden = !price;
+      elements.subscriptionPrice.replaceChildren();
+      if (price) {
+        elements.subscriptionPrice.append(price.amount);
+        if (price.interval) {
+          const per = document.createElement('span');
+          per.className = 'shop-subscription-interval';
+          per.textContent = ` / ${price.interval}`;
+          elements.subscriptionPrice.append(per);
+        }
+      }
     }
     if (elements.subscriptionState) {
       elements.subscriptionState.textContent = url
@@ -603,6 +648,7 @@ export function initCosmeticsShop(root, options = {}) {
         packs: Array.isArray(data.packs) ? data.packs.filter(pack => pack?.is_active !== false) : [],
       };
       state.subscriptionURL = subscriptionURL(data.subscription?.url);
+      state.subscriptionPrice = subscriptionPrice(data.subscription);
       renderSubscription();
       populateCategories();
       const matches = filteredPacks();
@@ -622,6 +668,7 @@ export function initCosmeticsShop(root, options = {}) {
     } catch (error) {
       state.catalog = {categories: [], packs: []};
       state.subscriptionURL = '';
+      state.subscriptionPrice = null;
       renderSubscription();
       state.selectedPackID = '';
       renderPackList();
