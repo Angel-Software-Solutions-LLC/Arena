@@ -204,10 +204,16 @@ assert.match(
   /event\.key !== SESSION_TOUCHED_KEY/,
   'the opener listens for that storage write',
 );
-assert.match(
+/*
+ * And does not try to tell a COOP-severed handle from a window somebody shut,
+ * which cannot be done from how quickly `closed` appears. Resolving false on
+ * either is fine: the caller re-reads the session, and a sign-in that did
+ * finish announces itself through the storage write.
+ */
+assert.doesNotMatch(
   login,
-  /Date\.now\(\) - openedAt < SEVERANCE_WINDOW_MS/,
-  'and does not read a severed handle reporting `closed` as somebody abandoning the sign-in',
+  /SEVERANCE_WINDOW_MS/,
+  'the popup watch must not guess severance from timing',
 );
 assert.match(landingHTML, /<title>Signed in<\/title>/);
 assert.match(landingHTML, /name="robots" content="noindex"/, 'this page should not be indexed');
