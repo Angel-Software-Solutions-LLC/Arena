@@ -95,9 +95,23 @@ func newCosmeticsHandlerWithStore(store cosmeticsStore, engine *game.GameEngine)
 // where to get one. No prices to pay Arena, no checkout flag, no offer —
 // there is nothing for a browser to start here.
 func catalogSubscription() map[string]any {
-	body := map[string]any{"product": "arena", "includes_all_cosmetics": true}
+	body := map[string]any{"product": arenaProductID, "includes_all_cosmetics": true}
 	if url := accountsShopURL(); url != "" {
 		body["url"] = url
+	}
+	/*
+	 * What it costs, when Accounts has said so. Still not a price Arena
+	 * charges — it is a quote of somebody else's, published so the Shop can
+	 * answer "how much" without inventing a number that can disagree with the
+	 * card. Absent until a read succeeds, and the Shop says nothing about
+	 * price until it is here.
+	 */
+	if plan, ok := arenaPlanForCatalog(); ok {
+		body["price_cents"] = plan.PriceCents
+		body["currency"] = plan.Currency
+		if plan.Interval != "" {
+			body["interval"] = plan.Interval
+		}
 	}
 	return body
 }

@@ -53,16 +53,35 @@ assert.match(shopHTML, /data-shop-access[^>]*\shidden(?:\s|>)/,
  */
 assert.match(shopHTML, /data-shop-subscription/, 'Shop needs one prominent subscription banner');
 assert.match(shopHTML, /Included with an Arena subscription/);
-assert.match(shopHTML, /Nothing is sold one item at a time/i);
+assert.match(shopHTML, /Nothing is sold separately/i,
+  'the Shop still says items cannot be bought one at a time — shorter, but the claim is load-bearing');
 assert.match(shopHTML, /data-shop-subscription-action/, 'the banner must lead to where the subscription is sold');
 assert.match(shopHTML, /data-shop-subscription-action[^>]*\shidden(?:\s|>)/,
   'the subscription action must not be operable before the catalog says where it points');
 assert.match(shopCSS, /\.shop-subscription-offer \[hidden\]\s*\{[^}]*display:\s*none\s*!important/s,
   'author button styles must not override the hidden state');
-for (const retired of [/All Access/, /license/i, /licence/i, /\$\d/, /price/i, /checkout/i, /stripe/i, /purchas/i, /dash_plan|dash_pack/]) {
+/*
+ * The Shop sells nothing, and none of the retired per-item commerce may come
+ * back. `/price/i` used to be on this list because Arena had no price to show
+ * at all; it now quotes one — the subscription's, from the Accounts catalog,
+ * at runtime. So the guard moves rather than lifts: no hard-coded figure
+ * (`/\$\d/` stays, and is the one that matters), no per-item price anywhere,
+ * and no purchase control.
+ */
+for (const retired of [/All Access/, /license/i, /licence/i, /\$\d/, /checkout/i, /stripe/i, /purchas/i, /dash_plan|dash_pack/]) {
   assert.doesNotMatch(shopHTML, retired, `the Shop must not carry per-item commerce copy: ${retired}`);
 }
-assert.doesNotMatch(shopCSS, /license|all-access|purchase|price/i, 'retired commerce styles must not linger');
+assert.doesNotMatch(shopHTML, /shop-item-price|data-shop-item-price|price-(?:low|high)/i,
+  'a price may only ever describe the subscription, never an item or a sort order');
+for (const mention of shopHTML.match(/[a-z-]*price[a-z-]*/gi) || []) {
+  assert.match(mention, /^(?:data-)?shop-subscription-price$/i,
+    `the only price hook in the Shop is the subscription figure, found: ${mention}`);
+}
+assert.doesNotMatch(shopCSS, /license|all-access|purchase/i, 'retired commerce styles must not linger');
+for (const mention of shopCSS.match(/[a-z-]*price[a-z-]*/gi) || []) {
+  assert.match(mention, /^(?:data-)?shop-subscription-price$/i,
+    `the only price style in the Shop is the subscription figure, found: ${mention}`);
+}
 assert.match(mainHTML, /data-overlay-open="shop-overlay"[^>]*>[\s\S]*?<span>Shop<\/span>/,
   'the main command dock must open the Shop as a slide-out drawer');
 assert.match(mainHTML, /class="mobile-command-actions"[\s\S]*?data-overlay-open="shop-overlay"[^>]*>Shop<\/button>/,
@@ -74,8 +93,18 @@ let source = readFileSync(shopModuleURL, 'utf8');
 assert.match(source, /dataset\.shopPackId\s*=/, 'pack hooks must serialize as data-shop-pack-id in real DOM');
 assert.match(source, /dataset\.shopItemId\s*=/, 'item hooks must serialize as data-shop-item-id in real DOM');
 assert.doesNotMatch(source, /dataset\.shop(?:Pack|Item)ID\s*=/, 'dataset acronyms must not split into data-*-i-d attributes');
-assert.doesNotMatch(source, /checkout|stripe|price_cents|purchase_handoff|subscription_offer/i,
+assert.doesNotMatch(source, /checkout|stripe|purchase_handoff|subscription_offer/i,
   'the Shop controller must not read checkout facts the catalog no longer publishes');
+/*
+ * `price_cents` is read again, but only off the subscription block the catalog
+ * quotes from Accounts — never off a pack or an item, which is what its being
+ * banned outright was protecting against.
+ */
+for (const line of source.split('\n')) {
+  if (!/price_cents/.test(line)) continue;
+  assert.match(line, /subscription\?\.price_cents|subscription\.price_cents/,
+    `price_cents may only be read from the subscription block, found: ${line.trim()}`);
+}
 source = source.replace(/import ['"]\.\/babylon-runtime\.js[^'"]*['"];\r?\n/, '');
 source = source.replace(/import \{[^}]*\} from '\.\/paths\.js[^']*';\r?\n/, `
   const appPath = (path, pathname = '/') =>
@@ -464,5 +493,45 @@ assert.equal(subscription.dataset.state, 'unlinked');
 assert.equal(access.href, '/arena/?dash_open=1&dash_tab=cosmetics', 'with no address the paid pack still leads somewhere honest');
 assert.match(access.textContent, /Included with an Arena subscription/);
 unlinkedController.dispose();
+
+
+/* ------------------------------------ the price is Accounts', or absent */
+
+/*
+ * Arena charges nothing and holds no price. The Shop quotes the figure the
+ * catalog carried over from the Accounts product catalog, so the number on
+ * this page and the number on the card cannot disagree — and quotes nothing
+ * at all when Accounts has not said one, which is the honest answer.
+ */
+assert.equal(shop.subscriptionPrice({price_cents: 999, currency: 'USD', interval: 'month'}).amount, '$9.99',
+  'the figure is whatever Accounts sells the plan for');
+assert.equal(shop.subscriptionPrice({price_cents: 999, interval: 'month'}).interval, 'month',
+  'and carries the interval it is charged over');
+assert.equal(shop.subscriptionPrice({price_cents: 1000, currency: 'USD'}).amount, '$10.00',
+  'a round figure still reads as money');
+
+for (const missing of [undefined, null, {}, {price_cents: 0}, {price_cents: -100}, {price_cents: 'free'}]) {
+  assert.equal(shop.subscriptionPrice(missing), null,
+    `no figure must be quoted for ${JSON.stringify(missing)}`);
+}
+
+assert.match(shopHTML, /data-shop-subscription-price/,
+  'the Shop needs somewhere to put the price');
+assert.match(shopHTML, /<p class="shop-subscription-price" data-shop-subscription-price hidden>/,
+  'and it starts hidden, so a Shop that does not know one shows no empty line');
+assert.match(shopCSS, /\.shop-subscription-price \{/,
+  'the figure is styled as an answer to "how much", not as another line of prose');
+
+/*
+ * The block said the same thing three times: a paragraph, a note, and the
+ * status line beside the button all restated what one subscription covers,
+ * and the packs the page exists for started below the fold. One sentence
+ * says it now. What it must not lose is the claim that nothing is sold
+ * individually, which is pinned above.
+ */
+assert.doesNotMatch(shopHTML, /is unlocked by the Arena subscription, for every bot/,
+  'the subscription block should not restate its own heading at length');
+assert.doesNotMatch(shopHTML, /Cancelling keeps everything through the paid period/,
+  'lapse mechanics belong where somebody manages a subscription, not on the shelf');
 
 console.log('dedicated cosmetics Shop previews every pack and points at the one subscription that unlocks them');

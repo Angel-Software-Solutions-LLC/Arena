@@ -196,6 +196,15 @@ func newCustomerOIDCHandlerWithAuthority(authority platform.IdentityAuthority) *
 					scopes = append(scopes, "entitlements")
 					slog.Info("customer entitlements source configured", "endpoint", h.entitlements.Endpoint())
 				}
+				/*
+				 * What the subscription costs is Accounts' fact, so the Shop
+				 * reads it from there rather than holding a number of its own
+				 * that can drift from the card charge. Refreshed in the
+				 * background: the catalog endpoint must never wait on another
+				 * service, and a price it does not know is a Shop that quotes
+				 * no figure rather than one that fails to load.
+				 */
+				startAccountsPlanRefresh(cfg.CustomerOIDCIssuer, arenaProductID)
 				h.linkLegacyByEmail = cfg.CustomerLinkLegacyByEmail
 				h.oauth2Config = &oauth2.Config{
 					ClientID:     cfg.CustomerOIDCClientID,

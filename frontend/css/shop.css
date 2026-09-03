@@ -269,6 +269,29 @@ body.shop-embedded .shop-open-new-tab {
   text-align: right;
 }
 
+.shop-subscription-price {
+  /* The figure is the answer to "how much"; it should read as one, not as
+     another line of prose in the paragraph underneath it. */
+  font-size: clamp(1.5rem, 3vw, 2.1rem);
+  font-weight: 650;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  /* letter-spacing is applied after every character INCLUDING the space, so
+     negative tracking shrinks the word gap as well as the letter fit. This
+     restores exactly what the tracking took out of the space. */
+  word-spacing: 0.02em;
+  color: var(--text-primary);
+  margin: 0 0 2px;
+}
+
+.shop-subscription-price .shop-subscription-interval {
+  font-size: 0.5em;
+  font-weight: 500;
+  letter-spacing: 0;
+  word-spacing: normal;
+  color: var(--text-soft);
+}
+
 .shop-subscription-offer p {
   margin: 0;
   color: var(--shop-success);
