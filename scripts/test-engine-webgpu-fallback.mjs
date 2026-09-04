@@ -197,4 +197,90 @@ assert.equal(typeof replaceCanvasElement, 'function',
   assert.equal(replaceCanvasElement(null), null, 'no canvas is not an error');
 }
 
-console.log('the WebGL fallback renders into a canvas it can actually present');
+// Regression gate for the between-round stall.
+//
+// init() runs again on every scene rebuild (_rebuildForArenaSize,
+// resizeStageForShow) and the ArenaEngine instance survives those, so on a
+// client where WebGPU does not work the old code paid, once per round
+// boundary: the capability probe, a device request that fails on its own
+// schedule, a canvas swap, and a from-scratch WebGL context whose shaders all
+// recompile. Several seconds of frozen page, every round, forever.
+//
+// The answer cannot change within a page, so the first failure is remembered.
+// Asserted by counting what the SECOND init() actually does.
+{
+  let nextId = 0;
+  const makeCanvas = () => ({
+    _id: nextId++,
+    _context: null,
+    parentNode: null,
+    getContext(type) {
+      if (this._context && this._context !== type) return null;
+      this._context = type;
+      return { type };
+    },
+    cloneNode() { return makeCanvas(); },
+    replaceWith(next) {
+      const parent = this.parentNode;
+      if (!parent) return;
+      parent.children[parent.children.indexOf(this)] = next;
+      next.parentNode = parent;
+      this.parentNode = null;
+    },
+    getBoundingClientRect: () => ({ width: 800, height: 600 }),
+  });
+
+  const container = { children: [] };
+  const canvas = makeCanvas();
+  container.children.push(canvas);
+  canvas.parentNode = container;
+
+  let probes = 0;
+  let webgpuBuilds = 0;
+  let webglBuilds = 0;
+  const previousWindow = globalThis.window;
+  const previousLocation = globalThis.location;
+  globalThis.location = { search: '' };
+  globalThis.window = {
+    devicePixelRatio: 1,
+    BABYLON: {
+      WebGPUEngine: class {
+        // A getter, so every capability read is counted rather than the
+        // promise being created once and reused.
+        static get IsSupportedAsync() { probes += 1; return Promise.resolve(true); }
+        constructor(c) { webgpuBuilds += 1; c.getContext('webgpu'); }
+        async initAsync() { throw new Error('WebGPU device request failed') }
+        dispose() {}
+      },
+      Engine: class {
+        constructor(c) { webglBuilds += 1; c.getContext('webgl2'); }
+        getHardwareScalingLevel() { return 1; }
+        setHardwareScalingLevel() {}
+        resize() {}
+      },
+    },
+  };
+
+  const engine = new ArenaEngine(canvas, {});
+  // Two inits on ONE instance is exactly what a between-round rebuild does.
+  // Scene construction past the engine is not stubbed; both engines are built
+  // by then, which is the whole question.
+  try { await engine.init() } catch { /* scene setup is out of scope */ }
+  const afterFirst = { probes, webgpuBuilds, webglBuilds, canvases: nextId };
+  try { await engine.init() } catch { /* scene setup is out of scope */ }
+  globalThis.window = previousWindow;
+  globalThis.location = previousLocation;
+
+  assert.deepEqual(afterFirst, { probes: 1, webgpuBuilds: 1, webglBuilds: 1, canvases: 2 },
+    'the first init must probe once, try WebGPU once, and swap the canvas once');
+  assert.equal(probes, 1,
+    'the second init re-probed WebGPU: that is up to WEBGPU_PROBE_TIMEOUT_MS of stall per round boundary');
+  assert.equal(webgpuBuilds, 1,
+    'the second init built another WebGPU engine whose device request will fail again');
+  assert.equal(nextId, 2,
+    'the second init swapped the canvas again, forcing a fresh WebGL context and a full shader recompile');
+  assert.equal(webglBuilds, 2, 'each init must still end up with a WebGL engine');
+  assert.equal(container.children.length, 1, 'the container must still hold exactly one canvas');
+}
+
+console.log('the WebGL fallback renders into a canvas it can actually present, and stops retrying WebGPU');

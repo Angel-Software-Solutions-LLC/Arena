@@ -26,13 +26,13 @@ assert.match(mobileHTML, /id="shop-overlay"[\s\S]*?data-src="\/shop\/"/,
 assert.doesNotMatch(appSource, /initCosmeticsPanel|cosmetics-panel\.js/,
   'the live Arena must not retain the replaced embedded catalog');
 
-assert.match(desktopHTML, /js\/app\.js\?v=20260903b/);
-assert.match(mobileHTML, /mobile\.js\?v=20260903b/);
+assert.match(desktopHTML, /js\/app\.js\?v=20260903c/);
+assert.match(mobileHTML, /mobile\.js\?v=20260903c/);
 assert.doesNotMatch(desktopHTML + shopHTML, /embedded-checkout/,
   'Arena runs no checkout of its own: the subscription is sold in Angel Accounts');
 assert.match(shopHTML, /cosmetics-shop\.js\?v=20260902a/);
-assert.match(appSource, /renderer\/engine\.js\?v=20260903b/);
-assert.match(mobileSource, /renderer\/engine\.js\?v=20260903b/);
+assert.match(appSource, /renderer\/engine\.js\?v=20260903c/);
+assert.match(mobileSource, /renderer\/engine\.js\?v=20260903c/);
 assert.match(shopSource, /shop-preview\.js\?v=20260718o/);
 assert.match(engineSource, /bots\.js\?v=20260718o/);
 assert.match(engineSource, /trails\.js\?v=20260714e/);

@@ -17,12 +17,12 @@ import { isSignedOut, signInAvailability, startSignIn, watchSignInState } from '
  * @module m/mobile
  */
 
-import { ArenaEngine } from '../js/renderer/engine.js?v=20260903b';
+import { ArenaEngine } from '../js/renderer/engine.js?v=20260903c';
 import { Minimap } from '../js/renderer/minimap.js?v=20260718c';
 import { SpectatorSocket } from '../js/spectator-ws.js';
 import { apiPath, appPath, wsURL } from '../js/paths.js?v=20260710a';
 import { handleServiceStatus, initServiceStatus } from '../js/service-status.js?v=20260810c';
-import { installClientErrorReporting } from '../js/client-errors.js?v=20260903b';
+import { installClientErrorReporting } from '../js/client-errors.js?v=20260903c';
 
 // Install before anything else so failures during startup are reported too.
 installClientErrorReporting();
