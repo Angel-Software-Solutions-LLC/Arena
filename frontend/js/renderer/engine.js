@@ -7,8 +7,8 @@
 
 import { CameraController } from './camera.js?v=20260718b';
 import { BotRenderer } from './bots.js?v=20260718o';
-import { EnvironmentRenderer } from './environment.js?v=20260903b';
-import { ObstacleRenderer } from './obstacles.js?v=20260903b';
+import { EnvironmentRenderer } from './environment.js?v=20260903c';
+import { ObstacleRenderer } from './obstacles.js?v=20260903c';
 import { IntermissionDirector } from './intermission-director.js?v=20260718h';
 import { PickupRenderer } from './pickups.js?v=20260714f';
 import { EffectRenderer } from './effects.js?v=20260718c';
@@ -190,6 +190,11 @@ export class ArenaEngine {
     this._roundTransitionRound = null;
     this._roundTransitionEntryTick = null;
     this._safeViewport = null;
+    /*
+     * Set once WebGPU has failed on this client, so the between-round scene
+     * rebuilds stop retrying a backend that is not coming back. See init().
+     */
+    this._webGPUUnavailable = false;
   }
 
   /** Initialize Babylon engine. */
@@ -202,8 +207,25 @@ export class ArenaEngine {
     // failure this file used to produce is handled where it actually happens, in the
     // render-loop guard below, rather than by giving up the WebGPU path for everyone.
     const forceWebGL = new URLSearchParams(location.search).get('webgpu') === '0';
+    /*
+     * init() runs again on every between-round scene rebuild
+     * (_rebuildForArenaSize, resizeStageForShow), and the ArenaEngine instance
+     * survives those. On a client where WebGPU does not work, retrying it each
+     * time costs the probe (up to WEBGPU_PROBE_TIMEOUT_MS), then a device
+     * request that fails on its own schedule, then a canvas swap and a
+     * from-scratch WebGL context whose shaders must all recompile — several
+     * seconds of stall, once per round boundary, forever.
+     *
+     * The answer does not change within a page: a driver that could not give
+     * us a device a minute ago will not give us one now. So the first failure
+     * is remembered and every later rebuild goes straight to WebGL, reusing
+     * the canvas it already swapped in. Only the FAILURE is cached; a client
+     * where WebGPU works still builds a fresh WebGPU engine per rebuild, which
+     * is what disposing the old one requires.
+     */
     try {
-      const webGPUSupported = !forceWebGL && await webGPUAvailableWithin(B);
+      const webGPUSupported = !forceWebGL && !this._webGPUUnavailable
+        && await webGPUAvailableWithin(B);
       if (webGPUSupported) {
         engine = new B.WebGPUEngine(this.canvas, { antialias: false });
         await engine.initAsync();
@@ -212,6 +234,9 @@ export class ArenaEngine {
         throw new Error(forceWebGL ? 'WebGL forced by ?webgpu=0' : 'WebGPU not supported');
       }
     } catch {
+      // Remembered for the life of this ArenaEngine, so the next rebuild does
+      // not pay the probe and the failing device request again.
+      this._webGPUUnavailable = true;
       // A WebGPUEngine attaches to the canvas in its CONSTRUCTOR, before
       // initAsync() has had the chance to fail. Dropping the reference here
       // strands that half-built engine holding a configured GPUCanvasContext

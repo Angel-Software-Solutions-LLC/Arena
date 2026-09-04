@@ -1183,10 +1183,13 @@ tr:hover td{background:rgba(88,166,255,0.07)}
     <button onclick="startDeskSignIn()" style="background:var(--accent);color:#fff;border-color:var(--accent);padding:8px 24px">Sign in with Angel Accounts</button>
   </div>
   <div id="ssoNoGrant" style="display:none;color:var(--text2);font-size:11px;max-width:46ch;line-height:1.6">
-    You are signed in with Angel Accounts, but this account has not been granted
-    Arena administrator access, so there is nothing here for it. Signing in again
-    will not change that. Ask the support desk to grant Arena from your record in
-    Angel Accounts; the grant is read at your next sign-in.
+    <strong style="color:var(--text)">Your name is not on the list.</strong><br><br>
+    The sign-in worked. Angel Accounts knows exactly who you are &mdash; it just
+    has no record of anybody granting this account Arena administrator access,
+    which is the part that opens doors. Pressing the button again is a beautiful
+    gesture and will change nothing.<br><br>
+    Ask the support desk to grant Arena on your record in Angel Accounts. It is
+    read at your next sign-in, whereupon this message will stop judging you.
   </div>
   <div id="ssoUnavailable" style="display:none;color:var(--text2);font-size:11px;max-width:42ch;line-height:1.6">
     Angel Accounts sign-in is not configured on this Arena, so there is no way in from a browser.
